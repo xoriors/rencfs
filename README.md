@@ -1,2 +1,3 @@
 # encrypted_fs
-An encrypted file system in Rust that mounts with FUSE. It can be used to create encrypted directories
+An encrypted file system in Rust that mounts with FUSE. It can be used to create encrypted directories.
+# Still work in progress
