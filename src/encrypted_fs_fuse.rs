@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use fuser::{FileAttr, Filesystem, FileType, KernelConfig, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, ReplyXattr, Request, TimeOrNow};
 use fuser::consts::FOPEN_DIRECT_IO;
 use fuser::TimeOrNow::Now;
-use libc::{EBADF, EIO, ENOENT, ENOTDIR};
+use libc::{EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY};
 use log::{debug, warn};
 use crate::encrypted_fs::{EncryptedFs, FsError, FsResult};
 
@@ -50,7 +50,7 @@ impl EncryptedFsFuse {
 
     fn creation_mode(&self, mode: u32) -> u16 {
         if !self.suid_support {
-            (mode & !(libc::S_ISUID | libc::S_ISGID) as u32) as u16
+            (mode & !(libc::S_ISUID | libc::S_ISGID)) as u16
         } else {
             mode as u16
         }
@@ -78,7 +78,7 @@ impl EncryptedFsFuse {
                 }
 
                 if req.uid() != 0 {
-                    mode &= !(libc::S_ISUID | libc::S_ISGID) as u32;
+                    mode &= !(libc::S_ISUID | libc::S_ISGID);
                 }
 
                 let kind = as_file_kind(mode);
@@ -91,8 +91,8 @@ impl EncryptedFsFuse {
                 attr.uid = req.uid();
                 attr.gid = creation_gid(&parent_attr, req.gid());
 
-                match self.fs.create_nod(parent, name.to_str().unwrap(), &mut attr) {
-                    Ok(_) => { Ok(attr) }
+                match self.fs.create_nod(parent, name.to_str().unwrap(), attr) {
+                    Ok(attr) => { Ok(attr) }
                     Err(err) => {
                         match err {
                             FsError::AlreadyExists => { Err(libc::EEXIST) }
@@ -424,7 +424,8 @@ impl Filesystem for EncryptedFsFuse {
                         // XXX: In theory we should only need to do this when WRITE_KILL_PRIV is set for 7.31+
                         // However, xfstests fail in that case
                         clear_suid_sgid(&mut attr);
-                        if let Err(_) = self.fs.replace_inode(inode, &mut attr) {
+                        if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
+                            debug!("  write error {}", err);
                             reply.error(ENOENT);
                             return;
                         }
@@ -543,7 +544,7 @@ impl Filesystem for EncryptedFsFuse {
                 attr.ctime = SystemTime::now();
 
                 if req.uid() != 0 {
-                    mode &= !(libc::S_ISUID | libc::S_ISGID) as u32;
+                    mode &= !(libc::S_ISUID | libc::S_ISGID);
                 }
                 if parent_attr.perm & libc::S_ISGID as u16 != 0 {
                     mode |= libc::S_ISGID as u32;
@@ -553,12 +554,15 @@ impl Filesystem for EncryptedFsFuse {
                 attr.uid = req.uid();
                 attr.gid = creation_gid(&parent_attr, req.gid());
 
-                if let Ok(_attr) = self.fs.create_nod(parent, name.to_str().unwrap(), &mut attr) {} else {
-                    reply.error(ENOENT);
-                    return;
-                }
+                match self.fs.create_nod(parent, name.to_str().unwrap(), attr) {
+                    Err(err) => {
+                        debug!("  mkdir error {}", err);
+                        reply.error(ENOENT);
 
-                reply.entry(&Duration::new(0, 0), &attr, 0);
+                        return;
+                    }
+                    Ok(attr) => reply.entry(&Duration::new(0, 0), &attr, 0)
+                }
             }
         }
     }
@@ -660,7 +664,8 @@ impl Filesystem for EncryptedFsFuse {
         if let Some(size) = size {
             debug!("truncate() called with {:?} {:?}", inode, size);
 
-            if let Err(_) = self.fs.truncate(inode, size) {
+            if let Err(err) = self.fs.truncate(inode, size) {
+                debug!("  truncate error {}", err);
                 reply.error(EBADF);
                 return;
             }
@@ -724,7 +729,8 @@ impl Filesystem for EncryptedFsFuse {
             attr.ctime = SystemTime::now();
         }
 
-        if let Err(_) = self.fs.replace_inode(inode, &mut attr) {
+        if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
+            debug!("  setattr error {}", err);
             reply.error(ENOENT);
             return;
         }
@@ -757,7 +763,8 @@ impl Filesystem for EncryptedFsFuse {
                             return;
                         }
 
-                        if let Err(_) = self.fs.remove_file(parent, name.to_str().unwrap()) {
+                        if let Err(err) = self.fs.remove_file(parent, name.to_str().unwrap()) {
+                            debug!("  unlink error {}", err);
                             reply.error(ENOENT);
                             return;
                         }
@@ -813,7 +820,8 @@ impl Filesystem for EncryptedFsFuse {
                             return;
                         }
 
-                        if let Err(_) = self.fs.remove_dir(parent, name.to_str().unwrap()) {
+                        if let Err(err) = self.fs.remove_dir(parent, name.to_str().unwrap()) {
+                            debug!("  rmdir error {}", err);
                             reply.error(ENOENT);
 
                             return;
@@ -869,6 +877,113 @@ impl Filesystem for EncryptedFsFuse {
             }
             Ok(len) => {
                 reply.written(len as u32);
+            }
+        }
+    }
+
+    fn rename(
+        &mut self,
+        req: &Request,
+        parent: u64,
+        name: &OsStr,
+        new_parent: u64,
+        new_name: &OsStr,
+        flags: u32,
+        reply: ReplyEmpty,
+    ) {
+        let attr = match self.fs.find_by_name(parent, name.to_str().unwrap()) {
+            Ok(Some(attr)) => attr,
+            _ => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+        let parent_attr = match self.fs.get_inode(parent) {
+            Ok(parent_attr) => parent_attr,
+            _ => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+
+        if !check_access(
+            parent_attr.uid,
+            parent_attr.gid,
+            parent_attr.perm,
+            req.uid(),
+            req.gid(),
+            libc::W_OK) {
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        // "Sticky bit" handling
+        if parent_attr.perm & libc::S_ISVTX as u16 != 0
+            && req.uid() != 0
+            && req.uid() != parent_attr.uid
+            && req.uid() != attr.uid {
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        let new_parent_attr = match self.fs.get_inode(new_parent) {
+            Ok(new_parent_attr) => new_parent_attr,
+            _ => {
+                reply.error(ENOENT);
+                return;
+            }
+        };
+
+        if !check_access(
+            new_parent_attr.uid,
+            new_parent_attr.gid,
+            new_parent_attr.perm,
+            req.uid(),
+            req.gid(),
+            libc::W_OK,
+        ) {
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        // "Sticky bit" handling in new_parent
+        if new_parent_attr.perm & libc::S_ISVTX as u16 != 0 {
+            if let Ok(Some(existing_attrs)) = self.fs.find_by_name(new_parent, new_name.to_str().unwrap()) {
+                if req.uid() != 0
+                    && req.uid() != new_parent_attr.uid
+                    && req.uid() != existing_attrs.uid
+                {
+                    reply.error(libc::EACCES);
+                    return;
+                }
+            }
+        }
+
+        // Only move an existing directory to a new parent, if we have write access to it,
+        // because that will change the ".." link in it
+        if attr.kind == FileType::Directory
+            && parent != new_parent
+            && !check_access(
+            attr.uid,
+            attr.gid,
+            attr.perm,
+            req.uid(),
+            req.gid(),
+            libc::W_OK,
+        ) {
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        match self.fs.rename(parent, name.to_str().unwrap(), new_parent, new_name.to_str().unwrap()) {
+            Ok(_) => reply.ok(),
+            Err(FsError::NotEmpty) => {
+                reply.error(ENOTEMPTY);
+                return;
+            }
+            _ => {
+                reply.error(ENOENT);
+                return;
             }
         }
     }
@@ -936,33 +1051,31 @@ pub fn check_access(
     gid: u32,
     mut access_mask: i32,
 ) -> bool {
-    // // F_OK tests for existence of file
-    // if access_mask == libc::F_OK {
-    //     return true;
-    // }
-    // let file_mode = i32::from(file_mode);
-    //
-    // // root is allowed to read & write anything
-    // if uid == 0 {
-    //     // root only allowed to exec if one of the X bits is set
-    //     access_mask &= libc::X_OK;
-    //     access_mask -= access_mask & (file_mode >> 6);
-    //     access_mask -= access_mask & (file_mode >> 3);
-    //     access_mask -= access_mask & file_mode;
-    //     return access_mask == 0;
-    // }
-    //
-    // if uid == file_uid {
-    //     access_mask -= access_mask & (file_mode >> 6);
-    // } else if gid == file_gid {
-    //     access_mask -= access_mask & (file_mode >> 3);
-    // } else {
-    //     access_mask -= access_mask & file_mode;
-    // }
-    //
-    // return access_mask == 0;
+    // F_OK tests for existence of file
+    if access_mask == libc::F_OK {
+        return true;
+    }
+    let file_mode = i32::from(file_mode);
 
-    true
+    // root is allowed to read & write anything
+    if uid == 0 {
+        // root only allowed to exec if one of the X bits is set
+        access_mask &= libc::X_OK;
+        access_mask -= access_mask & (file_mode >> 6);
+        access_mask -= access_mask & (file_mode >> 3);
+        access_mask -= access_mask & file_mode;
+        return access_mask == 0;
+    }
+
+    if uid == file_uid {
+        access_mask -= access_mask & (file_mode >> 6);
+    } else if gid == file_gid {
+        access_mask -= access_mask & (file_mode >> 3);
+    } else {
+        access_mask -= access_mask & file_mode;
+    }
+
+    return access_mask == 0;
 }
 
 fn get_groups(pid: u32) -> Vec<u32> {
