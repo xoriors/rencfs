@@ -1,17 +1,16 @@
 use std::cmp::min;
 use std::ffi::OsStr;
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, SeekFrom};
-use std::os::fd::IntoRawFd;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::os::raw::c_int;
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::FileExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use fuser::{FileAttr, Filesystem, FileType, KernelConfig, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, ReplyXattr, Request, TimeOrNow};
+
+use fuser::{FileAttr, Filesystem, FileType, KernelConfig, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow};
 use fuser::consts::FOPEN_DIRECT_IO;
 use fuser::TimeOrNow::Now;
 use libc::{EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY};
 use log::{debug, warn};
+
 use crate::encrypted_fs::{EncryptedFs, FsError, FsResult};
 
 const BLOCK_SIZE: u64 = 512;
@@ -24,8 +23,7 @@ pub struct EncryptedFsFuse {
     fs: EncryptedFs,
     direct_io: bool,
     suid_support: bool,
-    // TODO: change to AtomicU64
-    current_file_handle: u64,
+    dir_handle: u64,
 }
 
 impl EncryptedFsFuse {
@@ -43,7 +41,7 @@ impl EncryptedFsFuse {
                 fs: EncryptedFs::new(data_dir)?,
                 direct_io,
                 suid_support: false,
-                current_file_handle: 0,
+                dir_handle: 0,
             })
         }
     }
@@ -56,13 +54,7 @@ impl EncryptedFsFuse {
         }
     }
 
-    fn allocate_next_file_handle(&mut self) -> u64 {
-        self.current_file_handle += 1;
-
-        self.current_file_handle
-    }
-
-    fn create_nod(&mut self, parent: u64, mut mode: u32, req: &Request, name: &OsStr) -> Result<FileAttr, c_int> {
+    fn create_nod(&mut self, parent: u64, mut mode: u32, req: &Request, name: &OsStr, read: bool, write: bool) -> Result<(u64, FileAttr), c_int> {
         match self.fs.get_inode(parent) {
             Err(_) => { Err(ENOENT) }
             Ok(parent_attr) => {
@@ -91,7 +83,7 @@ impl EncryptedFsFuse {
                 attr.uid = req.uid();
                 attr.gid = creation_gid(&parent_attr, req.gid());
 
-                match self.fs.create_nod(parent, name.to_str().unwrap(), attr) {
+                match self.fs.create_nod(parent, name.to_str().unwrap(), attr, read, write) {
                     Ok(attr) => { Ok(attr) }
                     Err(err) => {
                         match err {
@@ -210,8 +202,8 @@ impl Filesystem for EncryptedFsFuse {
             return;
         }
 
-        match self.create_nod(parent, mode, req, name) {
-            Ok(attr) => {
+        match self.create_nod(parent, mode, req, name, false, false) {
+            Ok((_, attr)) => {
                 // TODO: implement flags
                 reply.entry(&Duration::new(0, 0), &attr, 0);
             }
@@ -246,7 +238,7 @@ impl Filesystem for EncryptedFsFuse {
     ) {
         debug!("create() called with {:?} {:?}", parent, name);
 
-        let (_read, _write) = match flags & libc::O_ACCMODE {
+        let (read, write) = match flags & libc::O_ACCMODE {
             libc::O_RDONLY => (true, false),
             libc::O_WRONLY => (false, true),
             libc::O_RDWR => (true, true),
@@ -257,14 +249,15 @@ impl Filesystem for EncryptedFsFuse {
             }
         };
 
-        match self.create_nod(parent, mode, req, name) {
-            Ok(attr) => {
+        match self.create_nod(parent, mode, req, name, read, write) {
+            Ok((handle, attr)) => {
+                debug!("  created handle {}", handle);
                 // TODO: implement flags
                 reply.created(
                     &Duration::new(0, 0),
                     &attr,
                     0,
-                    self.allocate_next_file_handle(),
+                    handle,
                     0,
                 );
             }
@@ -274,7 +267,7 @@ impl Filesystem for EncryptedFsFuse {
     fn open(&mut self, req: &Request, inode: u64, flags: i32, reply: ReplyOpen) {
         debug!("open() called for {:?}", inode);
 
-        let (access_mask, _read, _write) = match flags & libc::O_ACCMODE {
+        let (access_mask, read, write) = match flags & libc::O_ACCMODE {
             libc::O_RDONLY => {
                 // Behavior is undefined, but most filesystems return EACCES
                 if flags & libc::O_TRUNC != 0 {
@@ -301,7 +294,16 @@ impl Filesystem for EncryptedFsFuse {
             Ok(attr) => {
                 if check_access(attr.uid, attr.gid, attr.perm, req.uid(), req.gid(), access_mask) {
                     let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
-                    reply.opened(self.allocate_next_file_handle(), open_flags);
+                    match self.fs.open(inode, read, write) {
+                        Err(_) => {
+                            reply.error(EBADF);
+                            return;
+                        }
+                        Ok(handle) => {
+                            debug!("  opened handle {}", handle);
+                            reply.opened(handle, open_flags);
+                        }
+                    }
                 } else {
                     reply.error(libc::EACCES);
                 }
@@ -342,7 +344,8 @@ impl Filesystem for EncryptedFsFuse {
                     access_mask,
                 ) {
                     let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
-                    reply.opened(self.allocate_next_file_handle(), open_flags);
+                    self.dir_handle +=1;
+                    reply.opened(self.dir_handle, open_flags);
                 }
             }
             _ => reply.error(ENOENT)
@@ -353,7 +356,7 @@ impl Filesystem for EncryptedFsFuse {
         &mut self,
         _req: &Request,
         ino: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
         size: u32,
         _flags: i32,
@@ -373,11 +376,10 @@ impl Filesystem for EncryptedFsFuse {
                     reply.error(ENOENT);
                     return;
                 }
-                debug!("  is dir {}", ino);
-                let read_size = min(size, attr.size as u32);
+                let read_size = min(size, attr.size as u32 - offset as u32);
                 debug!("  read size={}", read_size);
                 let mut buffer = vec![0; read_size as usize];
-                match self.fs.read(ino, offset as u64, &mut buffer) {
+                match self.fs.read(ino, offset as u64, &mut buffer, fh) {
                     Err(err) => {
                         debug!("  read error {}", err);
                         reply.error(EIO);
@@ -395,7 +397,7 @@ impl Filesystem for EncryptedFsFuse {
         &mut self,
         _req: &Request,
         inode: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
         data: &[u8],
         _write_flags: u32,
@@ -403,17 +405,17 @@ impl Filesystem for EncryptedFsFuse {
         _lock_owner: Option<u64>,
         reply: ReplyWrite,
     ) {
-        debug!("write() called with {:?} size={:?}", inode, data.len());
+        debug!("write() called with {:?} offfset {:?} size={:?}", inode, offset, data.len());
 
         assert!(offset >= 0);
 
         match self.fs.get_inode(inode) {
-            Ok(mut attr) => {
+            Ok(attr) => {
                 if attr.kind == FileType::Directory {
                     reply.error(ENOENT);
                     return;
                 }
-                match self.fs.write_all(inode, offset as u64, data) {
+                match self.fs.write_all(inode, offset as u64, data, fh) {
                     Err(err) => {
                         debug!("  write error {}", err);
                         reply.error(EIO);
@@ -444,11 +446,21 @@ impl Filesystem for EncryptedFsFuse {
     fn flush(&mut self, _req: &Request<'_>, ino: u64, fh: u64, lock_owner: u64, reply: ReplyEmpty) {
         debug!("flush() called with {:?} {:?} {:?}", ino, fh, lock_owner);
 
+        if let Err(_) = self.fs.flush(fh) {
+            reply.error(EBADF);
+            return;
+        }
+
         reply.ok();
     }
 
-    fn release(&mut self, _req: &Request<'_>, _ino: u64, _fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
-        debug!("release() called with {:?} {:?} {:?}", _ino, _fh, _lock_owner);
+    fn release(&mut self, _req: &Request<'_>, _ino: u64, fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
+        debug!("release() called with {:?} {:?} {:?} {}", _ino, fh, _lock_owner, fh);
+
+        if let Err(_) = self.fs.release_handle(fh) {
+            reply.error(EBADF);
+            return;
+        }
 
         reply.ok();
     }
@@ -554,14 +566,14 @@ impl Filesystem for EncryptedFsFuse {
                 attr.uid = req.uid();
                 attr.gid = creation_gid(&parent_attr, req.gid());
 
-                match self.fs.create_nod(parent, name.to_str().unwrap(), attr) {
+                match self.fs.create_nod(parent, name.to_str().unwrap(), attr, false, false) {
                     Err(err) => {
                         debug!("  mkdir error {}", err);
                         reply.error(ENOENT);
 
                         return;
                     }
-                    Ok(attr) => reply.entry(&Duration::new(0, 0), &attr, 0)
+                    Ok((_, attr)) => reply.entry(&Duration::new(0, 0), &attr, 0)
                 }
             }
         }
@@ -869,7 +881,7 @@ impl Filesystem for EncryptedFsFuse {
             src_fh, src_inode, src_offset, dest_fh, dest_inode, dest_offset, size
         );
 
-        match self.fs.copy_file_range(src_inode, src_offset as u64, dest_inode, dest_offset as u64, size as usize) {
+        match self.fs.copy_file_range(src_inode, src_offset as u64, dest_inode, dest_offset as u64, size as usize, src_fh, dest_fh) {
             Err(err) => {
                 debug!("  copy_file_range error {}", err);
                 reply.error(EBADF);
@@ -888,7 +900,7 @@ impl Filesystem for EncryptedFsFuse {
         name: &OsStr,
         new_parent: u64,
         new_name: &OsStr,
-        flags: u32,
+        _flags: u32,
         reply: ReplyEmpty,
     ) {
         let attr = match self.fs.find_by_name(parent, name.to_str().unwrap()) {
