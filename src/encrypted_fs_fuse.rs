@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use fuser::{FileAttr, Filesystem, FileType, KernelConfig, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow};
 use fuser::consts::FOPEN_DIRECT_IO;
 use fuser::TimeOrNow::Now;
-use libc::{EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY};
+use libc::{EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY, truncate};
 use log::{debug, warn};
 
 use crate::encrypted_fs::{EncryptedFs, FsError, FsResult};
@@ -681,6 +681,7 @@ impl Filesystem for EncryptedFsFuse {
                 reply.error(EBADF);
                 return;
             }
+            attr.size = size;
 
             // Clear SETUID & SETGID on truncate
             clear_suid_sgid(&mut attr);
