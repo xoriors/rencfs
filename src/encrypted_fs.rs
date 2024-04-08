@@ -2,7 +2,7 @@ use std::{fs, io};
 use std::cmp::max;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
 use base64::decode;
@@ -453,9 +453,9 @@ impl EncryptedFs {
     }
 
     pub fn flush(&mut self, handle: u64) -> FsResult<()> {
-        // if let Some((_, encryptor)) = self.write_handles.get_mut(&handle) {
-        //     encryptor.flush()?;
-        // }
+        if let Some((_, encryptor)) = self.write_handles.get_mut(&handle) {
+            encryptor.flush()?;
+        }
         Ok(())
     }
 
