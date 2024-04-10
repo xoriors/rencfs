@@ -23,7 +23,7 @@ rust-crypto = "=0.2.36"
 ring = "0.17.8"
 hex = "0.4.3"
 fuse3 = { version = "0.7.1", features = ["tokio-runtime", "unprivileged"] }
-tokio = { version = "1.36", features = ["macros", "rt", "time", "signal"] }
+tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "time", "signal"] }
 futures-util = "0.3.30"
 mio = { version = "0.8.11", features = ["os-poll"] }
 tempfile = "3.10"
@@ -31,3 +31,4 @@ bytes = "1.5"
 tracing = "0.1.40"
 tracing-subscriber = "0.3"
 ctrlc = "3.1.9"
+parking_lot = "0.12.1"

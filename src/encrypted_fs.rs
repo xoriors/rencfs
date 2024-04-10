@@ -1,9 +1,10 @@
 use std::{fs, io};
 use std::cmp::max;
 use std::collections::BTreeMap;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, Write};
-use std::path::PathBuf;
+use std::fmt::Debug;
+use std::fs::{File, OpenOptions, ReadDir};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 use base64::decode;
 use cryptostream::{read, write};
@@ -12,6 +13,7 @@ use openssl::symm::Cipher;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::debug;
 
 #[cfg(test)]
 mod encrypted_fs_tests;
@@ -52,19 +54,114 @@ pub enum FsError {
     Other(String),
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq)]
 pub struct DirectoryEntry {
     pub ino: u64,
     pub name: String,
     pub kind: FileType,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct DirectoryEntryPlus {
+    pub ino: u64,
+    pub name: String,
+    pub kind: FileType,
+    pub attr: FileAttr,
+}
+
 pub type FsResult<T> = Result<T, FsError>;
+
+pub struct DirectoryEntryIterator(ReadDir);
+
+impl Iterator for DirectoryEntryIterator {
+    type Item = FsResult<DirectoryEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let entry = self.0.next()?;
+        if let Err(e) = entry {
+            return Some(Err(e.into()));
+        }
+        let entry = entry.unwrap();
+        let file = File::open(entry.path());
+        if let Err(e) = file {
+            return Some(Err(e.into()));
+        }
+        let file = file.unwrap();
+        let mut name = entry.file_name().to_string_lossy().to_string();
+        if name == "$." {
+            name = ".".to_string();
+        } else if name == "$.." {
+            name = "..".to_string();
+        }
+        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(file);
+        if let Err(e) = res {
+            return Some(Err(e.into()));
+        }
+        let (ino, kind): (u64, FileType) = res.unwrap();
+        Some(Ok(DirectoryEntry {
+            ino,
+            name,
+            kind,
+        }))
+    }
+}
+
+pub struct DirectoryEntryPlusIterator(ReadDir, PathBuf);
+
+impl Iterator for DirectoryEntryPlusIterator {
+    type Item = FsResult<DirectoryEntryPlus>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let entry = self.0.next()?;
+        if let Err(e) = entry {
+            debug!("error reading directory entry: {:?}", e);
+            return Some(Err(e.into()));
+        }
+        let entry = entry.unwrap();
+        let file = File::open(entry.path());
+        if let Err(e) = file {
+            debug!("error opening file: {:?}", e);
+            return Some(Err(e.into()));
+        }
+        let file = file.unwrap();
+        let mut name = entry.file_name().to_string_lossy().to_string();
+        if name == "$." {
+            name = ".".to_string();
+        } else if name == "$.." {
+            name = "..".to_string();
+        }
+        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(file);
+        if let Err(e) = res {
+            debug!("error deserializing directory entry: {:?}", e);
+            return Some(Err(e.into()));
+        }
+        let (ino, kind): (u64, FileType) = res.unwrap();
+
+        let file = File::open(&self.1.join(ino.to_string()));
+        if let Err(e) = file {
+            debug!("error opening file: {:?}", e);
+            return Some(Err(e.into()));
+        }
+        let file = file.unwrap();
+        let attr = bincode::deserialize_from(file);
+        if let Err(e) = attr {
+            debug!("error deserializing file attr: {:?}", e);
+            return Some(Err(e.into()));
+        }
+        let attr = attr.unwrap();
+        Some(Ok(DirectoryEntryPlus {
+            ino,
+            name,
+            kind,
+            attr,
+        }))
+    }
+}
 
 pub struct EncryptedFs {
     pub data_dir: PathBuf,
-    write_handles: BTreeMap<u64, (u64, write::Encryptor<File>)>,
-    read_handles: BTreeMap<u64, (u64, read::Decryptor<File>)>,
+    write_handles: BTreeMap<u64, (FileAttr, u64, write::Encryptor<File>)>,
+    read_handles: BTreeMap<u64, (FileAttr, u64, read::Decryptor<File>)>,
     // TODO: change to AtomicU64
     current_file_handle: u64,
 }
@@ -162,7 +259,11 @@ impl EncryptedFs {
         parent_attr.ctime = std::time::SystemTime::now();
         self.write_inode(&parent_attr)?;
 
-        let handle = self.open(attr.ino, read, write)?;
+        let handle = if attr.kind == FileType::RegularFile {
+            self.open(attr.ino, read, write)?
+        } else {
+            self.allocate_next_file_handle()
+        };
 
         Ok((handle, attr.clone()))
     }
@@ -265,30 +366,24 @@ impl EncryptedFs {
         self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name).exists()
     }
 
-    pub fn read_dir(&self, ino: u64) -> FsResult<impl IntoIterator<Item=DirectoryEntry>> {
+    pub fn read_dir(&self, ino: u64) -> FsResult<DirectoryEntryIterator> {
         let contents_dir = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         if !contents_dir.is_dir() {
-            return Err(FsError::InodeNotFound);
-        }
-        let mut entries = vec![];
-        for entry in fs::read_dir(contents_dir)? {
-            let entry = entry?;
-            let file = File::open(entry.path())?;
-            let mut name = entry.file_name().to_string_lossy().to_string();
-            if name == "$." {
-                name = ".".to_string();
-            } else if name == "$.." {
-                name = "..".to_string();
-            }
-            let (ino, kind): (u64, FileType) = bincode::deserialize_from(file)?;
-            entries.push(DirectoryEntry {
-                ino,
-                name,
-                kind,
-            });
+            return Err(FsError::InvalidInodeType);
         }
 
-        Ok(entries)
+        let iter = fs::read_dir(contents_dir)?;
+        Ok(DirectoryEntryIterator(iter.into_iter()))
+    }
+
+    pub fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
+        let contents_dir = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
+        if !contents_dir.is_dir() {
+            return Err(FsError::InvalidInodeType);
+        }
+
+        let iter = fs::read_dir(contents_dir)?;
+        Ok(DirectoryEntryPlusIterator(iter.into_iter(), self.data_dir.join(INODES_DIR)))
     }
 
     pub fn get_inode(&self, ino: u64) -> FsResult<FileAttr> {
@@ -336,25 +431,21 @@ impl EncryptedFs {
     // }
 
     pub fn read(&mut self, ino: u64, offset: u64, mut buf: &mut [u8], handle: u64) -> FsResult<usize> {
-        let mut attr = self.get_inode(ino)?;
+        let (attr, position, _) = self.read_handles.get(&handle).unwrap();
         if matches!(attr.kind, FileType::Directory) {
             return Err(FsError::InvalidInodeType);
         }
 
-        if !self.read_handles.contains_key(&handle) {
-            self.create_read_handle(ino, handle)?;
-        }
-
-        let (position, _) = self.read_handles.get(&handle).unwrap();
         if *position != offset {
             if *position > offset {
                 self.create_read_handle(ino, handle)?;
             }
             if offset > 0 {
-                let (position, decryptor) = self.read_handles.get_mut(&handle).unwrap();
+                let (_, position, decryptor) =
+                    self.read_handles.get_mut(&handle).unwrap();
                 let mut buffer: [u8; 4096] = [0; 4096];
                 loop {
-                    let mut read_len = if *position + buffer.len() as u64 > offset {
+                    let read_len = if *position + buffer.len() as u64 > offset {
                         (offset - *position) as usize
                     } else {
                         buffer.len()
@@ -368,9 +459,9 @@ impl EncryptedFs {
                     }
                 }
             }
-
         }
-        let (position, decryptor) = self.read_handles.get_mut(&handle).unwrap();
+        let (attr, position, decryptor) =
+            self.read_handles.get_mut(&handle).unwrap();
         if offset + buf.len() as u64 > attr.size {
             buf = &mut buf[..(attr.size - offset) as usize];
         }
@@ -378,19 +469,30 @@ impl EncryptedFs {
         *position += buf.len() as u64;
 
         attr.atime = std::time::SystemTime::now();
-        self.write_inode(&attr)?;
 
         Ok(buf.len())
     }
 
     pub fn release_handle(&mut self, handle: u64) -> FsResult<()> {
-        if let Some((_, decryptor)) = self.read_handles.remove(&handle) {
+        if let Some((attr, _, decryptor)) = self.read_handles.remove(&handle) {
+            // write attr only here to avoid serializing it multiple times while reading
+            self.write_inode(&attr)?;
             decryptor.finish();
         }
-        if let Some((_, encryptor)) = self.write_handles.remove(&handle) {
+        if let Some((attr, _, encryptor)) = self.write_handles.remove(&handle) {
+            // write attr only here to avoid serializing it multiple times while writing
+            self.write_inode(&attr)?;
             encryptor.finish()?;
         }
         Ok(())
+    }
+
+    pub fn is_read_handle(&self, fh: u64) -> bool {
+        self.read_handles.contains_key(&fh)
+    }
+
+    pub fn is_write_handle(&self, fh: u64) -> bool {
+        self.write_handles.contains_key(&fh)
     }
 
     // pub fn write_all(&mut self, ino: u64, offset: u64, buf: &[u8]) -> FsResult<()> {
@@ -425,17 +527,13 @@ impl EncryptedFs {
     //     Ok(())
     // }
 
-    pub fn write_all(&mut self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<()> {
-        let mut attr = self.get_inode(ino)?;
+    pub fn write_all(&mut self, _ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<()> {
+        let (attr, position, encryptor) =
+            self.write_handles.get_mut(&handle).unwrap();
         if matches!(attr.kind, FileType::Directory) {
             return Err(FsError::InvalidInodeType);
         }
 
-        if !self.write_handles.contains_key(&handle) {
-            self.create_write_handle(ino, handle)?;
-        }
-
-        let (position, encryptor) = self.write_handles.get_mut(&handle).unwrap();
         if *position > offset {
             // TODO: seek from start
             return Err(FsError::Other("seek from start not implemented".to_string()));
@@ -447,25 +545,19 @@ impl EncryptedFs {
         attr.size = size;
         attr.mtime = std::time::SystemTime::now();
         attr.ctime = std::time::SystemTime::now();
-        self.write_inode(&attr)?;
 
         Ok(())
     }
 
     pub fn flush(&mut self, handle: u64) -> FsResult<()> {
-        if let Some((_, encryptor)) = self.write_handles.get_mut(&handle) {
+        if let Some((_, _, encryptor)) = self.write_handles.get_mut(&handle) {
             encryptor.flush()?;
         }
         Ok(())
     }
 
     pub fn copy_file_range(&mut self, src_ino: u64, src_offset: u64, dest_ino: u64, dest_offset: u64, size: usize, src_fh: u64, dest_fh: u64) -> FsResult<usize> {
-        let src_attr = self.get_inode(src_ino)?;
-        if matches!(src_attr.kind, FileType::Directory) {
-            return Err(FsError::InvalidInodeType);
-        }
-        let dest_attr = self.get_inode(dest_ino)?;
-        if matches!(dest_attr.kind, FileType::Directory) {
+        if self.is_dir(src_ino) || self.is_dir(dest_ino) {
             return Err(FsError::InvalidInodeType);
         }
 
@@ -476,7 +568,12 @@ impl EncryptedFs {
         Ok(len)
     }
 
+    /// Open a file.
     pub fn open(&mut self, ino: u64, read: bool, write: bool) -> FsResult<u64> {
+        if self.is_dir(ino) {
+            return Err(FsError::InvalidInodeType);
+        }
+
         let handle = self.allocate_next_file_handle();
         if read {
             self.create_read_handle(ino, handle)?;
@@ -583,7 +680,7 @@ impl EncryptedFs {
         Ok(bincode::serialize_into(file, &attr)?)
     }
 
-    fn allocate_next_file_handle(&mut self) -> u64 {
+    pub fn allocate_next_file_handle(&mut self) -> u64 {
         self.current_file_handle += 1;
 
         self.current_file_handle
@@ -595,8 +692,10 @@ impl EncryptedFs {
 
         let key: Vec<_> = "a".repeat(32).as_bytes().to_vec();
         let iv: Vec<_> = decode("dB0Ej+7zWZWTS5JUCldWMg==").unwrap();
-        let mut decryptor = read::Decryptor::new(file, Cipher::chacha20(), &key, &iv).unwrap();
-        self.read_handles.insert(handle, (0, decryptor));
+        let decryptor = read::Decryptor::new(file, Cipher::chacha20(), &key, &iv).unwrap();
+        let attr = self.get_inode(ino)?;
+        // save attr also to avoid loading it multiple times while reading
+        self.read_handles.insert(handle, (attr, 0, decryptor));
         Ok(handle)
     }
 
@@ -606,8 +705,10 @@ impl EncryptedFs {
 
         let key: Vec<_> = "a".repeat(32).as_bytes().to_vec();
         let iv: Vec<_> = decode("dB0Ej+7zWZWTS5JUCldWMg==").unwrap();
-        let mut encryptor = write::Encryptor::new(file, Cipher::chacha20(), &key, &iv).unwrap();
-        self.write_handles.insert(handle, (0, encryptor));
+        let encryptor = write::Encryptor::new(file, Cipher::chacha20(), &key, &iv).unwrap();
+        // save attr also to avoid loading it multiple times while writing
+        let attr = self.get_inode(ino)?;
+        self.write_handles.insert(handle, (attr, 0, encryptor));
         Ok(handle)
     }
 

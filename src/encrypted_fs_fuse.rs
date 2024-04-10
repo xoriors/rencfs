@@ -3,12 +3,12 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::os::raw::c_int;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use fuser::{FileAttr, Filesystem, FileType, KernelConfig, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow};
 use fuser::consts::FOPEN_DIRECT_IO;
 use fuser::TimeOrNow::Now;
-use libc::{EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY, truncate};
+use libc::{EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY};
 use log::{debug, warn};
 
 use crate::encrypted_fs::{EncryptedFs, FsError, FsResult};
@@ -119,7 +119,7 @@ impl Filesystem for EncryptedFsFuse {
 
         match self.fs.get_inode(parent) {
             Err(err) => {
-                debug!("  not found {} {:?} {}", parent, name, err);
+                debug!("not found {} {:?} {}", parent, name, err);
                 reply.error(ENOENT);
             }
             Ok(parent_attr) => {
@@ -138,15 +138,15 @@ impl Filesystem for EncryptedFsFuse {
                 match self.fs.find_by_name(parent, name.to_str().unwrap()) {
                     Ok(Some(attr)) => {
                         if attr.kind == FileType::Directory {
-                            debug!("  dir {}", attr.ino);
+                            debug!("dir {}", attr.ino);
                             reply.entry(&Duration::new(0, 0), &&attr, 0);
                         } else {
-                            debug!("  file {}", attr.ino);
+                            debug!("file {}", attr.ino);
                             reply.entry(&Duration::new(0, 0), &&attr, 0);
                         }
                     }
                     _ => {
-                        debug!("  not found");
+                        debug!("not found");
                         reply.error(ENOENT);
                     }
                 }
@@ -163,417 +163,16 @@ impl Filesystem for EncryptedFsFuse {
 
         match self.fs.get_inode(ino) {
             Err(err) => {
-                debug!("  not found {}", err);
+                debug!("not found {}", err);
                 reply.error(ENOENT)
             }
             Ok(attr) => {
                 if attr.kind == FileType::Directory {
-                    debug!("  dir {}", ino);
+                    debug!("dir {}", ino);
                     reply.attr(&Duration::new(0, 0), &attr);
                 } else {
-                    debug!("  file {}", ino);
+                    debug!("file {}", ino);
                     reply.attr(&Duration::new(0, 0), &attr);
-                }
-            }
-        }
-    }
-
-    fn mknod(
-        &mut self,
-        req: &Request,
-        parent: u64,
-        name: &OsStr,
-        mode: u32,
-        _umask: u32,
-        _rdev: u32,
-        reply: ReplyEntry,
-    ) {
-        debug!("mknod() called with {:?} {:?} {:o}", parent, name, mode);
-
-        let file_type = mode & libc::S_IFMT as u32;
-
-        if file_type != libc::S_IFREG as u32
-            // && file_type != libc::S_IFLNK as u32
-            && file_type != libc::S_IFDIR as u32
-        {
-            // TODO
-            warn!("mknod() implementation is incomplete. Only supports regular files and directories. Got {:o}", mode);
-            reply.error(libc::ENOSYS);
-            return;
-        }
-
-        match self.create_nod(parent, mode, req, name, false, false) {
-            Ok((_, attr)) => {
-                // TODO: implement flags
-                reply.entry(&Duration::new(0, 0), &attr, 0);
-            }
-            Err(err) => reply.error(err)
-        }
-    }
-
-    fn access(&mut self, req: &Request, inode: u64, mask: i32, reply: ReplyEmpty) {
-        debug!("access() called with {:?} {:?}", inode, mask);
-
-        match self.fs.get_inode(inode) {
-            Ok(attr) => {
-                if check_access(attr.uid, attr.gid, attr.perm, req.uid(), req.gid(), mask) {
-                    reply.ok();
-                } else {
-                    reply.error(libc::EACCES);
-                }
-            }
-            _ => reply.error(ENOENT),
-        }
-    }
-
-    fn create(
-        &mut self,
-        req: &Request,
-        parent: u64,
-        name: &OsStr,
-        mode: u32,
-        _umask: u32,
-        flags: i32,
-        reply: ReplyCreate,
-    ) {
-        debug!("create() called with {:?} {:?}", parent, name);
-
-        let (read, write) = match flags & libc::O_ACCMODE {
-            libc::O_RDONLY => (true, false),
-            libc::O_WRONLY => (false, true),
-            libc::O_RDWR => (true, true),
-            // Exactly one access mode flag must be specified
-            _ => {
-                reply.error(libc::EINVAL);
-                return;
-            }
-        };
-
-        match self.create_nod(parent, mode, req, name, read, write) {
-            Ok((handle, attr)) => {
-                debug!("  created handle {}", handle);
-                // TODO: implement flags
-                reply.created(
-                    &Duration::new(0, 0),
-                    &attr,
-                    0,
-                    handle,
-                    0,
-                );
-            }
-            Err(err) => reply.error(err)
-        }
-    }
-    fn open(&mut self, req: &Request, inode: u64, flags: i32, reply: ReplyOpen) {
-        debug!("open() called for {:?}", inode);
-
-        let (access_mask, read, write) = match flags & libc::O_ACCMODE {
-            libc::O_RDONLY => {
-                // Behavior is undefined, but most filesystems return EACCES
-                if flags & libc::O_TRUNC != 0 {
-                    reply.error(libc::EACCES);
-                    return;
-                }
-                if flags & FMODE_EXEC != 0 {
-                    // Open is from internal exec syscall
-                    (libc::X_OK, true, false)
-                } else {
-                    (libc::R_OK, true, false)
-                }
-            }
-            libc::O_WRONLY => (libc::W_OK, false, true),
-            libc::O_RDWR => (libc::R_OK | libc::W_OK, true, true),
-            // Exactly one access mode flag must be specified
-            _ => {
-                reply.error(libc::EINVAL);
-                return;
-            }
-        };
-
-        match self.fs.get_inode(inode) {
-            Ok(attr) => {
-                if check_access(attr.uid, attr.gid, attr.perm, req.uid(), req.gid(), access_mask) {
-                    let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
-                    match self.fs.open(inode, read, write) {
-                        Err(_) => {
-                            reply.error(EBADF);
-                            return;
-                        }
-                        Ok(handle) => {
-                            debug!("  opened handle {}", handle);
-                            reply.opened(handle, open_flags);
-                        }
-                    }
-                } else {
-                    reply.error(libc::EACCES);
-                }
-            }
-            _ => reply.error(ENOENT)
-        }
-    }
-
-    fn opendir(&mut self, req: &Request, inode: u64, flags: i32, reply: ReplyOpen) {
-        debug!("opendir() called on {:?}", inode);
-
-        let (access_mask, _read, _write) = match flags & libc::O_ACCMODE {
-            libc::O_RDONLY => {
-                // Behavior is undefined, but most filesystems return EACCES
-                if flags & libc::O_TRUNC != 0 {
-                    reply.error(libc::EACCES);
-                    return;
-                }
-                (libc::R_OK, true, false)
-            }
-            libc::O_WRONLY => (libc::W_OK, false, true),
-            libc::O_RDWR => (libc::R_OK | libc::W_OK, true, true),
-            // Exactly one access mode flag must be specified
-            _ => {
-                reply.error(libc::EINVAL);
-                return;
-            }
-        };
-
-        match self.fs.get_inode(inode) {
-            Ok(attr) => {
-                if check_access(
-                    attr.uid,
-                    attr.gid,
-                    attr.perm,
-                    req.uid(),
-                    req.gid(),
-                    access_mask,
-                ) {
-                    let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
-                    self.dir_handle +=1;
-                    reply.opened(self.dir_handle, open_flags);
-                }
-            }
-            _ => reply.error(ENOENT)
-        }
-    }
-
-    fn read(
-        &mut self,
-        _req: &Request,
-        ino: u64,
-        fh: u64,
-        offset: i64,
-        size: u32,
-        _flags: i32,
-        _lock: Option<u64>,
-        reply: ReplyData,
-    ) {
-        debug!("read {} {} {}", ino, offset, size);
-
-        match self.fs.get_inode(ino) {
-            Err(err) => {
-                debug!("  not found {}", err);
-
-                reply.error(ENOENT)
-            }
-            Ok(attr) => {
-                if attr.kind == FileType::Directory {
-                    reply.error(ENOENT);
-                    return;
-                }
-                let read_size = min(size, attr.size as u32 - offset as u32);
-                debug!("  read size={}", read_size);
-                let mut buffer = vec![0; read_size as usize];
-                match self.fs.read(ino, offset as u64, &mut buffer, fh) {
-                    Err(err) => {
-                        debug!("  read error {}", err);
-                        reply.error(EIO);
-                        return;
-                    }
-                    Ok(len) => {
-                        reply.data(&buffer[..len]);
-                    }
-                }
-            }
-        }
-    }
-
-    fn write(
-        &mut self,
-        _req: &Request,
-        inode: u64,
-        fh: u64,
-        offset: i64,
-        data: &[u8],
-        _write_flags: u32,
-        #[allow(unused_variables)] flags: i32,
-        _lock_owner: Option<u64>,
-        reply: ReplyWrite,
-    ) {
-        debug!("write() called with {:?} offfset {:?} size={:?}", inode, offset, data.len());
-
-        assert!(offset >= 0);
-
-        match self.fs.get_inode(inode) {
-            Ok(attr) => {
-                if attr.kind == FileType::Directory {
-                    reply.error(ENOENT);
-                    return;
-                }
-                match self.fs.write_all(inode, offset as u64, data, fh) {
-                    Err(err) => {
-                        debug!("  write error {}", err);
-                        reply.error(EIO);
-                        return;
-                    }
-                    Ok(_) => {
-                        let mut attr = self.fs.get_inode(inode).unwrap();
-                        // XXX: In theory we should only need to do this when WRITE_KILL_PRIV is set for 7.31+
-                        // However, xfstests fail in that case
-                        clear_suid_sgid(&mut attr);
-                        if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
-                            debug!("  write error {}", err);
-                            reply.error(ENOENT);
-                            return;
-                        }
-
-                        reply.written(data.len() as u32);
-                    }
-                }
-            }
-            Err(err) => {
-                debug!("  not found {}", err);
-                reply.error(ENOENT);
-            }
-        }
-    }
-
-    fn flush(&mut self, _req: &Request<'_>, ino: u64, fh: u64, lock_owner: u64, reply: ReplyEmpty) {
-        debug!("flush() called with {:?} {:?} {:?}", ino, fh, lock_owner);
-
-        if let Err(_) = self.fs.flush(fh) {
-            reply.error(EBADF);
-            return;
-        }
-
-        reply.ok();
-    }
-
-    fn release(&mut self, _req: &Request<'_>, _ino: u64, fh: u64, _flags: i32, _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
-        debug!("release() called with {:?} {:?} {:?} {}", _ino, fh, _lock_owner, fh);
-
-        if let Err(_) = self.fs.release_handle(fh) {
-            reply.error(EBADF);
-            return;
-        }
-
-        reply.ok();
-    }
-
-    fn releasedir(
-        &mut self,
-        _req: &Request<'_>,
-        inode: u64,
-        _fh: u64,
-        _flags: i32,
-        reply: ReplyEmpty,
-    ) {
-        debug!("releasedir() called with {:?} {:?}", inode, _fh);
-
-        reply.ok();
-    }
-
-    fn readdir(
-        &mut self,
-        _req: &Request,
-        ino: u64,
-        _fh: u64,
-        offset: i64,
-        mut reply: ReplyDirectory,
-    ) {
-        debug!("readdir {} {} {}", ino, _fh, offset);
-
-        match self.fs.get_inode(ino) {
-            Ok(attr) => {
-                if attr.kind != FileType::Directory {
-                    reply.error(ENOTDIR);
-                    return;
-                }
-
-                match self.fs.read_dir(ino) {
-                    Ok(iter) => {
-                        for (i, entry) in iter.into_iter().enumerate().skip(offset as usize) {
-                            if reply.add(entry.ino, (i + 1) as i64, entry.kind, entry.name) {
-                                break;
-                            }
-                        }
-                    }
-                    _ => {
-                        reply.error(ENOENT);
-                        return;
-                    }
-                }
-
-                reply.ok();
-            }
-            _ => reply.error(ENOENT),
-        }
-    }
-
-    fn mkdir(
-        &mut self,
-        req: &Request,
-        parent: u64,
-        name: &OsStr,
-        mut mode: u32,
-        _umask: u32,
-        reply: ReplyEntry,
-    ) {
-        debug!("mkdir() called with {:?} {:?} {:o}", parent, name, mode);
-
-        if self.fs.exists_by_name(parent, name.to_str().unwrap()) {
-            reply.error(libc::EEXIST);
-            return;
-        }
-
-        match self.fs.get_inode(parent) {
-            Err(_) => {
-                reply.error(ENOENT);
-                return;
-            }
-            Ok(parent_attr) => {
-                if !check_access(
-                    parent_attr.uid,
-                    parent_attr.gid,
-                    parent_attr.perm,
-                    req.uid(),
-                    req.gid(),
-                    libc::W_OK,
-                ) {
-                    reply.error(libc::EACCES);
-                    return;
-                }
-
-                let mut attr = dir_attr();
-                attr.size = BLOCK_SIZE;
-                attr.atime = SystemTime::now();
-                attr.mtime = SystemTime::now();
-                attr.ctime = SystemTime::now();
-
-                if req.uid() != 0 {
-                    mode &= !(libc::S_ISUID | libc::S_ISGID);
-                }
-                if parent_attr.perm & libc::S_ISGID as u16 != 0 {
-                    mode |= libc::S_ISGID as u32;
-                }
-                attr.perm = self.creation_mode(mode);
-
-                attr.uid = req.uid();
-                attr.gid = creation_gid(&parent_attr, req.gid());
-
-                match self.fs.create_nod(parent, name.to_str().unwrap(), attr, false, false) {
-                    Err(err) => {
-                        debug!("  mkdir error {}", err);
-                        reply.error(ENOENT);
-
-                        return;
-                    }
-                    Ok((_, attr)) => reply.entry(&Duration::new(0, 0), &attr, 0)
                 }
             }
         }
@@ -622,6 +221,11 @@ impl Filesystem for EncryptedFsFuse {
                 attr.perm = mode as u16;
             }
             attr.ctime = SystemTime::now();
+            if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
+                debug!("chmod error {}", err);
+                reply.error(ENOENT);
+                return;
+            }
             reply.attr(&Duration::new(0, 0), &attr);
             return;
         }
@@ -669,6 +273,11 @@ impl Filesystem for EncryptedFsFuse {
                 }
             }
             attr.ctime = SystemTime::now();
+            if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
+                debug!("chmod error {}", err);
+                reply.error(ENOENT);
+                return;
+            }
             reply.attr(&Duration::new(0, 0), &attr);
             return;
         }
@@ -677,7 +286,7 @@ impl Filesystem for EncryptedFsFuse {
             debug!("truncate() called with {:?} {:?}", inode, size);
 
             if let Err(err) = self.fs.truncate(inode, size) {
-                debug!("  truncate error {}", err);
+                debug!("truncate error {}", err);
                 reply.error(EBADF);
                 return;
             }
@@ -743,7 +352,7 @@ impl Filesystem for EncryptedFsFuse {
         }
 
         if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
-            debug!("  setattr error {}", err);
+            debug!("setattr error {}", err);
             reply.error(ENOENT);
             return;
         }
@@ -752,6 +361,102 @@ impl Filesystem for EncryptedFsFuse {
         return;
     }
 
+    fn mknod(
+        &mut self,
+        req: &Request,
+        parent: u64,
+        name: &OsStr,
+        mode: u32,
+        _umask: u32,
+        _rdev: u32,
+        reply: ReplyEntry,
+    ) {
+        debug!("mknod() called with {:?} {:?} {:o}", parent, name, mode);
+
+        let file_type = mode & libc::S_IFMT as u32;
+
+        if file_type != libc::S_IFREG as u32
+            // && file_type != libc::S_IFLNK as u32
+            && file_type != libc::S_IFDIR as u32
+        {
+            // TODO
+            warn!("mknod() implementation is incomplete. Only supports regular files and directories. Got {:o}", mode);
+            reply.error(libc::ENOSYS);
+            return;
+        }
+
+        match self.create_nod(parent, mode, req, name, false, false) {
+            Ok((_, attr)) => {
+                // TODO: implement flags
+                reply.entry(&Duration::new(0, 0), &attr, 0);
+            }
+            Err(err) => reply.error(err)
+        }
+    }
+
+    fn mkdir(
+        &mut self,
+        req: &Request,
+        parent: u64,
+        name: &OsStr,
+        mut mode: u32,
+        _umask: u32,
+        reply: ReplyEntry,
+    ) {
+        debug!("mkdir() called with {:?} {:?} {:o}", parent, name, mode);
+
+        if self.fs.exists_by_name(parent, name.to_str().unwrap()) {
+            reply.error(libc::EEXIST);
+            return;
+        }
+
+        match self.fs.get_inode(parent) {
+            Err(_) => {
+                reply.error(ENOENT);
+                return;
+            }
+            Ok(parent_attr) => {
+                if !check_access(
+                    parent_attr.uid,
+                    parent_attr.gid,
+                    parent_attr.perm,
+                    req.uid(),
+                    req.gid(),
+                    libc::W_OK,
+                ) {
+                    reply.error(libc::EACCES);
+                    return;
+                }
+
+                let mut attr = dir_attr();
+                attr.size = BLOCK_SIZE;
+                attr.atime = SystemTime::now();
+                attr.mtime = SystemTime::now();
+                attr.ctime = SystemTime::now();
+
+                if req.uid() != 0 {
+                    mode &= !(libc::S_ISUID | libc::S_ISGID);
+                }
+                if parent_attr.perm & libc::S_ISGID as u16 != 0 {
+                    mode |= libc::S_ISGID as u32;
+                }
+                attr.perm = self.creation_mode(mode);
+
+                attr.uid = req.uid();
+                attr.gid = creation_gid(&parent_attr, req.gid());
+
+                match self.fs.create_nod(parent, name.to_str().unwrap(), attr, false, false) {
+                    Err(err) => {
+                        debug!("mkdir error {}", err);
+                        reply.error(ENOENT);
+
+                        return;
+                    }
+                    Ok((_, attr)) => reply.entry(&Duration::new(0, 0), &attr, 0)
+                }
+            }
+        }
+    }
     fn unlink(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
         debug!("unlink() called with {:?} {:?}", parent, name);
 
@@ -777,7 +482,7 @@ impl Filesystem for EncryptedFsFuse {
                         }
 
                         if let Err(err) = self.fs.remove_file(parent, name.to_str().unwrap()) {
-                            debug!("  unlink error {}", err);
+                            debug!("unlink error {}", err);
                             reply.error(ENOENT);
                             return;
                         }
@@ -813,14 +518,8 @@ impl Filesystem for EncryptedFsFuse {
                 match self.fs.find_by_name(parent, name.to_str().unwrap()) {
                     Ok(Some(attr)) => {
                         if attr.kind != FileType::Directory {
-                            reply.error(libc::EACCES);
+                            reply.error(ENOTDIR);
                             return;
-                        }
-                        if let Ok(children) = self.fs.children_count(attr.ino) {
-                            if children > 2 {
-                                reply.error(libc::ENOTEMPTY);
-                                return;
-                            }
                         }
 
                         // "Sticky bit" handling
@@ -834,7 +533,7 @@ impl Filesystem for EncryptedFsFuse {
                         }
 
                         if let Err(err) = self.fs.remove_dir(parent, name.to_str().unwrap()) {
-                            debug!("  rmdir error {}", err);
+                            debug!("rmdir error {}", err);
                             reply.error(ENOENT);
 
                             return;
@@ -846,51 +545,6 @@ impl Filesystem for EncryptedFsFuse {
                 }
             }
             _ => reply.error(ENOENT)
-        }
-    }
-
-    fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
-        warn!("statfs() implementation is a stub");
-        // TODO: real implementation of this
-        reply.statfs(
-            10_000,
-            10_000,
-            10_000,
-            1,
-            10_000,
-            BLOCK_SIZE as u32,
-            MAX_NAME_LENGTH,
-            BLOCK_SIZE as u32,
-        );
-    }
-
-    fn copy_file_range(
-        &mut self,
-        _req: &Request<'_>,
-        src_inode: u64,
-        src_fh: u64,
-        src_offset: i64,
-        dest_inode: u64,
-        dest_fh: u64,
-        dest_offset: i64,
-        size: u64,
-        _flags: u32,
-        reply: ReplyWrite,
-    ) {
-        debug!(
-            "copy_file_range() called with src ({}, {}, {}) dest ({}, {}, {}) size={}",
-            src_fh, src_inode, src_offset, dest_fh, dest_inode, dest_offset, size
-        );
-
-        match self.fs.copy_file_range(src_inode, src_offset as u64, dest_inode, dest_offset as u64, size as usize, src_fh, dest_fh) {
-            Err(err) => {
-                debug!("  copy_file_range error {}", err);
-                reply.error(EBADF);
-                return;
-            }
-            Ok(len) => {
-                reply.written(len as u32);
-            }
         }
     }
 
@@ -961,10 +615,10 @@ impl Filesystem for EncryptedFsFuse {
 
         // "Sticky bit" handling in new_parent
         if new_parent_attr.perm & libc::S_ISVTX as u16 != 0 {
-            if let Ok(Some(existing_attrs)) = self.fs.find_by_name(new_parent, new_name.to_str().unwrap()) {
+            if let Ok(Some(new_attrs)) = self.fs.find_by_name(new_parent, new_name.to_str().unwrap()) {
                 if req.uid() != 0
                     && req.uid() != new_parent_attr.uid
-                    && req.uid() != existing_attrs.uid
+                    && req.uid() != new_attrs.uid
                 {
                     reply.error(libc::EACCES);
                     return;
@@ -1000,6 +654,353 @@ impl Filesystem for EncryptedFsFuse {
             }
         }
     }
+
+    fn open(&mut self, req: &Request, inode: u64, flags: i32, reply: ReplyOpen) {
+        debug!("open() called for {:?}", inode);
+
+        let (access_mask, read, write) = match flags & libc::O_ACCMODE {
+            libc::O_RDONLY => {
+                // Behavior is undefined, but most filesystems return EACCES
+                if flags & libc::O_TRUNC != 0 {
+                    reply.error(libc::EACCES);
+                    return;
+                }
+                if flags & FMODE_EXEC != 0 {
+                    // Open is from internal exec syscall
+                    (libc::X_OK, true, false)
+                } else {
+                    (libc::R_OK, true, false)
+                }
+            }
+            libc::O_WRONLY => (libc::W_OK, false, true),
+            libc::O_RDWR => (libc::R_OK | libc::W_OK, true, true),
+            // Exactly one access mode flag must be specified
+            _ => {
+                reply.error(libc::EINVAL);
+                return;
+            }
+        };
+
+        match self.fs.get_inode(inode) {
+            Ok(attr) => {
+                if check_access(attr.uid, attr.gid, attr.perm, req.uid(), req.gid(), access_mask) {
+                    let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
+                    match self.fs.open(inode, read, write) {
+                        Err(_) => {
+                            reply.error(EBADF);
+                            return;
+                        }
+                        Ok(handle) => {
+                            debug!("opened handle {}", handle);
+                            reply.opened(handle, open_flags);
+                        }
+                    }
+                } else {
+                    reply.error(libc::EACCES);
+                }
+            }
+            _ => reply.error(ENOENT)
+        }
+    }
+
+    fn read(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        fh: u64,
+        offset: i64,
+        size: u32,
+        _flags: i32,
+        _lock: Option<u64>,
+        reply: ReplyData,
+    ) {
+        debug!("read {} {} {}", ino, offset, size);
+
+        match self.fs.get_inode(ino) {
+            Err(err) => {
+                debug!("not found {}", err);
+
+                reply.error(ENOENT)
+            }
+            Ok(attr) => {
+                if attr.kind == FileType::Directory {
+                    reply.error(ENOENT);
+                    return;
+                }
+                let read_size = min(size, attr.size as u32 - offset as u32);
+                debug!("read size={}", read_size);
+                let mut buffer = vec![0; read_size as usize];
+                match self.fs.read(ino, offset as u64, &mut buffer, fh) {
+                    Err(err) => {
+                        debug!("read error {}", err);
+                        reply.error(EIO);
+                        return;
+                    }
+                    Ok(len) => {
+                        reply.data(&buffer[..len]);
+                    }
+                }
+            }
+        }
+    }
+
+    fn write(
+        &mut self,
+        _req: &Request,
+        inode: u64,
+        fh: u64,
+        offset: i64,
+        data: &[u8],
+        _write_flags: u32,
+        #[allow(unused_variables)] flags: i32,
+        _lock_owner: Option<u64>,
+        reply: ReplyWrite,
+    ) {
+        debug!("write() called with {:?} offfset {:?} size={:?}", inode, offset, data.len());
+
+        match self.fs.write_all(inode, offset as u64, data, fh) {
+            Err(err) => {
+                debug!("write error {}", err);
+                reply.error(EIO);
+                return;
+            }
+            Ok(_) => {
+                let mut attr = self.fs.get_inode(inode).unwrap();
+                // XXX: In theory we should only need to do this when WRITE_KILL_PRIV is set for 7.31+
+                // However, xfstests fail in that case
+                clear_suid_sgid(&mut attr);
+                if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
+                    debug!("write error {}", err);
+                    reply.error(ENOENT);
+                    return;
+                }
+
+                reply.written(data.len() as u32);
+            }
+        }
+    }
+
+    fn flush(&mut self, _req: &Request<'_>, ino: u64, fh: u64, lock_owner: u64, reply: ReplyEmpty) {
+        debug!("flush() called with {:?} {:?} {:?}", ino, fh, lock_owner);
+
+        if let Err(err) = self.fs.flush(fh) {
+            debug!("flush error {}", err);
+            reply.error(EBADF);
+            return;
+        }
+
+        reply.ok();
+    }
+
+    fn release(&mut self, _req: &Request<'_>, ino: u64, fh: u64, _flags: i32, _lock_owner: Option<u64>, flush: bool, reply: ReplyEmpty) {
+        debug!("release() called with {:?} {:?} {:?}", ino, fh, _lock_owner);
+
+        if flush {
+            if let Err(err) = self.fs.flush(fh) {
+                debug!("flush error {}", err);
+                reply.error(EIO);
+                return;
+            }
+        }
+
+        if let Err(err) = self.fs.release_handle(fh) {
+            debug!("release error {}", err);
+            reply.error(EIO);
+            return;
+        }
+
+        reply.ok();
+    }
+
+    fn opendir(&mut self, req: &Request, inode: u64, flags: i32, reply: ReplyOpen) {
+        debug!("opendir() called on {:?}", inode);
+
+        let (access_mask, _read, _write) = match flags & libc::O_ACCMODE {
+            libc::O_RDONLY => {
+                // Behavior is undefined, but most filesystems return EACCES
+                if flags & libc::O_TRUNC != 0 {
+                    reply.error(libc::EACCES);
+                    return;
+                }
+                (libc::R_OK, true, false)
+            }
+            libc::O_WRONLY => (libc::W_OK, false, true),
+            libc::O_RDWR => (libc::R_OK | libc::W_OK, true, true),
+            // Exactly one access mode flag must be specified
+            _ => {
+                reply.error(libc::EINVAL);
+                return;
+            }
+        };
+
+        match self.fs.get_inode(inode) {
+            Ok(attr) => {
+                if check_access(
+                    attr.uid,
+                    attr.gid,
+                    attr.perm,
+                    req.uid(),
+                    req.gid(),
+                    access_mask,
+                ) {
+                    let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
+                    self.dir_handle += 1;
+                    reply.opened(self.dir_handle, open_flags);
+                } else {
+                    reply.error(libc::EACCES);
+                }
+            }
+            _ => reply.error(ENOENT)
+        }
+    }
+
+    fn readdir(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        fh: u64,
+        offset: i64,
+        mut reply: ReplyDirectory,
+    ) {
+        debug!("readdir {} {} {}", ino, fh, offset);
+
+        match self.fs.read_dir(ino) {
+            Ok(iter) => {
+                for (i, entry) in iter.enumerate().skip(offset as usize) {
+                    if entry.is_err() {
+                        reply.error(EIO);
+                        return;
+                    }
+                    let entry = entry.unwrap();
+                    if reply.add(entry.ino, (i + 1) as i64, entry.kind, entry.name) {
+                        break;
+                    }
+                }
+            }
+            Err(FsError::InvalidInodeType) => {
+                reply.error(ENOTDIR);
+                return;
+            }
+            _ => {
+                reply.error(ENOENT);
+                return;
+            }
+        }
+
+        reply.ok();
+    }
+
+    fn releasedir(
+        &mut self,
+        _req: &Request<'_>,
+        inode: u64,
+        _fh: u64,
+        _flags: i32,
+        reply: ReplyEmpty,
+    ) {
+        debug!("releasedir() called with {:?} {:?}", inode, _fh);
+
+        reply.ok();
+    }
+
+    fn statfs(&mut self, _req: &Request, _ino: u64, reply: ReplyStatfs) {
+        warn!("statfs() implementation is a stub");
+        // TODO: real implementation of this
+        reply.statfs(
+            10_000,
+            10_000,
+            10_000,
+            1,
+            10_000,
+            BLOCK_SIZE as u32,
+            MAX_NAME_LENGTH,
+            BLOCK_SIZE as u32,
+        );
+    }
+
+    fn access(&mut self, req: &Request, inode: u64, mask: i32, reply: ReplyEmpty) {
+        debug!("access() called with {:?} {:?}", inode, mask);
+
+        match self.fs.get_inode(inode) {
+            Ok(attr) => {
+                if check_access(attr.uid, attr.gid, attr.perm, req.uid(), req.gid(), mask) {
+                    reply.ok();
+                } else {
+                    reply.error(libc::EACCES);
+                }
+            }
+            _ => reply.error(ENOENT),
+        }
+    }
+
+    fn create(
+        &mut self,
+        req: &Request,
+        parent: u64,
+        name: &OsStr,
+        mode: u32,
+        _umask: u32,
+        flags: i32,
+        reply: ReplyCreate,
+    ) {
+        debug!("create() called with {:?} {:?}", parent, name);
+
+        let (read, write) = match flags & libc::O_ACCMODE {
+            libc::O_RDONLY => (true, false),
+            libc::O_WRONLY => (false, true),
+            libc::O_RDWR => (true, true),
+            // Exactly one access mode flag must be specified
+            _ => {
+                reply.error(libc::EINVAL);
+                return;
+            }
+        };
+
+        match self.create_nod(parent, mode, req, name, read, write) {
+            Ok((handle, attr)) => {
+                debug!("created handle {}", handle);
+                // TODO: implement flags
+                reply.created(
+                    &Duration::new(0, 0),
+                    &attr,
+                    0,
+                    handle,
+                    0,
+                );
+            }
+            Err(err) => reply.error(err)
+        }
+    }
+
+    fn copy_file_range(
+        &mut self,
+        _req: &Request<'_>,
+        src_inode: u64,
+        src_fh: u64,
+        src_offset: i64,
+        dest_inode: u64,
+        dest_fh: u64,
+        dest_offset: i64,
+        size: u64,
+        _flags: u32,
+        reply: ReplyWrite,
+    ) {
+        debug!(
+            "copy_file_range() called with src ({}, {}, {}) dest ({}, {}, {}) size={}",
+            src_fh, src_inode, src_offset, dest_fh, dest_inode, dest_offset, size
+        );
+
+        match self.fs.copy_file_range(src_inode, src_offset as u64, dest_inode, dest_offset as u64, size as usize, src_fh, dest_fh) {
+            Err(err) => {
+                debug!("copy_file_range error {}", err);
+                reply.error(EBADF);
+                return;
+            }
+            Ok(len) => {
+                reply.written(len as u32);
+            }
+        }
+    }
 }
 
 fn dir_attr() -> FileAttr {
@@ -1010,7 +1011,7 @@ fn dir_attr() -> FileAttr {
         atime: SystemTime::now(),
         mtime: SystemTime::now(),
         ctime: SystemTime::now(),
-        crtime: UNIX_EPOCH,
+        crtime: SystemTime::now(),
         kind: FileType::Directory,
         perm: 0o777,
         nlink: 2,
@@ -1033,7 +1034,7 @@ fn file_attr(size: u64) -> FileAttr {
         atime: SystemTime::now(),
         mtime: SystemTime::now(),
         ctime: SystemTime::now(),
-        crtime: UNIX_EPOCH,
+        crtime: SystemTime::now(),
         kind: FileType::RegularFile,
         perm: 0o644,
         nlink: 1,

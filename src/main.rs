@@ -1,36 +1,17 @@
 use std::{env, panic};
 use std::ffi::OsStr;
-use std::time::Duration;
 
 use clap::{Arg, ArgAction, Command, crate_version};
 use ctrlc::set_handler;
 use fuse3::MountOptions;
 use fuse3::raw::prelude::*;
+use libc::umount;
 use tokio::task;
 use tracing::Level;
 
 use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
 
-const CONTENT: &str = "hello world\n";
-
-const PARENT_INODE: u64 = 1;
-const FILE_INODE: u64 = 2;
-const FILE_NAME: &str = "hello-world.txt";
-const PARENT_MODE: u16 = 0o755;
-const FILE_MODE: u16 = 0o644;
-const TTL: Duration = Duration::from_secs(1);
-const STATFS: ReplyStatFs = ReplyStatFs {
-    blocks: 1,
-    bfree: 0,
-    bavail: 0,
-    files: 1,
-    ffree: 0,
-    bsize: 4096,
-    namelen: u32::MAX,
-    frsize: 0,
-};
-
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() {
     log_init();
     env_logger::init();
@@ -99,6 +80,8 @@ fn async_main() {
             .unwrap()
             .to_string();
 
+        unomunt(mountpoint.as_str());
+
         let data_dir: String = matches
             .get_one::<String>("data-dir")
             .unwrap()
@@ -107,12 +90,8 @@ fn async_main() {
         // unmount on process kill
         let mountpoint_kill = mountpoint.clone();
         set_handler(move || {
-            unomunt(mountpoint_kill.to_string());
+            unomunt(mountpoint_kill.as_str());
         }).unwrap();
-
-        let mountpoint_panic = mountpoint.clone();
-
-        let args = env::args_os().skip(1).take(1).collect::<Vec<_>>();
 
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
@@ -122,7 +101,8 @@ fn async_main() {
 
         let mount_path = OsStr::new(mountpoint.as_str());
         Session::new(mount_options)
-            .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir.clone()), mount_path)
+            .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir.clone(), matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(),
+                                     mount_path)
             .await
             .unwrap()
             .await
@@ -130,7 +110,7 @@ fn async_main() {
     });
 }
 
-fn unomunt(mountpoint: String) {
+fn unomunt(mountpoint: &str) {
     let output = std::process::Command::new("umount")
         .arg(mountpoint)
         .output()
@@ -147,7 +127,7 @@ fn unomunt(mountpoint: String) {
 
 fn log_init() {
     let subscriber = tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::INFO)
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 }
