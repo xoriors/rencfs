@@ -12,6 +12,8 @@ use futures_util::stream;
 use futures_util::stream::Iter;
 use tracing::Level;
 
+mod aes_stream_with_writer_seek;
+
 const CONTENT: &str = "hello world\n";
 
 const PARENT_INODE: u64 = 1;

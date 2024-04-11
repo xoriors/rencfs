@@ -1,4 +1,4 @@
-use std::{env, panic};
+use std::{env, panic, process};
 use std::ffi::OsStr;
 
 use clap::{Arg, ArgAction, Command, crate_version};
@@ -97,6 +97,7 @@ fn async_main() {
         let mountpoint_kill = mountpoint.clone();
         set_handler(move || {
             unomunt(mountpoint_kill.as_str());
+            process::exit(0);
         }).unwrap();
 
         let data_dir: String = matches

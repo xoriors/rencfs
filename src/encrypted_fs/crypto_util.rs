@@ -68,8 +68,20 @@ pub fn decrypt_and_unnormalize_end_file_name(name: &str, key: &Vec<u8>) -> Strin
 }
 
 pub fn derive_key(password: &str, salt: &str) -> Vec<u8> {
-    let n = 600_000;
+    let mut n = 600_000;
+    if cfg!(test) {
+        n = 0;
+    }
     let mut dk = vec![0u8; 32];
     pbkdf2::pbkdf2_hmac::<sha2::Sha256>(password.as_bytes(), salt.as_bytes(), n, &mut dk);
     dk
+}
+
+pub fn normalize_end_encrypt_file_name(name: &str, key: &Vec<u8>) -> String {
+    let mut normalized_name = name.replace("/", "").replace("\\", "");
+    if normalized_name != "$." && normalized_name != "$.." {
+        normalized_name = encrypt_string(&normalized_name, key);
+        normalized_name = normalized_name.replace("/", "|");
+    }
+    normalized_name
 }

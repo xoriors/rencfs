@@ -176,7 +176,7 @@ impl EncryptedFsFuse3 {
         attr.gid = creation_gid(&parent_attr, req.gid);
 
         match self.get_fs().borrow_mut().create_nod(parent, name.to_str().unwrap(), attr, read, write) {
-            Ok(attr) => { Ok(attr) }
+            Ok((fh, attr)) => Ok((fh, attr)),
             Err(err) => {
                 debug!("create_nod() error {}", err);
                 match err {
@@ -955,7 +955,7 @@ impl Filesystem for EncryptedFsFuse3 {
         ) {
             let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
             Ok(ReplyOpen {
-                fh: self.get_fs().borrow_mut().allocate_next_file_handle(),
+                fh: self.get_fs().borrow_mut().allocate_next_handle(),
                 flags: open_flags,
             })
         } else {
