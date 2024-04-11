@@ -996,7 +996,6 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(())
     }
 
-
     #[instrument(skip(self))]
     async fn access(&self, req: Request, inode: u64, mask: u32) -> Result<()> {
         debug!("access() called with {:?} {:?}", inode, mask);

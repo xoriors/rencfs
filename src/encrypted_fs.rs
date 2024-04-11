@@ -6,6 +6,7 @@ use std::fs::{File, OpenOptions, ReadDir};
 use std::io::{Read, Seek, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 
 use base64::decode;
 use cryptostream::{read, write};
@@ -172,8 +173,7 @@ pub struct EncryptedFs {
     pub data_dir: PathBuf,
     write_handles: BTreeMap<u64, (FileAttr, PathBuf, u64, write::Encryptor<File>)>,
     read_handles: BTreeMap<u64, (FileAttr, u64, read::Decryptor<File>)>,
-    // TODO: change to AtomicU64
-    current_file_handle: u64,
+    current_file_handle: AtomicU64,
     key: Vec<u8>,
 }
 
@@ -187,8 +187,8 @@ impl EncryptedFs {
             data_dir: path,
             write_handles: BTreeMap::new(),
             read_handles: BTreeMap::new(),
-            current_file_handle: 0,
-            key: crypto_util::derive_key(password, "salt-42", 32),
+            current_file_handle: AtomicU64::new(1),
+            key: crypto_util::derive_key(password, "salt-42"),
         };
         let _ = fs.ensure_root_exists();
 
@@ -733,9 +733,7 @@ impl EncryptedFs {
     }
 
     pub fn allocate_next_file_handle(&mut self) -> u64 {
-        self.current_file_handle += 1;
-
-        self.current_file_handle
+        self.current_file_handle.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
     fn create_read_handle(&mut self, ino: u64, handle: u64) -> FsResult<u64> {
