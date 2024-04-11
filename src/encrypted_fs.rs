@@ -97,6 +97,8 @@ impl Iterator for DirectoryEntryIterator {
             name = ".".to_string();
         } else if name == "$.." {
             name = "..".to_string();
+        } else {
+            name = decrypt_and_unnormalize_end_file_name(&name);
         }
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(create_decryptor(file));
         if let Err(e) = res {
@@ -134,6 +136,8 @@ impl Iterator for DirectoryEntryPlusIterator {
             name = ".".to_string();
         } else if name == "$.." {
             name = "..".to_string();
+        } else {
+            name = decrypt_and_unnormalize_end_file_name(&name);
         }
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(create_decryptor(file));
         if let Err(e) = res {
@@ -288,6 +292,7 @@ impl EncryptedFs {
         } else if name == ".." {
             name = "$..";
         }
+        let name = normalize_end_encrypt_file_name(name);
         let file = File::open(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
         let (inode, _): (u64, FileType) = bincode::deserialize_from(create_decryptor(file))?;
         Ok(Some(self.get_inode(inode)?))
@@ -324,6 +329,7 @@ impl EncryptedFs {
         // remove contents directory
         fs::remove_dir_all(self.data_dir.join(CONTENTS_DIR).join(&ino_str))?;
         // remove from parent directory
+        let name = normalize_end_encrypt_file_name(name);
         fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
 
         let mut parent_attr = self.get_inode(parent)?;
@@ -353,6 +359,7 @@ impl EncryptedFs {
         // remove contents file
         fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(&ino_str))?;
         // remove from parent directory
+        let name = normalize_end_encrypt_file_name(name);
         fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
 
         let mut parent_attr = self.get_inode(parent)?;
@@ -369,6 +376,7 @@ impl EncryptedFs {
         } else if name == ".." {
             name = "$..";
         }
+        let name = normalize_end_encrypt_file_name(name);
         self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name).exists()
     }
 
@@ -801,12 +809,12 @@ impl EncryptedFs {
     fn insert_directory_entry(&self, parent: u64, entry: DirectoryEntry) -> FsResult<()> {
         let parent_path = self.data_dir.join(CONTENTS_DIR).join(parent.to_string());
         // remove path separators from name
-        let normalized_name = entry.name.replace("/", "").replace("\\", "");
+        let name = normalize_end_encrypt_file_name(&entry.name);
         let file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .open(&parent_path.join(normalized_name))?;
+            .open(&parent_path.join(name))?;
 
         // write inode and file type
         let entry = (entry.ino, entry.kind);
@@ -817,6 +825,7 @@ impl EncryptedFs {
 
     fn remove_directory_entry(&self, parent: u64, name: &str) -> FsResult<()> {
         let parent_path = self.data_dir.join(CONTENTS_DIR).join(parent.to_string());
+        let name = normalize_end_encrypt_file_name(name);
         fs::remove_file(parent_path.join(name))?;
         Ok(())
     }
@@ -856,14 +865,12 @@ fn ensure_structure_created(data_dir: &PathBuf) -> FsResult<()> {
     Ok(())
 }
 
-fn create_encryptor(mut file: File) -> write::Encryptor<File> {
+pub fn create_encryptor(mut file: File) -> write::Encryptor<File> {
     let key: Vec<_> = "a".repeat(32).as_bytes().to_vec();
     let mut iv: Vec<u8> = vec![0; 16];
     if file.metadata().unwrap().size() == 0 {
         // generate random IV
-        let mut rng = rand::thread_rng();
-        let bytes: [u8; 16] = rng.gen();
-        iv.copy_from_slice(&bytes);
+        rand::thread_rng().fill_bytes(&mut iv);
         file.write_all(&iv).unwrap();
     } else {
         // read IV from file
@@ -872,18 +879,61 @@ fn create_encryptor(mut file: File) -> write::Encryptor<File> {
     write::Encryptor::new(file, Cipher::chacha20(), &key, &iv).unwrap()
 }
 
-fn create_decryptor(mut file: File) -> read::Decryptor<File> {
+pub fn create_decryptor(mut file: File) -> read::Decryptor<File> {
     let key: Vec<_> = "a".repeat(32).as_bytes().to_vec();
     let mut iv: Vec<u8> = vec![0; 16];
     if file.metadata().unwrap().size() == 0 {
         // generate random IV
-        let mut rng = rand::thread_rng();
-        let bytes: [u8; 16] = rng.gen();
-        iv.copy_from_slice(&bytes);
+        rand::thread_rng().fill_bytes(&mut iv);
         file.write_all(&iv).unwrap();
     } else {
         // read IV from file
         file.read_exact(&mut iv).unwrap();
     }
     read::Decryptor::new(file, Cipher::chacha20(), &key, &iv).unwrap()
+}
+
+pub fn encrypt_string(s: &str) -> String {
+    let key: Vec<_> = "a".repeat(32).as_bytes().to_vec();
+    // use the same IV so the same string will be encrypted to the same value
+    let iv: Vec<_> = decode("dB0Ej+7zWZWTS5JUCldWMg==").unwrap();
+
+    let mut cursor = io::Cursor::new(vec![]);
+
+    let mut encryptor = write::Encryptor::new(cursor, Cipher::chacha20(), &key, &iv).unwrap();
+    encryptor.write_all(s.as_bytes()).unwrap();
+    cursor = encryptor.finish().unwrap();
+    base64::encode(&cursor.into_inner())
+}
+
+pub fn decrypt_string(s: &str) -> String {
+    let key: Vec<_> = "a".repeat(32).as_bytes().to_vec();
+    // use the same IV so the same string will be encrypted to the same value
+    let iv: Vec<_> = decode("dB0Ej+7zWZWTS5JUCldWMg==").unwrap();
+
+    let vec = decode(s).unwrap();
+    let cursor = io::Cursor::new(vec);
+
+    let mut decryptor = read::Decryptor::new(cursor, Cipher::chacha20(), &key, &iv).unwrap();
+    let mut decrypted = String::new();
+    decryptor.read_to_string(&mut decrypted).unwrap();
+    decrypted
+}
+
+fn normalize_end_encrypt_file_name(name: &str) -> String {
+    let mut normalized_name = name.replace("/", "").replace("\\", "");
+    if normalized_name != "$." && normalized_name != "$.." {
+        normalized_name = encrypt_string(&normalized_name);
+        normalized_name = normalized_name.replace("/", "|");
+    }
+    normalized_name
+}
+
+fn decrypt_and_unnormalize_end_file_name(name: &str) -> String {
+    let mut name = String::from(name);
+    if name != "$." && name != "$.." {
+        name = name.replace("|", "/");
+        name = decrypt_string(&name);
+    }
+    name.to_string()
 }
