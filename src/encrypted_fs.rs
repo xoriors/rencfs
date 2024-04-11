@@ -3,12 +3,14 @@ use std::cmp::max;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions, ReadDir};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use base64::decode;
 use cryptostream::{read, write};
 use fuser::{FileAttr, FileType};
+use openssl::error::ErrorStack;
 use openssl::symm::Cipher;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -52,6 +54,9 @@ pub enum FsError {
 
     #[error("other")]
     Other(String),
+
+    #[error("encryption error: {0}")]
+    Encryption(#[from] ErrorStack),
 }
 
 #[derive(Debug, PartialEq)]
@@ -93,7 +98,7 @@ impl Iterator for DirectoryEntryIterator {
         } else if name == "$.." {
             name = "..".to_string();
         }
-        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(file);
+        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(create_decryptor(file));
         if let Err(e) = res {
             return Some(Err(e.into()));
         }
@@ -130,7 +135,7 @@ impl Iterator for DirectoryEntryPlusIterator {
         } else if name == "$.." {
             name = "..".to_string();
         }
-        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(file);
+        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(create_decryptor(file));
         if let Err(e) = res {
             debug!("error deserializing directory entry: {:?}", e);
             return Some(Err(e.into()));
@@ -143,7 +148,7 @@ impl Iterator for DirectoryEntryPlusIterator {
             return Some(Err(e.into()));
         }
         let file = file.unwrap();
-        let attr = bincode::deserialize_from(file);
+        let attr = bincode::deserialize_from(create_decryptor(file));
         if let Err(e) = attr {
             debug!("error deserializing file attr: {:?}", e);
             return Some(Err(e.into()));
@@ -160,7 +165,7 @@ impl Iterator for DirectoryEntryPlusIterator {
 
 pub struct EncryptedFs {
     pub data_dir: PathBuf,
-    write_handles: BTreeMap<u64, (FileAttr, u64, write::Encryptor<File>)>,
+    write_handles: BTreeMap<u64, (FileAttr, PathBuf, u64, write::Encryptor<File>)>,
     read_handles: BTreeMap<u64, (FileAttr, u64, read::Decryptor<File>)>,
     // TODO: change to AtomicU64
     current_file_handle: u64,
@@ -283,7 +288,8 @@ impl EncryptedFs {
         } else if name == ".." {
             name = "$..";
         }
-        let (inode, _): (u64, FileType) = bincode::deserialize_from(File::open(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?)?;
+        let file = File::open(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
+        let (inode, _): (u64, FileType) = bincode::deserialize_from(create_decryptor(file))?;
         Ok(Some(self.get_inode(inode)?))
     }
 
@@ -388,8 +394,8 @@ impl EncryptedFs {
 
     pub fn get_inode(&self, ino: u64) -> FsResult<FileAttr> {
         let path = self.data_dir.join(INODES_DIR).join(ino.to_string());
-        if let Ok(file) = File::open(path) {
-            Ok(bincode::deserialize_from(file)?)
+        if let Ok(file) = OpenOptions::new().read(true).write(true).open(path) {
+            Ok(bincode::deserialize_from(create_decryptor(file))?)
         } else {
             Err(FsError::InodeNotFound)
         }
@@ -479,10 +485,13 @@ impl EncryptedFs {
             self.write_inode(&attr)?;
             decryptor.finish();
         }
-        if let Some((attr, _, encryptor)) = self.write_handles.remove(&handle) {
+        if let Some((attr, path, _, encryptor)) = self.write_handles.remove(&handle) {
             // write attr only here to avoid serializing it multiple times while writing
             self.write_inode(&attr)?;
             encryptor.finish()?;
+            if path.to_str().unwrap().ends_with(".tmp") {
+                fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).unwrap();
+            }
         }
         Ok(())
     }
@@ -528,20 +537,51 @@ impl EncryptedFs {
     // }
 
     pub fn write_all(&mut self, _ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<()> {
-        let (attr, position, encryptor) =
+        let (attr, path, position, _) =
             self.write_handles.get_mut(&handle).unwrap();
         if matches!(attr.kind, FileType::Directory) {
             return Err(FsError::InvalidInodeType);
         }
 
-        if *position > offset {
-            // TODO: seek from start
-            return Err(FsError::Other("seek from start not implemented".to_string()));
+        if *position != offset {
+            let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
+            let in_file = OpenOptions::new().read(true).write(true).open(in_path.clone())?;
+
+            let mut tmp_path_str = attr.ino.to_string();
+            tmp_path_str.push_str(format!(".{}", &handle.to_string()).as_str());
+            tmp_path_str.push_str(".tmp");
+            let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
+            let tmp_file = OpenOptions::new().read(true).write(true).create(true).open(tmp_path.clone())?;
+
+            let mut decryptor = create_decryptor(in_file);
+            let mut encryptor = create_encryptor(tmp_file);
+
+            let mut buffer: [u8; 4096] = [0; 4096];
+            let mut pos_read = 0;
+            loop {
+                let read_len = if pos_read + buffer.len() as u64 > offset {
+                    (offset - pos_read) as usize
+                } else {
+                    buffer.len()
+                };
+                if read_len > 0 {
+                    decryptor.read_exact(&mut buffer[..read_len])?;
+                    encryptor.write_all(&buffer[..read_len])?;
+                    pos_read += read_len as u64;
+                    if pos_read == offset {
+                        break;
+                    }
+                }
+            }
+            self.replace_encryptor(handle, tmp_path, encryptor);
         }
+        let (attr, _, position, encryptor) =
+            self.write_handles.get_mut(&handle).unwrap();
+        *position = offset;
         encryptor.write_all(buf)?;
         *position += buf.len() as u64;
 
-        let size = max(attr.size, offset + buf.len() as u64);
+        let size = offset + buf.len() as u64;
         attr.size = size;
         attr.mtime = std::time::SystemTime::now();
         attr.ctime = std::time::SystemTime::now();
@@ -550,7 +590,7 @@ impl EncryptedFs {
     }
 
     pub fn flush(&mut self, handle: u64) -> FsResult<()> {
-        if let Some((_, _, encryptor)) = self.write_handles.get_mut(&handle) {
+        if let Some((_, _, _, encryptor)) = self.write_handles.get_mut(&handle) {
             encryptor.flush()?;
         }
         Ok(())
@@ -673,11 +713,12 @@ impl EncryptedFs {
     pub(crate) fn write_inode(&mut self, attr: &FileAttr) -> FsResult<()> {
         let path = self.data_dir.join(INODES_DIR).join(attr.ino.to_string());
         let file = OpenOptions::new()
+            .read(true)
             .write(true)
             .create(true)
             .truncate(true)
             .open(&path)?;
-        Ok(bincode::serialize_into(file, &attr)?)
+        Ok(bincode::serialize_into(create_encryptor(file), &attr)?)
     }
 
     pub fn allocate_next_file_handle(&mut self) -> u64 {
@@ -688,11 +729,9 @@ impl EncryptedFs {
 
     fn create_read_handle(&mut self, ino: u64, handle: u64) -> FsResult<u64> {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
-        let file = OpenOptions::new().read(true).open(path)?;
+        let file = OpenOptions::new().read(true).write(true).open(path)?;
 
-        let key: Vec<_> = "a".repeat(32).as_bytes().to_vec();
-        let iv: Vec<_> = decode("dB0Ej+7zWZWTS5JUCldWMg==").unwrap();
-        let decryptor = read::Decryptor::new(file, Cipher::chacha20(), &key, &iv).unwrap();
+        let decryptor = create_decryptor(file);
         let attr = self.get_inode(ino)?;
         // save attr also to avoid loading it multiple times while reading
         self.read_handles.insert(handle, (attr, 0, decryptor));
@@ -701,15 +740,19 @@ impl EncryptedFs {
 
     fn create_write_handle(&mut self, ino: u64, handle: u64) -> FsResult<u64> {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
-        let file = OpenOptions::new().write(true).open(path)?;
+        let file = OpenOptions::new().read(true).write(true).open(path.clone())?;
 
-        let key: Vec<_> = "a".repeat(32).as_bytes().to_vec();
-        let iv: Vec<_> = decode("dB0Ej+7zWZWTS5JUCldWMg==").unwrap();
-        let encryptor = write::Encryptor::new(file, Cipher::chacha20(), &key, &iv).unwrap();
+        let encryptor = create_encryptor(file);
         // save attr also to avoid loading it multiple times while writing
         let attr = self.get_inode(ino)?;
-        self.write_handles.insert(handle, (attr, 0, encryptor));
+        self.write_handles.insert(handle, (attr, path, 0, encryptor));
         Ok(handle)
+    }
+
+    fn replace_encryptor(&mut self, handle: u64, new_path: PathBuf, new_encryptor: write::Encryptor<File>) {
+        let (attr, _, position, _) =
+            self.write_handles.remove(&handle).unwrap();
+        self.write_handles.insert(handle, (attr, new_path, position, new_encryptor));
     }
 
     fn ensure_root_exists(&mut self) -> FsResult<()> {
@@ -767,7 +810,7 @@ impl EncryptedFs {
 
         // write inode and file type
         let entry = (entry.ino, entry.kind);
-        bincode::serialize_into(file, &entry)?;
+        bincode::serialize_into(create_encryptor(file), &entry)?;
 
         Ok(())
     }
@@ -811,4 +854,36 @@ fn ensure_structure_created(data_dir: &PathBuf) -> FsResult<()> {
     }
 
     Ok(())
+}
+
+fn create_encryptor(mut file: File) -> write::Encryptor<File> {
+    let key: Vec<_> = "a".repeat(32).as_bytes().to_vec();
+    let mut iv: Vec<u8> = vec![0; 16];
+    if file.metadata().unwrap().size() == 0 {
+        // generate random IV
+        let mut rng = rand::thread_rng();
+        let bytes: [u8; 16] = rng.gen();
+        iv.copy_from_slice(&bytes);
+        file.write_all(&iv).unwrap();
+    } else {
+        // read IV from file
+        file.read_exact(&mut iv).unwrap();
+    }
+    write::Encryptor::new(file, Cipher::chacha20(), &key, &iv).unwrap()
+}
+
+fn create_decryptor(mut file: File) -> read::Decryptor<File> {
+    let key: Vec<_> = "a".repeat(32).as_bytes().to_vec();
+    let mut iv: Vec<u8> = vec![0; 16];
+    if file.metadata().unwrap().size() == 0 {
+        // generate random IV
+        let mut rng = rand::thread_rng();
+        let bytes: [u8; 16] = rng.gen();
+        iv.copy_from_slice(&bytes);
+        file.write_all(&iv).unwrap();
+    } else {
+        // read IV from file
+        file.read_exact(&mut iv).unwrap();
+    }
+    read::Decryptor::new(file, Cipher::chacha20(), &key, &iv).unwrap()
 }

@@ -178,6 +178,7 @@ impl EncryptedFsFuse3 {
         match self.get_fs().borrow_mut().create_nod(parent, name.to_str().unwrap(), attr, read, write) {
             Ok(attr) => { Ok(attr) }
             Err(err) => {
+                debug!("create_nod() error {}", err);
                 match err {
                     FsError::AlreadyExists => { Err(libc::EEXIST) }
                     _ => { return Err(ENOENT); }
@@ -497,7 +498,10 @@ impl Filesystem for EncryptedFsFuse3 {
                     generation: 0,
                 })
             }
-            Err(err) => Err(err.into())
+            Err(err) => {
+                debug!("mknod() error {}", err);
+                Err(err.into())
+            }
         }
     }
 
