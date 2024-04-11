@@ -25,6 +25,13 @@ fn main() {
                 .help("Where to store the encrypted data"),
         )
         .arg(
+            Arg::new("password-hash")
+                .long("password-hash")
+                .value_name("password-hash")
+                .default_value("")
+                .help("Hashed password to use for encryption"),
+        )
+        .arg(
             Arg::new("auto_unmount")
                 .long("auto_unmount")
                 .action(ArgAction::SetTrue)
@@ -63,6 +70,11 @@ fn main() {
         .unwrap()
         .to_string();
 
+    let password_hash: String = matches
+        .get_one::<String>("password-hash")
+        .unwrap()
+        .to_string();
+
     let mut options = vec![MountOption::FSName("fuser".to_string())];
 
     #[cfg(feature = "abi-7-26")]
@@ -93,7 +105,7 @@ fn main() {
         options.push(MountOption::AllowRoot);
     }
 
-    fuser::mount2(EncryptedFsFuse::new(&data_dir, matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(), mountpoint, &options).unwrap();
+    fuser::mount2(EncryptedFsFuse::new(&data_dir, &password_hash, matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(), mountpoint, &options).unwrap();
 }
 
 fn fuse_allow_other_enabled() -> io::Result<bool> {

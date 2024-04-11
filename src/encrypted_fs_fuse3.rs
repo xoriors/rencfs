@@ -111,17 +111,17 @@ pub struct EncryptedFsFuse3 {
 }
 
 impl EncryptedFsFuse3 {
-    pub fn new(data_dir: String, direct_io: bool, suid_support: bool) -> FsResult<Self> {
+    pub fn new(data_dir: &str, password: &str, direct_io: bool, suid_support: bool) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")] {
             Ok(Self {
-                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir.as_str()).unwrap())),
+                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password).unwrap())),
                 direct_io,
                 suid_support,
             })
         }
         #[cfg(not(feature = "abi-7-26"))] {
             Ok(Self {
-                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir.as_str()).unwrap())),
+                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password).unwrap())),
                 direct_io,
                 suid_support: false,
             })

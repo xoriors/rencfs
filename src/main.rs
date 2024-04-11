@@ -49,6 +49,13 @@ fn async_main() {
                     .help("Where to store the encrypted data"),
             )
             .arg(
+                Arg::new("password-hash")
+                    .long("password-hash")
+                    .value_name("password-hash")
+                    .default_value("")
+                    .help("Hashed password to use for encryption"),
+            )
+            .arg(
                 Arg::new("auto_unmount")
                     .long("auto_unmount")
                     .action(ArgAction::SetTrue)
@@ -74,7 +81,6 @@ fn async_main() {
                     .help("Enable setuid support when run as root"),
             )
             .get_matches();
-
         let mountpoint: String = matches
             .get_one::<String>("mount-point")
             .unwrap()
@@ -82,8 +88,8 @@ fn async_main() {
 
         unomunt(mountpoint.as_str());
 
-        let data_dir: String = matches
-            .get_one::<String>("data-dir")
+        let mountpoint: String = matches
+            .get_one::<String>("mount-point")
             .unwrap()
             .to_string();
 
@@ -93,6 +99,16 @@ fn async_main() {
             unomunt(mountpoint_kill.as_str());
         }).unwrap();
 
+        let data_dir: String = matches
+            .get_one::<String>("data-dir")
+            .unwrap()
+            .to_string();
+
+        let password_hash: String = matches
+            .get_one::<String>("password-hash")
+            .unwrap()
+            .to_string();
+
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
 
@@ -101,7 +117,7 @@ fn async_main() {
 
         let mount_path = OsStr::new(mountpoint.as_str());
         Session::new(mount_options)
-            .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir.clone(), matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(),
+            .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password_hash, matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(),
                                      mount_path)
             .await
             .unwrap()

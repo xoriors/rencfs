@@ -27,10 +27,10 @@ pub struct EncryptedFsFuse {
 }
 
 impl EncryptedFsFuse {
-    pub fn new(data_dir: &str, direct_io: bool, _suid_support: bool) -> FsResult<Self> {
+    pub fn new(data_dir: &str, password: &str, direct_io: bool, _suid_support: bool) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")] {
             Ok(EncryptedFsFuse {
-                fs: EncryptedFs::new(data_dir)?,
+                fs: EncryptedFs::new(data_dir, password)?,
                 direct_io,
                 suid_support: _suid_support,
                 current_file_handle: 0,
@@ -38,7 +38,7 @@ impl EncryptedFsFuse {
         }
         #[cfg(not(feature = "abi-7-26"))] {
             Ok(EncryptedFsFuse {
-                fs: EncryptedFs::new(data_dir)?,
+                fs: EncryptedFs::new(data_dir, password)?,
                 direct_io,
                 suid_support: false,
                 dir_handle: 0,

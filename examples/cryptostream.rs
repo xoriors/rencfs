@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use base64::decode;
 use cryptostream::{read, write};
 use openssl::symm::Cipher;
-use encrypted_fs::encrypted_fs::{decrypt_string, encrypt_string};
+use encrypted_fs::encrypted_fs::crypto_util::{decrypt_string, encrypt_string};
 
 fn main() {
     let enc = encrypt_string("1");
