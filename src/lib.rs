@@ -1,7 +1,7 @@
 //! # Encrypted File System
 //! An encrypted file system that mounts with FUSE. It can be used to create encrypted directories.
 //! # Usage
-//! You can use the [encrypted_fs_fuse3](encrypted_fs_fuse3) module to mount the file system.
+//! You can use the [EncryptedFsFuse3](encrypted_fs_fuse3::EncryptedFsFuse3) to mount the file system.
 //! # Example
 //! ```
 //! use std::ffi::OsStr;
