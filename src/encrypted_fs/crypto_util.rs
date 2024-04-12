@@ -68,14 +68,19 @@ pub fn decrypt_and_unnormalize_end_file_name(name: &str, encryption_type: &Encry
     name.to_string()
 }
 
-pub fn derive_key(password: &str, rounds: u32, salt: &str) -> Vec<u8> {
-    let mut dk = vec![0u8; 32];
+pub fn derive_key(password: &str, encryption_type: &EncryptionType, rounds: u32, salt: &str) -> Vec<u8> {
+    let mut dk = vec![];
+    let key_len =match encryption_type {
+        EncryptionType::ChaCha20 => 32,
+        EncryptionType::Aes256Gcm => 32,
+    };
+    dk.resize(key_len, 0);
     pbkdf2::pbkdf2_hmac::<sha2::Sha256>(password.as_bytes(), salt.as_bytes(), rounds, &mut dk);
     dk
 }
 
 pub fn normalize_end_encrypt_file_name(name: &str, encryption_type: &EncryptionType, key: &Vec<u8>) -> String {
-    let mut normalized_name = name.replace("/", "").replace("\\", "");
+    let mut normalized_name = name.replace("/", " ").replace("\\", " ");
     if normalized_name != "$." && normalized_name != "$.." {
         normalized_name = encrypt_string(&normalized_name, encryption_type, key);
         normalized_name = normalized_name.replace("/", "|");

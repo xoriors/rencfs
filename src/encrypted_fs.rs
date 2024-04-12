@@ -12,7 +12,7 @@ use std::time::SystemTime;
 use cryptostream::{read, write};
 use fuser::{FileAttr, FileType};
 use openssl::error::ErrorStack;
-use rand::Rng;
+use rand::{OsRng, Rng};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tracing::debug;
@@ -70,12 +70,6 @@ pub enum FsError {
 pub enum EncryptionType {
     ChaCha20,
     Aes256Gcm,
-}
-
-struct EncryptionInfo {
-    encryption_type: EncryptionType,
-    key: String,
-    derive_key_hash_rounds: u32,
 }
 
 struct TimeAndSizeFileAttr {
@@ -229,19 +223,19 @@ pub struct EncryptedFs {
     opened_files_for_write: HashMap<u64, u64>,
 }
 
-impl<'a> EncryptedFs {
+impl EncryptedFs {
     pub fn new(data_dir: &str, password: &str, encryption_type: EncryptionType, derive_key_hash_rounds: u32) -> FsResult<Self> {
         let path = PathBuf::from(&data_dir);
 
         ensure_structure_created(&path)?;
 
         let mut fs = EncryptedFs {
-            data_dir: path,
+            data_dir: path.clone(),
             write_handles: HashMap::new(),
             read_handles: HashMap::new(),
             current_handle: AtomicU64::new(1),
-            encryption_type,
-            key: crypto_util::derive_key(password, derive_key_hash_rounds, "salt-42"),
+            encryption_type: encryption_type.clone(),
+            key: read_or_create_key(path.join(SECURITY_DIR).join("key.enc"), password, &encryption_type, derive_key_hash_rounds)?,
             opened_files_for_write: HashMap::new(),
         };
         let _ = fs.ensure_root_exists();
@@ -924,7 +918,7 @@ impl<'a> EncryptedFs {
     pub fn decrypt_string(&self, s: &str) -> String {
         crypto_util::decrypt_string(s, &self.encryption_type, &self.key)
     }
-    pub fn normalize_end_encrypt_file_name(&self, name: &str, ) -> String {
+    pub fn normalize_end_encrypt_file_name(&self, name: &str) -> String {
         crypto_util::normalize_end_encrypt_file_name(name, &self.encryption_type, &self.key)
     }
 
@@ -1080,4 +1074,26 @@ fn merge_attr_time_and_time_obj(attr: &mut FileAttr, from: &TimeAndSizeFileAttr)
     attr.crtime = max(attr.ctime, from.crtime);
     attr.crtime = max(attr.ctime, from.crtime);
     attr.size = from.size;
+}
+
+fn read_or_create_key(path: PathBuf, password: &str, encryption_type: &EncryptionType, rounds: u32) -> FsResult<Vec<u8>> {
+    let initial_key = crypto_util::derive_key(password, encryption_type, rounds, "salt-42");
+    if !path.exists() {
+        // first time, create a random key and encrypt it with the initial key
+        let mut key: Vec<u8> = vec![];
+        let key_len = match encryption_type {
+            EncryptionType::ChaCha20 => 32,
+            EncryptionType::Aes256Gcm => 32,
+        };
+        key.resize(key_len, 0);
+        OsRng::new()?.fill_bytes(&mut key);
+        let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path.clone())?, encryption_type, &initial_key);
+        encryptor.write_all(&key)?;
+        encryptor.finish()?;
+    }
+    let mut decryptor = crypto_util::create_decryptor(File::open(path)?, encryption_type, &initial_key);
+    let mut key: Vec<u8> = vec![];;
+    decryptor.read_to_end(&mut key)?;
+    decryptor.finish();
+    Ok(key)
 }
