@@ -11,7 +11,7 @@ use fuser::TimeOrNow::Now;
 use libc::{EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY};
 use log::{debug, warn};
 
-use crate::encrypted_fs::{EncryptedFs, FsError, FsResult};
+use crate::encrypted_fs::{EncryptedFs, EncryptionType, FsError, FsResult};
 
 const BLOCK_SIZE: u64 = 512;
 
@@ -27,10 +27,11 @@ pub struct EncryptedFsFuse {
 }
 
 impl EncryptedFsFuse {
-    pub fn new(data_dir: &str, password: &str, direct_io: bool, _suid_support: bool) -> FsResult<Self> {
+    pub fn new(data_dir: &str, password: &str, encryption_type: EncryptionType, derive_key_hash_rounds: u32,
+               direct_io: bool, _suid_support: bool) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")] {
             Ok(EncryptedFsFuse {
-                fs: EncryptedFs::new(data_dir, password)?,
+                fs: EncryptedFs::new(data_dir, password, encryption_type, derive_key_hash_rounds)?,
                 direct_io,
                 suid_support: _suid_support,
                 current_file_handle: 0,
@@ -38,7 +39,7 @@ impl EncryptedFsFuse {
         }
         #[cfg(not(feature = "abi-7-26"))] {
             Ok(EncryptedFsFuse {
-                fs: EncryptedFs::new(data_dir, password)?,
+                fs: EncryptedFs::new(data_dir, password, encryption_type, derive_key_hash_rounds)?,
                 direct_io,
                 suid_support: false,
                 dir_handle: 0,

@@ -1,13 +1,16 @@
-use std::{env, panic, process};
+use std::{env, io, panic, process};
 use std::ffi::OsStr;
+use std::io::Read;
+use std::str::FromStr;
 
 use clap::{Arg, ArgAction, Command, crate_version};
 use ctrlc::set_handler;
 use fuse3::MountOptions;
 use fuse3::raw::prelude::*;
-use libc::umount;
+use strum::IntoEnumIterator;
 use tokio::task;
 use tracing::Level;
+use encrypted_fs::encrypted_fs::EncryptionType;
 
 use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
 
@@ -49,11 +52,23 @@ fn async_main() {
                     .help("Where to store the encrypted data"),
             )
             .arg(
-                Arg::new("password-hash")
-                    .long("password-hash")
-                    .value_name("password-hash")
-                    .default_value("")
-                    .help("Hashed password to use for encryption"),
+                Arg::new("encryption-type")
+                    .long("encryption-type")
+                    .value_name("encryption-type")
+                    .default_value("ChaCha20")
+                    .help(format!("Encryption type, possible values: {}",
+                                  EncryptionType::iter().fold(String::new(), |mut acc, x| {
+                                      acc.push_str(format!("{}{}{:?}", acc, if acc.len() != 0 { ", " } else { "" }, x).as_str());
+                                      acc
+                                  }).as_str()),
+                    )
+            )
+            .arg(
+                Arg::new("derive-key-hash-rounds")
+                    .long("derive-key-hash-rounds")
+                    .value_name("derive-key-hash-rounds")
+                    .default_value("600000")
+                    .help("How many times to hash the password to derive the key"),
             )
             .arg(
                 Arg::new("auto_unmount")
@@ -105,10 +120,32 @@ fn async_main() {
             .unwrap()
             .to_string();
 
-        let password_hash: String = matches
-            .get_one::<String>("password-hash")
+        // read password from stdin
+        print!("Enter password: ");
+        let mut password = String::new();
+        io::stdin().read_to_string(&mut password).unwrap();
+
+        let encryption_type: String = matches
+            .get_one::<String>("encryption-type")
             .unwrap()
             .to_string();
+        let encryption_type = EncryptionType::from_str(encryption_type.as_str());
+        if encryption_type.is_err() {
+            println!("Invalid encryption type");
+            return;
+        }
+        let encryption_type = encryption_type.unwrap();
+
+        let derive_key_hash_rounds: String = matches
+            .get_one::<String>("derive-key-hash-rounds")
+            .unwrap()
+            .to_string();
+        let derive_key_hash_rounds = u32::from_str(derive_key_hash_rounds.as_str());
+        if derive_key_hash_rounds.is_err() {
+            println!("Invalid derive-key-hash-rounds");
+            return;
+        }
+        let derive_key_hash_rounds = derive_key_hash_rounds.unwrap();
 
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
@@ -118,8 +155,8 @@ fn async_main() {
 
         let mount_path = OsStr::new(mountpoint.as_str());
         Session::new(mount_options)
-            .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password_hash, matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(),
-                                     mount_path)
+            .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, encryption_type, derive_key_hash_rounds,
+                                                           matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(), mount_path)
             .await
             .unwrap()
             .await

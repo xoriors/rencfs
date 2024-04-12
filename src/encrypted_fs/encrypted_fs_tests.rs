@@ -7,7 +7,7 @@ use std::string::String;
 
 use fuser::{FileAttr, FileType};
 
-use crate::encrypted_fs::{CONTENTS_DIR, DirectoryEntry, EncryptedFs, FsError, FsResult, INODES_DIR, ROOT_INODE, SECURITY_DIR};
+use crate::encrypted_fs::{CONTENTS_DIR, DirectoryEntry, EncryptedFs, EncryptionType, FsError, FsResult, INODES_DIR, ROOT_INODE, SECURITY_DIR};
 
 const TESTS_DATA_DIR: &str = "./tests-data/";
 
@@ -30,8 +30,7 @@ fn setup(setup: TestSetup) -> SetupResult {
         fs::remove_dir_all(path).unwrap();
     }
     fs::create_dir_all(path).unwrap();
-    let fs = EncryptedFs::new(path,
-                              "514bcff630af25170221bcc255ad82495b54825660ad1ba9f7f072a8a35ec4883035b62b34b6eedce51d63141e983d797ca9e69cf09c9f96301a47ec96c28bb7").unwrap();
+    let fs = EncryptedFs::new(path, "pass-42", EncryptionType::ChaCha20, 0).unwrap();
 
     SetupResult {
         fs: Some(fs),
@@ -141,11 +140,11 @@ fn test_create_nod() {
         assert_ne!(attr.ino, 0);
         assert!(fs.data_dir.join(INODES_DIR).join(attr.ino.to_string()).is_file());
         assert!(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).is_file());
-        assert!(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.encrypt_string(test_file)).is_file());
+        assert!(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.normalize_end_encrypt_file_name(test_file)).is_file());
         assert!(fs.node_exists(attr.ino));
         assert_eq!(attr, fs.get_inode(attr.ino).unwrap());
 
-        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.encrypt_string(test_file))).unwrap(), &fs);
+        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.normalize_end_encrypt_file_name(test_file))).unwrap(), &fs);
         assert_eq!(entry_in_parent, (attr.ino, FileType::RegularFile));
 
         // directory in root
@@ -154,11 +153,11 @@ fn test_create_nod() {
         assert_ne!(attr.ino, 0);
         assert!(fs.data_dir.join(INODES_DIR).join(attr.ino.to_string()).is_file());
         assert!(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).is_dir());
-        assert!(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.encrypt_string(test_dir)).is_file());
+        assert!(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.normalize_end_encrypt_file_name(test_dir)).is_file());
         assert!(fs.node_exists(attr.ino));
         assert_eq!(attr, fs.get_inode(attr.ino).unwrap());
         assert!(fs.is_dir(attr.ino));
-        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.encrypt_string(test_dir))).unwrap(), &fs);
+        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.normalize_end_encrypt_file_name(test_dir))).unwrap(), &fs);
         assert_eq!(entry_in_parent, (attr.ino, FileType::Directory));
         let dot_entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).join("$.")).unwrap(), &fs);
         assert_eq!(dot_entry_in_parent, (attr.ino, FileType::Directory));
@@ -171,11 +170,11 @@ fn test_create_nod() {
         let (fh, attr) = fs.create_nod(parent, test_dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
         assert!(fs.data_dir.join(INODES_DIR).join(attr.ino.to_string()).is_file());
         assert!(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).is_dir());
-        assert!(fs.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(fs.encrypt_string(test_dir_2)).is_file());
+        assert!(fs.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(fs.normalize_end_encrypt_file_name(test_dir_2)).is_file());
         assert!(fs.node_exists(attr.ino));
         assert_eq!(attr, fs.get_inode(attr.ino).unwrap());
         assert!(fs.is_dir(attr.ino));
-        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(fs.encrypt_string(test_dir_2))).unwrap(), &fs);
+        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(fs.normalize_end_encrypt_file_name(test_dir_2))).unwrap(), &fs);
         assert_eq!(entry_in_parent, (attr.ino, FileType::Directory));
         let dot_entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).join("$.")).unwrap(), &fs);
         assert_eq!(dot_entry_in_parent, (attr.ino, FileType::Directory));
@@ -211,7 +210,7 @@ fn test_read_dir() {
         let (fh, dir_attr) = fs.create_nod(ROOT_INODE, test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
         let mut entries: Vec<FsResult<DirectoryEntry>> = fs.read_dir(dir_attr.ino).unwrap().collect();
         entries.sort_by(|a, b| a.as_ref().unwrap().name.cmp(&b.as_ref().unwrap().name));
-        let entries : Vec<DirectoryEntry> = entries.into_iter().map(|e| e.unwrap()).collect();
+        let entries: Vec<DirectoryEntry> = entries.into_iter().map(|e| e.unwrap()).collect();
         assert_eq!(entries.len(), 2);
         assert_eq!(vec![
             DirectoryEntry {
@@ -229,7 +228,7 @@ fn test_read_dir() {
         let iter = fs.read_dir(ROOT_INODE);
         let mut entries: Vec<FsResult<DirectoryEntry>> = iter.unwrap().into_iter().collect();
         entries.sort_by(|a, b| a.as_ref().unwrap().name.cmp(&b.as_ref().unwrap().name));
-        let entries : Vec<DirectoryEntry> = entries.into_iter().map(|e| e.unwrap()).collect();
+        let entries: Vec<DirectoryEntry> = entries.into_iter().map(|e| e.unwrap()).collect();
         let mut sample = vec![
             DirectoryEntry {
                 ino: ROOT_INODE,
@@ -259,7 +258,7 @@ fn test_read_dir() {
         let (fh, dir_attr) = fs.create_nod(parent, test_dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
         let mut entries: Vec<FsResult<DirectoryEntry>> = fs.read_dir(dir_attr.ino).unwrap().collect();
         entries.sort_by(|a, b| a.as_ref().unwrap().name.cmp(&b.as_ref().unwrap().name));
-        let entries : Vec<DirectoryEntry> = entries.into_iter().map(|e| e.unwrap()).collect();
+        let entries: Vec<DirectoryEntry> = entries.into_iter().map(|e| e.unwrap()).collect();
         assert_eq!(entries.len(), 2);
         assert_eq!(vec![
             DirectoryEntry {
@@ -329,7 +328,7 @@ fn test_remove_dir() {
         assert!(matches!(fs.remove_dir(ROOT_INODE, test_dir), Err(FsError::NotEmpty)));
         assert!(fs.data_dir.join(INODES_DIR).join(dir_attr.ino.to_string()).is_file());
         assert!(fs.data_dir.join(INODES_DIR).join(file_attr.ino.to_string()).is_file());
-        assert!(fs.data_dir.join(CONTENTS_DIR).join(dir_attr.ino.to_string()).join(fs.encrypt_string(test_file)).is_file());
+        assert!(fs.data_dir.join(CONTENTS_DIR).join(dir_attr.ino.to_string()).join(fs.normalize_end_encrypt_file_name(test_file)).is_file());
 
         fs.remove_file(dir_attr.ino, test_file).unwrap();
         assert!(fs.remove_dir(ROOT_INODE, test_dir).is_ok());
@@ -604,7 +603,7 @@ fn test_copy_file_range() {
 #[test]
 fn test_rename() {
     run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_rename") }, |setup| {
-        let fs = setup.fs.as_mut().unwrap();
+        let mut fs = setup.fs.as_mut().unwrap();
 
         // new file in same directory
         let new_parent = ROOT_INODE;
@@ -614,8 +613,8 @@ fn test_rename() {
         fs.rename(ROOT_INODE, file_1, new_parent, file_1_new).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, file_1), true);
         assert_eq!(fs.exists_by_name(new_parent, file_1_new), true);
-        assert_eq!(fs.is_file(fs.find_by_name(new_parent, file_1_new).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, file_1_new).unwrap().unwrap();
+        assert_eq!(fs.is_file(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(ROOT_INODE).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == file_1).count(), 0);
@@ -629,8 +628,8 @@ fn test_rename() {
         fs.rename(ROOT_INODE, dir_1, new_parent, dir_1_new).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, dir_1), true);
         assert_eq!(fs.exists_by_name(new_parent, dir_1_new), true);
-        assert_eq!(fs.is_dir(fs.find_by_name(new_parent, dir_1_new).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, dir_1_new).unwrap().unwrap();
+        assert_eq!(fs.is_dir(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(ROOT_INODE).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == dir_1).count(), 0);
@@ -649,8 +648,8 @@ fn test_rename() {
         fs.rename(ROOT_INODE, file_1, new_parent, file_2).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, file_1), true);
         assert_eq!(fs.exists_by_name(new_parent, file_2), true);
-        assert_eq!(fs.is_file(fs.find_by_name(new_parent, file_2).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, file_2).unwrap().unwrap();
+        assert_eq!(fs.is_file(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(ROOT_INODE).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == file_1).count(), 0);
@@ -664,8 +663,8 @@ fn test_rename() {
         fs.rename(ROOT_INODE, dir_1, new_parent, dir_2).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, dir_1), true);
         assert_eq!(fs.exists_by_name(new_parent, dir_2), true);
-        assert_eq!(fs.is_dir(fs.find_by_name(new_parent, dir_2).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, dir_2).unwrap().unwrap();
+        assert_eq!(fs.is_dir(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(ROOT_INODE).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == dir_1).count(), 0);
@@ -683,8 +682,8 @@ fn test_rename() {
         fs.rename(ROOT_INODE, file_1, new_parent, file_2).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, file_1), true);
         assert_eq!(fs.exists_by_name(new_parent, file_2), true);
-        assert_eq!(fs.is_file(fs.find_by_name(new_parent, file_2).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, file_2).unwrap().unwrap();
+        assert_eq!(fs.is_file(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(ROOT_INODE).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == file_1).count(), 0);
@@ -697,8 +696,8 @@ fn test_rename() {
         fs.rename(ROOT_INODE, dir_1, new_parent, dir_2).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, dir_1), true);
         assert_eq!(fs.exists_by_name(new_parent, dir_2), true);
-        assert_eq!(fs.is_dir(fs.find_by_name(new_parent, dir_2).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, dir_2).unwrap().unwrap();
+        assert_eq!(fs.is_dir(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(ROOT_INODE).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == dir_1).count(), 0);
@@ -715,8 +714,8 @@ fn test_rename() {
         fs.rename(ROOT_INODE, file_1, new_parent, file_1).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, file_1), true);
         assert_eq!(fs.exists_by_name(new_parent, file_1), true);
-        assert_eq!(fs.is_file(fs.find_by_name(new_parent, file_1).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, file_1).unwrap().unwrap();
+        assert_eq!(fs.is_file(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(ROOT_INODE).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == file_1).count(), 0);
@@ -729,8 +728,8 @@ fn test_rename() {
         fs.rename(ROOT_INODE, dir_1, new_parent, dir_1).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, dir_1), true);
         assert_eq!(fs.exists_by_name(new_parent, dir_1), true);
-        assert_eq!(fs.is_dir(fs.find_by_name(new_parent, dir_1).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, dir_1).unwrap().unwrap();
+        assert_eq!(fs.is_dir(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(ROOT_INODE).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == dir_1).count(), 0);
@@ -747,8 +746,8 @@ fn test_rename() {
         fs.rename(ROOT_INODE, file_1, new_parent, dir_1).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, file_1), true);
         assert_eq!(fs.exists_by_name(new_parent, dir_1), true);
-        assert_eq!(fs.is_file(fs.find_by_name(new_parent, dir_1).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, dir_1).unwrap().unwrap();
+        assert_eq!(fs.is_file(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(ROOT_INODE).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == file_1).count(), 0);
@@ -762,8 +761,8 @@ fn test_rename() {
         fs.rename(ROOT_INODE, dir_3, new_parent, file_1).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, dir_3), true);
         assert_eq!(fs.exists_by_name(new_parent, file_1), true);
-        assert_eq!(fs.is_dir(fs.find_by_name(new_parent, file_1).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, file_1).unwrap().unwrap();
+        assert_eq!(fs.is_dir(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(ROOT_INODE).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == dir_3).count(), 0);
@@ -781,8 +780,10 @@ fn test_rename() {
         assert!(matches!(fs.rename(ROOT_INODE, dir_3, new_parent, name_2), Err(FsError::NotEmpty)));
         assert_eq!(fs.exists_by_name(ROOT_INODE, dir_3), true);
         assert_eq!(fs.exists_by_name(new_parent, name_2), true);
-        assert_eq!(fs.is_dir(fs.find_by_name(ROOT_INODE, dir_3).unwrap().unwrap().ino), true);
-        assert_eq!(fs.is_dir(fs.find_by_name(new_parent, name_2).unwrap().unwrap().ino), true);
+        let attr_3 = fs.find_by_name(ROOT_INODE, dir_3).unwrap().unwrap();
+        assert_eq!(fs.is_dir(attr_3.ino), true);
+        let attr_2 = fs.find_by_name(new_parent, name_2).unwrap().unwrap();
+        assert_eq!(fs.is_dir(attr_2.ino), true);
         let new_attr = fs.find_by_name(new_parent, dir_3).unwrap().unwrap();
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
@@ -802,8 +803,8 @@ fn test_rename() {
         let (_, attr) = fs.create_nod(ROOT_INODE, file_3, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
         fs.rename(ROOT_INODE, file_3, new_parent, file_3).unwrap();
         assert_eq!(fs.exists_by_name(new_parent, file_3), true);
-        assert_eq!(fs.is_file(fs.find_by_name(new_parent, file_3).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, file_3).unwrap().unwrap();
+        assert_eq!(fs.is_file(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(new_parent).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == file_3).count(), 1);
@@ -814,8 +815,8 @@ fn test_rename() {
         let (_, attr) = fs.create_nod(ROOT_INODE, dir_5, create_attr_from_type(FileType::Directory), false, false).unwrap();
         fs.rename(ROOT_INODE, dir_5, new_parent, dir_5).unwrap();
         assert_eq!(fs.exists_by_name(new_parent, dir_5), true);
-        assert_eq!(fs.is_dir(fs.find_by_name(new_parent, dir_5).unwrap().unwrap().ino), true);
         let new_attr = fs.find_by_name(new_parent, dir_5).unwrap().unwrap();
+        assert_eq!(fs.is_dir(new_attr.ino), true);
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(fs.read_dir(new_parent).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name == dir_5).count(), 1);
