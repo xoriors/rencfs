@@ -346,7 +346,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 attr.perm = mode as u16;
             }
             attr.ctime = SystemTime::now();
-            if let Err(err) = self.get_fs().borrow_mut().replace_inode(inode, &mut attr) {
+            if let Err(err) = self.get_fs().borrow_mut().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
                 debug!("setattr() error {}", err);
                 return Err(EBADF.into());
             }
@@ -395,7 +395,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 }
             }
             attr.ctime = SystemTime::now();
-            if let Err(err) = self.get_fs().borrow_mut().replace_inode(inode, &mut attr) {
+            if let Err(err) = self.get_fs().borrow_mut().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
                 debug!("setattr() error {}", err);
                 return Err(EBADF.into());
             }
@@ -456,7 +456,7 @@ impl Filesystem for EncryptedFsFuse3 {
             attr.ctime = SystemTime::now();
         }
 
-        if let Err(err) = self.get_fs().borrow_mut().replace_inode(inode, &mut attr) {
+        if let Err(err) = self.get_fs().borrow_mut().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
             debug!("setattr() error {}", err);
             return Err(EBADF.into());
         }
@@ -794,6 +794,8 @@ impl Filesystem for EncryptedFsFuse3 {
             }
         };
 
+        let guard = self.get_fs();
+        let mut ref_mut = guard.borrow_mut();
         if check_access(attr.uid, attr.gid, attr.perm, req.uid, req.gid, access_mask) {
             let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
             match self.get_fs().borrow_mut().open(inode, read, write) {
@@ -896,7 +898,7 @@ impl Filesystem for EncryptedFsFuse3 {
             // XXX: In theory we should only need to do this when WRITE_KILL_PRIV is set for 7.31+
             // However, xfstests fail in that case
             clear_suid_sgid(&mut attr);
-            if let Err(err) = self.get_fs().borrow_mut().replace_inode(inode, &mut attr) {
+            if let Err(err) = self.get_fs().borrow_mut().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
                 debug!("replace attr error {}", err);
                 return Err(EBADF.into());
             }

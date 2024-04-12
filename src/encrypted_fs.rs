@@ -1,12 +1,13 @@
 use std::{fs, io};
 use std::cmp::{max, min};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions, ReadDir};
 use std::io::{Read, Seek, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
+use std::time::SystemTime;
 
 use base64::decode;
 use cryptostream::{read, write};
@@ -54,6 +55,9 @@ pub enum FsError {
     #[error("already exists")]
     AlreadyExists,
 
+    #[error("already open for write")]
+    AlreadyOpenForWrite,
+
     #[error("not empty")]
     NotEmpty,
 
@@ -62,6 +66,39 @@ pub enum FsError {
 
     #[error("encryption error: {0}")]
     Encryption(#[from] ErrorStack),
+}
+
+struct TimeAndSizeFileAttr {
+    ino: u64,
+    atime: SystemTime,
+    mtime: SystemTime,
+    ctime: SystemTime,
+    crtime: SystemTime,
+    size: u64,
+}
+
+impl TimeAndSizeFileAttr {
+    fn new(ino: u64, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, size: u64) -> Self {
+        Self {
+            ino,
+            atime,
+            mtime,
+            ctime,
+            crtime,
+            size,
+        }
+    }
+
+    fn from_file_attr(attr: &FileAttr) -> Self {
+        Self {
+            ino: attr.ino,
+            atime: attr.atime,
+            mtime: attr.mtime,
+            ctime: attr.ctime,
+            crtime: attr.crtime,
+            size: attr.size,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -174,13 +211,14 @@ impl Iterator for DirectoryEntryPlusIterator {
 
 pub struct EncryptedFs {
     pub data_dir: PathBuf,
-    write_handles: BTreeMap<u64, (FileAttr, PathBuf, u64, write::Encryptor<File>)>,
-    read_handles: BTreeMap<u64, (FileAttr, u64, read::Decryptor<File>)>,
+    write_handles: HashMap<u64, (TimeAndSizeFileAttr, PathBuf, u64, write::Encryptor<File>)>,
+    read_handles: HashMap<u64, (TimeAndSizeFileAttr, u64, read::Decryptor<File>)>,
     current_handle: AtomicU64,
     key: Vec<u8>,
+    opened_files_for_write: HashMap<u64, u64>,
 }
 
-impl EncryptedFs {
+impl<'a> EncryptedFs {
     pub fn new(data_dir: &str, password: &str) -> FsResult<Self> {
         let path = PathBuf::from(&data_dir);
 
@@ -188,10 +226,11 @@ impl EncryptedFs {
 
         let mut fs = EncryptedFs {
             data_dir: path,
-            write_handles: BTreeMap::new(),
-            read_handles: BTreeMap::new(),
+            write_handles: HashMap::new(),
+            read_handles: HashMap::new(),
             current_handle: AtomicU64::new(1),
             key: crypto_util::derive_key(password, "salt-42"),
+            opened_files_for_write: HashMap::new(),
         };
         let _ = fs.ensure_root_exists();
 
@@ -411,23 +450,24 @@ impl EncryptedFs {
     pub fn get_inode(&self, ino: u64) -> FsResult<FileAttr> {
         let path = self.data_dir.join(INODES_DIR).join(ino.to_string());
         if let Ok(file) = OpenOptions::new().read(true).write(true).open(path) {
-            Ok(bincode::deserialize_from(crypto_util::create_decryptor(file, &self.key))?)
+            let mut attr: FileAttr = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.key))?;
+            if self.opened_files_for_write.contains_key(&ino) {
+                // merge time info and size with any open write handles
+                merge_attr_time_and_time_obj(&mut attr, &self.write_handles.get(&self.opened_files_for_write.get(&ino).unwrap()).unwrap().0);
+            }
+
+            Ok(attr)
         } else {
             Err(FsError::InodeNotFound)
         }
     }
 
-    pub fn replace_inode(&mut self, ino: u64, attr: &mut FileAttr) -> FsResult<()> {
-        if !self.node_exists(ino) {
-            return Err(FsError::InodeNotFound);
-        }
-        if !matches!(attr.kind, FileType::Directory) && !matches!(attr.kind, FileType::RegularFile) {
-            return Err(FsError::InvalidInodeType);
-        }
+    pub fn update_inode(&mut self, ino: u64, perm: u16, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, uid: u32, gid: u32, size: u64, nlink: u32, flags: u32) -> FsResult<()> {
+        let mut attr = self.get_inode(ino)?;
 
-        attr.ctime = std::time::SystemTime::now();
+        merge_attr(&mut attr, perm, atime, mtime, ctime, crtime, uid, gid, size, nlink, flags);
 
-        self.write_inode(attr)
+        self.write_inode(&attr)
     }
 
     pub fn read(&mut self, ino: u64, offset: u64, mut buf: &mut [u8], handle: u64) -> FsResult<usize> {
@@ -444,11 +484,15 @@ impl EncryptedFs {
         if attr.ino != ino {
             return Err(FsError::InvalidFileHandle);
         }
-        if matches!(attr.kind, FileType::Directory) {
+        if self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
+        if buf.len() == 0 {
+            // no-op
+            return Ok(0);
+        }
         if offset >= attr.size {
-            // if we need an offset after file size we don't read nothing
+            // if we need an offset after file size we don't read anything
             return Ok(0);
         }
 
@@ -500,31 +544,43 @@ impl EncryptedFs {
         let mut valid_fh = false;
         if let Some((attr, _, decryptor)) = self.read_handles.remove(&handle) {
             // write attr only here to avoid serializing it multiple times while reading
-            self.write_inode(&attr)?;
+            // merge time fields with existing data because it might got change while we kept the handle
+            let mut attr_0 = self.get_inode(attr.ino)?;
+            merge_attr_time_and_time_obj(&mut attr_0, &attr);
+            self.write_inode(&attr_0)?;
             decryptor.finish();
             valid_fh = true;
         }
         if let Some((attr, path, _, encryptor)) = self.write_handles.remove(&handle) {
             // write attr only here to avoid serializing it multiple times while writing
-            self.write_inode(&attr)?;
+            // merge time fields with existing data because it might got change while we kept the handle
+            let mut attr_0 = self.get_inode(attr.ino)?;
+            merge_attr_time_and_time_obj(&mut attr_0, &attr);
+            self.write_inode(&attr_0)?;
+            self.write_inode(&attr_0)?;
             encryptor.finish()?;
             // if we are in tmp file move it to actual file
             if path.to_str().unwrap().ends_with(".tmp") {
                 fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).unwrap();
 
                 // also recreate readers because the file has changed
-                let keys: Vec<u64> = self.read_handles.keys().cloned().collect();
-                for key in keys {
-                    let (attr, _, _) = self.read_handles.remove(&key).unwrap();
-                    self.create_read_handle(attr.ino, key).unwrap();
-                }
+                self.recreate_read_handles();
             }
+            self.opened_files_for_write.remove(&attr.ino);
             valid_fh = true;
         }
         if !valid_fh {
             return Err(FsError::InvalidFileHandle);
         }
         Ok(())
+    }
+
+    fn recreate_read_handles(&mut self) {
+        let keys: Vec<u64> = self.read_handles.keys().cloned().collect();
+        for key in keys {
+            let (attr, _, _) = self.read_handles.remove(&key).unwrap();
+            self.create_read_handle(attr.ino, key).unwrap();
+        }
     }
 
     pub fn is_read_handle(&self, fh: u64) -> bool {
@@ -545,13 +601,17 @@ impl EncryptedFs {
         if !self.write_handles.contains_key(&handle) {
             return Err(FsError::InvalidFileHandle);
         }
+        if self.is_dir(ino) {
+            return Err(FsError::InvalidInodeType);
+        }
         let (attr, _, position, _) =
             self.write_handles.get_mut(&handle).unwrap();
         if attr.ino != ino {
             return Err(FsError::InvalidFileHandle);
         }
-        if matches!(attr.kind, FileType::Directory) {
-            return Err(FsError::InvalidInodeType);
+        if buf.len() == 0 {
+            // no-op
+            return Ok(());
         }
 
         if *position != offset {
@@ -701,11 +761,12 @@ impl EncryptedFs {
             self.create_read_handle(ino, handle)?;
         }
         if write {
-            if self.write_handles.contains_key(&handle) {
-                return Err(FsError::InvalidInput("write handle already opened".to_string()));
+            if self.opened_files_for_write.contains_key(&ino) {
+                return Err(FsError::AlreadyOpenForWrite);
             }
             handle = self.allocate_next_handle();
             self.create_write_handle(ino, handle)?;
+            self.opened_files_for_write.insert(ino, handle);
         }
         Ok(handle)
     }
@@ -748,6 +809,9 @@ impl EncryptedFs {
         attr.mtime = std::time::SystemTime::now();
         attr.ctime = std::time::SystemTime::now();
         self.write_inode(&attr)?;
+
+        // also recreate readers because the file has changed
+        self.recreate_read_handles();
 
         Ok(())
     }
@@ -852,7 +916,7 @@ impl EncryptedFs {
         let decryptor = crypto_util::create_decryptor(file, &self.key);
         let attr = self.get_inode(ino)?;
         // save attr also to avoid loading it multiple times while reading
-        self.read_handles.insert(handle, (attr, 0, decryptor));
+        self.read_handles.insert(handle, (TimeAndSizeFileAttr::from_file_attr(&attr), 0, decryptor));
         Ok(handle)
     }
 
@@ -863,11 +927,11 @@ impl EncryptedFs {
         let encryptor = crypto_util::create_encryptor(file, &self.key);
         // save attr also to avoid loading it multiple times while writing
         let attr = self.get_inode(ino)?;
-        self.write_handles.insert(handle, (attr, path, 0, encryptor));
+        self.write_handles.insert(handle, (TimeAndSizeFileAttr::from_file_attr(&attr), path, 0, encryptor));
         Ok(handle)
     }
 
-    fn replace_handle_data(&mut self, handle: u64, attr: FileAttr, new_path: PathBuf, position: u64, new_encryptor: write::Encryptor<File>) {
+    fn replace_handle_data(&mut self, handle: u64, attr: TimeAndSizeFileAttr, new_path: PathBuf, position: u64, new_encryptor: write::Encryptor<File>) {
         self.write_handles.insert(handle, (attr, new_path, position, new_encryptor));
     }
 
@@ -877,10 +941,10 @@ impl EncryptedFs {
                 ino: ROOT_INODE,
                 size: 0,
                 blocks: 0,
-                atime: std::time::SystemTime::now(),
-                mtime: std::time::SystemTime::now(),
-                ctime: std::time::SystemTime::now(),
-                crtime: std::time::SystemTime::now(),
+                atime: SystemTime::now(),
+                mtime: SystemTime::now(),
+                ctime: SystemTime::now(),
+                crtime: SystemTime::now(),
                 kind: FileType::Directory,
                 perm: 0o755,
                 nlink: 2,
@@ -970,4 +1034,31 @@ fn ensure_structure_created(data_dir: &PathBuf) -> FsResult<()> {
     }
 
     Ok(())
+}
+
+fn merge_attr(attr: &mut FileAttr, perm: u16, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, uid: u32, gid: u32, size: u64, nlink: u32, flags: u32) {
+    attr.perm = perm;
+    merge_attr_time_and_time(attr, atime, mtime, ctime, crtime, size);
+    attr.uid = uid;
+    attr.gid = gid;
+    attr.nlink = nlink;
+    attr.flags = flags;
+}
+
+fn merge_attr_time_and_time(attr: &mut FileAttr, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, size: u64) {
+    attr.atime = max(attr.atime, atime);
+    attr.mtime = max(attr.mtime, mtime);
+    attr.ctime = max(attr.ctime, ctime);
+    attr.crtime = max(attr.ctime, crtime);
+    attr.crtime = max(attr.ctime, crtime);
+    attr.size = size;
+}
+
+fn merge_attr_time_and_time_obj(attr: &mut FileAttr, from: &TimeAndSizeFileAttr) {
+    attr.atime = max(attr.atime, from.atime);
+    attr.mtime = max(attr.mtime, from.mtime);
+    attr.ctime = max(attr.ctime, from.ctime);
+    attr.crtime = max(attr.ctime, from.crtime);
+    attr.crtime = max(attr.ctime, from.crtime);
+    attr.size = from.size;
 }

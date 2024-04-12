@@ -221,7 +221,7 @@ impl Filesystem for EncryptedFsFuse {
                 attr.perm = mode as u16;
             }
             attr.ctime = SystemTime::now();
-            if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
+            if let Err(err) = self.fs.update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
                 debug!("chmod error {}", err);
                 reply.error(ENOENT);
                 return;
@@ -273,7 +273,7 @@ impl Filesystem for EncryptedFsFuse {
                 }
             }
             attr.ctime = SystemTime::now();
-            if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
+            if let Err(err) = self.fs.update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
                 debug!("chmod error {}", err);
                 reply.error(ENOENT);
                 return;
@@ -351,7 +351,7 @@ impl Filesystem for EncryptedFsFuse {
             attr.ctime = SystemTime::now();
         }
 
-        if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
+        if let Err(err) = self.fs.update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
             debug!("setattr error {}", err);
             reply.error(ENOENT);
             return;
@@ -769,7 +769,7 @@ impl Filesystem for EncryptedFsFuse {
                 // XXX: In theory we should only need to do this when WRITE_KILL_PRIV is set for 7.31+
                 // However, xfstests fail in that case
                 clear_suid_sgid(&mut attr);
-                if let Err(err) = self.fs.replace_inode(inode, &mut attr) {
+                if let Err(err) = self.fs.update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
                     debug!("write error {}", err);
                     reply.error(ENOENT);
                     return;

@@ -1,6 +1,7 @@
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::string::String;
 
@@ -830,6 +831,26 @@ fn test_rename() {
         assert!(matches!(fs.rename(ROOT_INODE, "invalid", ROOT_INODE, "invalid"), Err(FsError::NotFound(_))));
         assert!(matches!(fs.rename(ROOT_INODE, "existing-file", 0, "invalid"), Err(FsError::InodeNotFound)));
         assert!(matches!(fs.rename(ROOT_INODE, "existing-file", attr_file.ino, "invalid"), Err(FsError::InvalidInodeType)));
+    });
+}
+
+#[test]
+fn test_open() {
+    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_open") }, |setup| {
+        let fs = setup.fs.as_mut().unwrap();
+
+        let test_file = "test-file";
+        let (fh, attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        // single read
+        let fh = fs.open(attr.ino, true, false).unwrap();
+        assert_ne!(fh, 0);
+        // multiple read
+        let fh_2 = fs.open(attr.ino, true, false).unwrap();
+        assert_ne!(fh_2, 0);
+        // write and read
+        let fh_w = fs.open(attr.ino, false, true).unwrap();
+        // ensure cannot open multiple write
+        assert!(matches!(fs.open(attr.ino, false, true), Err(FsError::AlreadyOpenForWrite)));
     });
 }
 
