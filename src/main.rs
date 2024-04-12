@@ -1,16 +1,17 @@
 use std::{env, io, panic, process};
 use std::ffi::OsStr;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::str::FromStr;
 
-use clap::{Arg, ArgAction, Command, crate_version};
+use clap::{Arg, ArgAction, ArgMatches, Command, crate_version};
 use ctrlc::set_handler;
 use fuse3::MountOptions;
 use fuse3::raw::prelude::*;
+use rpassword::read_password;
 use strum::IntoEnumIterator;
 use tokio::task;
 use tracing::Level;
-use encrypted_fs::encrypted_fs::EncryptionType;
+use encrypted_fs::encrypted_fs::{EncryptedFs, EncryptionType};
 
 use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
 
@@ -25,30 +26,29 @@ async fn main() {
         })
     }).await;
 
-    match result {
-        Ok(Ok(_)) => println!("There was no panic"),
-        Ok(Err(_)) | Err(_) => println!("A panic occurred"),
-    }
+    // match result {
+    //     Ok(Ok(_)) => println!("There was no panic"),
+    //     Ok(Err(_)) | Err(_) => println!("A panic occurred"),
+    // }
 }
 
 fn async_main() {
     let handle = tokio::runtime::Handle::current();
     handle.block_on(async {
-        let matches = Command::new("hello")
+        let matches = Command::new("EncryptedFS")
             .version(crate_version!())
             .author("Radu Marias")
             .arg(
                 Arg::new("mount-point")
                     .long("mount-point")
                     .value_name("MOUNT_POINT")
-                    .default_value("")
                     .help("Act as a client, and mount FUSE at given path"),
             )
             .arg(
                 Arg::new("data-dir")
                     .long("data-dir")
+                    .required(true)
                     .value_name("data-dir")
-                    .default_value("")
                     .help("Where to store the encrypted data"),
             )
             .arg(
@@ -83,6 +83,12 @@ fn async_main() {
                     .help("Allow root user to access filesystem"),
             )
             .arg(
+                Arg::new("allow-other")
+                    .long("allow-other")
+                    .action(ArgAction::SetTrue)
+                    .help("Allow other user to access filesystem"),
+            )
+            .arg(
                 Arg::new("direct-io")
                     .long("direct-io")
                     .action(ArgAction::SetTrue)
@@ -95,35 +101,18 @@ fn async_main() {
                     .action(ArgAction::SetTrue)
                     .help("Enable setuid support when run as root"),
             )
+            .arg(
+                Arg::new("change-password")
+                    .long("change-password")
+                    .action(ArgAction::SetTrue)
+                    .help("Change password for the encrypted data. Old password and new password with be read from stdin"),
+            )
             .get_matches();
-        let mountpoint: String = matches
-            .get_one::<String>("mount-point")
-            .unwrap()
-            .to_string();
-
-        unomunt(mountpoint.as_str());
-
-        let mountpoint: String = matches
-            .get_one::<String>("mount-point")
-            .unwrap()
-            .to_string();
-
-        // unmount on process kill
-        let mountpoint_kill = mountpoint.clone();
-        set_handler(move || {
-            unomunt(mountpoint_kill.as_str());
-            process::exit(0);
-        }).unwrap();
 
         let data_dir: String = matches
             .get_one::<String>("data-dir")
             .unwrap()
             .to_string();
-
-        // read password from stdin
-        print!("Enter password: ");
-        let mut password = String::new();
-        io::stdin().read_to_string(&mut password).unwrap();
 
         let encryption_type: String = matches
             .get_one::<String>("encryption-type")
@@ -147,25 +136,76 @@ fn async_main() {
         }
         let derive_key_hash_rounds = derive_key_hash_rounds.unwrap();
 
-        let uid = unsafe { libc::getuid() };
-        let gid = unsafe { libc::getgid() };
+        if matches.get_flag("change-password") {
+            // change password
 
-        let mut mount_options = MountOptions::default();
-        mount_options.uid(uid).gid(gid).read_only(false);
+            // read password from stdin
+            print!("Enter old password: ");
+            io::stdout().flush().unwrap();
+            let password = read_password().unwrap();
 
-        let mount_path = OsStr::new(mountpoint.as_str());
-        Session::new(mount_options)
-            .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, encryption_type, derive_key_hash_rounds,
-                                                           matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(), mount_path)
-            .await
-            .unwrap()
-            .await
-            .unwrap();
+            print!("Enter new password: ");
+            io::stdout().flush().unwrap();
+            let new_password = read_password().unwrap();
+            EncryptedFs::change_password(&data_dir, &password, &new_password, &encryption_type, derive_key_hash_rounds).unwrap();
+            println!("Password changed successfully");
+
+            return;
+        } else {
+            //normal run
+
+            if !matches.contains_id("mount-point") {
+                println!("--mount-point <MOUNT_POINT> is required");
+                return;
+            }
+            let mountpoint: String = matches.get_one::<String>("mount-point")
+                .unwrap()
+                .to_string();
+
+            // when running from IDE we can't read from stdin with rpassword, get it from env var
+            let mut password = env::var("ENCRYPTED_FS_PASSWORD").unwrap_or_else(|_| "".to_string());
+            if password.is_empty() {
+                // read password from stdin
+                print!("Enter password: ");
+                io::stdout().flush().unwrap();
+                password = read_password().unwrap();
+            }
+
+            // unomunt(mountpoint.as_str());
+
+            // unmount on process kill
+            let mountpoint_kill = mountpoint.clone();
+            set_handler(move || {
+                unomunt(mountpoint_kill.as_str());
+                process::exit(0);
+            }).unwrap();
+
+            run_fuse(matches, mountpoint, &data_dir, &password, encryption_type, derive_key_hash_rounds).await;
+        }
     });
 }
 
+async fn run_fuse(matches: ArgMatches, mountpoint: String, data_dir: &str, password: &str, encryption_type: EncryptionType, derive_key_hash_rounds: u32) {
+    let uid = unsafe { libc::getuid() };
+    let gid = unsafe { libc::getgid() };
+
+    let mut mount_options = MountOptions::default();
+    mount_options.uid(uid).gid(gid).read_only(false);
+    mount_options.allow_root(matches.get_flag("allow-root"));
+    mount_options.allow_other(matches.get_flag("allow-other"));
+
+    let mount_path = OsStr::new(mountpoint.as_str());
+    Session::new(mount_options)
+        .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, encryption_type, derive_key_hash_rounds,
+                                                       matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(), mount_path)
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+}
+
 fn unomunt(mountpoint: &str) {
-    let output = std::process::Command::new("umount")
+    let output = process::Command::new("umount")
         .arg(mountpoint)
         .output()
         .expect("Failed to execute command");
@@ -181,7 +221,7 @@ fn unomunt(mountpoint: &str) {
 
 fn log_init() {
     let subscriber = tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
+        .with_max_level(Level::DEBUG)
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 }

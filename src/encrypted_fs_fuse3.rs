@@ -297,8 +297,8 @@ impl Filesystem for EncryptedFsFuse3 {
         _flags: u32,
     ) -> Result<ReplyAttr> {
         match self.get_fs().borrow_mut().get_inode(inode) {
-            Err(_) => {
-                debug!("not found {}", inode);
+            Err(err) => {
+                debug!("getattr() error {}", err);
                 return Err(ENOENT.into());
             }
             Ok(attr) => {

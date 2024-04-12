@@ -1,11 +1,11 @@
-use std::{fs, io};
+use std::{fs, io, process};
 use std::cmp::{max, min};
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions, ReadDir};
 use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
-use std::path::{PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 
@@ -24,6 +24,7 @@ pub mod crypto_util;
 pub(crate) const INODES_DIR: &str = "inodes";
 pub(crate) const CONTENTS_DIR: &str = "contents";
 pub(crate) const SECURITY_DIR: &str = "security";
+pub(crate) const KEY_ENC_FILENAME: &str = "key.enc";
 
 pub(crate) const ROOT_INODE: u64 = 1;
 
@@ -235,10 +236,11 @@ impl EncryptedFs {
             read_handles: HashMap::new(),
             current_handle: AtomicU64::new(1),
             encryption_type: encryption_type.clone(),
-            key: read_or_create_key(path.join(SECURITY_DIR).join("key.enc"), password, &encryption_type, derive_key_hash_rounds)?,
+            key: read_or_create_key(path.join(SECURITY_DIR).join(KEY_ENC_FILENAME), password, &encryption_type, derive_key_hash_rounds)?,
             opened_files_for_write: HashMap::new(),
         };
         let _ = fs.ensure_root_exists();
+        fs.check_password();
 
         Ok(fs)
     }
@@ -922,6 +924,40 @@ impl EncryptedFs {
         crypto_util::normalize_end_encrypt_file_name(name, &self.encryption_type, &self.key)
     }
 
+    pub fn change_password(data_dir: &str, old_password: &str, new_password: &str, encryption_type: &EncryptionType, derive_key_hash_rounds: u32) -> FsResult<()> {
+        let data_dir = PathBuf::from(data_dir);
+
+        // decrypt key
+        let initial_key = crypto_util::derive_key(old_password, &encryption_type, derive_key_hash_rounds, "salt-42");
+        let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
+        let mut decryptor = crypto_util::create_decryptor(File::open(enc_file.clone())?, encryption_type, &initial_key);
+        let mut key: Vec<u8> = vec![];
+        ;
+        decryptor.read_to_end(&mut key)?;
+        decryptor.finish();
+
+        // encrypt it with new key derived from new password
+        let new_key = crypto_util::derive_key(new_password, &encryption_type, derive_key_hash_rounds, "salt-42");
+        fs::remove_file(enc_file.clone())?;
+        let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
+                                                          encryption_type, &new_key);
+        encryptor.write_all(&key)?;
+        encryptor.finish()?;
+
+        Ok(())
+    }
+
+    fn check_password(&mut self) {
+        match self.get_inode(ROOT_INODE) {
+            Err(FsError::SerializeError(err)) => {
+                println!("Cannot decrypt data, maybe password is wrong");
+                process::exit(2);
+            }
+            Err(err) => { panic!("Error while checking password: {:?}", err); }
+            _ => {}
+        }
+    }
+
     fn create_read_handle(&mut self, ino: u64, handle: u64) -> FsResult<u64> {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path)?;
@@ -1077,9 +1113,9 @@ fn merge_attr_time_and_time_obj(attr: &mut FileAttr, from: &TimeAndSizeFileAttr)
 }
 
 fn read_or_create_key(path: PathBuf, password: &str, encryption_type: &EncryptionType, rounds: u32) -> FsResult<Vec<u8>> {
-    let initial_key = crypto_util::derive_key(password, encryption_type, rounds, "salt-42");
+    let derived_key = crypto_util::derive_key(password, encryption_type, rounds, "salt-42");
     if !path.exists() {
-        // first time, create a random key and encrypt it with the initial key
+        // first time, create a random key and encrypt it with the derived key from password
         let mut key: Vec<u8> = vec![];
         let key_len = match encryption_type {
             EncryptionType::ChaCha20 => 32,
@@ -1087,12 +1123,16 @@ fn read_or_create_key(path: PathBuf, password: &str, encryption_type: &Encryptio
         };
         key.resize(key_len, 0);
         OsRng::new()?.fill_bytes(&mut key);
-        let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path.clone())?, encryption_type, &initial_key);
+        let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path.clone())?,
+                                                          encryption_type, &derived_key);
         encryptor.write_all(&key)?;
         encryptor.finish()?;
+
+        return Ok(key);
     }
-    let mut decryptor = crypto_util::create_decryptor(File::open(path)?, encryption_type, &initial_key);
-    let mut key: Vec<u8> = vec![];;
+    let mut decryptor = crypto_util::create_decryptor(File::open(path)?, encryption_type, &derived_key);
+    let mut key: Vec<u8> = vec![];
+    ;
     decryptor.read_to_end(&mut key)?;
     decryptor.finish();
     Ok(key)
