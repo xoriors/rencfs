@@ -448,11 +448,15 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
         if offset >= attr.size {
+            // if we need an offset after file size we don't read nothing
             return Ok(0);
         }
 
         if *position != offset {
+            // in order to seek we need to read the bytes from current position until the offset
             if *position > offset {
+                // if we need an offset before the current position, we can't seek back, we need
+                // to read from the beginning until the desired offset
                 self.create_read_handle(ino, handle)?;
             }
             if offset > 0 {
@@ -504,8 +508,16 @@ impl EncryptedFs {
             // write attr only here to avoid serializing it multiple times while writing
             self.write_inode(&attr)?;
             encryptor.finish()?;
+            // if we are in tmp file move it to actual file
             if path.to_str().unwrap().ends_with(".tmp") {
                 fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).unwrap();
+
+                // also recreate readers because the file has changed
+                let keys: Vec<u64> = self.read_handles.keys().cloned().collect();
+                for key in keys {
+                    let (attr, _, _) = self.read_handles.remove(&key).unwrap();
+                    self.create_read_handle(attr.ino, key).unwrap();
+                }
             }
             valid_fh = true;
         }
@@ -533,7 +545,7 @@ impl EncryptedFs {
         if !self.write_handles.contains_key(&handle) {
             return Err(FsError::InvalidFileHandle);
         }
-        let (attr, path, position, _) =
+        let (attr, _, position, _) =
             self.write_handles.get_mut(&handle).unwrap();
         if attr.ino != ino {
             return Err(FsError::InvalidFileHandle);
@@ -543,6 +555,22 @@ impl EncryptedFs {
         }
 
         if *position != offset {
+            // in order to seek we need to recreate all stream from the beginning until the desired position of file size
+            // for that we create a new encryptor into a tmp file reading from original file and writing to tmp one
+            // when we release the handle we will move this tmp file to the actual file
+
+            // remove handle data because we will replace it with the tmp one
+            let (attr, path, mut position, encryptor) =
+                self.write_handles.remove(&handle).unwrap();
+
+            // finish the current writer so we flush all data to the file
+            encryptor.finish()?;
+
+            // if we are already in the tmp file first copy tmp to actual file
+            if path.to_str().unwrap().ends_with(".tmp") {
+                fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).unwrap();
+            }
+
             let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
             let in_file = OpenOptions::new().read(true).write(true).open(in_path.clone())?;
 
@@ -555,30 +583,76 @@ impl EncryptedFs {
 
             let mut buffer: [u8; 4096] = [0; 4096];
             let mut pos_read = 0;
-            loop {
-                let read_len = if pos_read + buffer.len() as u64 > offset {
-                    (offset - pos_read) as usize
-                } else {
-                    buffer.len()
-                };
-                if read_len > 0 {
-                    decryptor.read_exact(&mut buffer[..read_len])?;
-                    encryptor.write_all(&buffer[..read_len])?;
-                    pos_read += read_len as u64;
-                    if pos_read == offset {
-                        break;
+            position = 0;
+            if offset > 0 {
+                loop {
+                    let offset_in_bounds = min(offset, attr.size); // keep offset in bounds of file
+                    let read_len = if pos_read + buffer.len() as u64 > offset_in_bounds {
+                        (offset_in_bounds - pos_read) as usize
+                    } else {
+                        buffer.len()
+                    };
+                    if read_len > 0 {
+                        decryptor.read_exact(&mut buffer[..read_len])?;
+                        encryptor.write_all(&buffer[..read_len])?;
+                        pos_read += read_len as u64;
+                        position += read_len as u64;
+                        if pos_read == offset_in_bounds {
+                            break;
+                        }
                     }
                 }
             }
-            self.replace_encryptor(handle, tmp_path, encryptor);
+            self.replace_handle_data(handle, attr, tmp_path, position, encryptor);
         }
         let (attr, _, position, encryptor) =
             self.write_handles.get_mut(&handle).unwrap();
-        *position = offset;
+
+        // if offset is after current position (max file size) we fill up with zeros until offset
+        if offset > *position {
+            let buffer: [u8; 4096] = [0; 4096];
+            loop {
+                let len = min(4096, offset - *position) as usize;
+                encryptor.write_all(&buffer[..len])?;
+                *position += len as u64;
+                if *position == offset {
+                    break;
+                }
+            }
+        }
+
+        // now write the new data
         encryptor.write_all(buf)?;
         *position += buf.len() as u64;
 
-        let size = offset + buf.len() as u64;
+        // if position is before file end we copy the rest of the file from position to the end
+        if *position < attr.size {
+            let mut buffer: [u8; 4096] = [0; 4096];
+            let mut decryptor = crypto_util::create_decryptor(OpenOptions::new().read(true).open(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()))?, &self.key);
+            // move read position to the desired position
+            loop {
+                let mut read_pos = 0u64;
+                let len = min(4096, *position - read_pos) as usize;
+                decryptor.read_exact(&mut buffer[..len])?;
+                read_pos += len as u64;
+                if read_pos == *position {
+                    break;
+                }
+            }
+            // copy the rest of the file
+            loop {
+                let len = min(4096, attr.size - *position) as usize;
+                decryptor.read_exact(&mut buffer[..len])?;
+                encryptor.write_all(&buffer[..len])?;
+                *position += len as u64;
+                if *position == attr.size {
+                    break;
+                }
+            }
+            decryptor.finish();
+        }
+
+        let size = *position;
         attr.size = size;
         attr.mtime = std::time::SystemTime::now();
         attr.ctime = std::time::SystemTime::now();
@@ -793,9 +867,7 @@ impl EncryptedFs {
         Ok(handle)
     }
 
-    fn replace_encryptor(&mut self, handle: u64, new_path: PathBuf, new_encryptor: write::Encryptor<File>) {
-        let (attr, _, position, _) =
-            self.write_handles.remove(&handle).unwrap();
+    fn replace_handle_data(&mut self, handle: u64, attr: FileAttr, new_path: PathBuf, position: u64, new_encryptor: write::Encryptor<File>) {
         self.write_handles.insert(handle, (attr, new_path, position, new_encryptor));
     }
 
