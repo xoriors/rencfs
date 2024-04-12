@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::string::String;
 
-use crate::encrypted_fs::{CONTENTS_DIR, DirectoryEntry, EncryptedFs, EncryptionType, FileAttr, FileType, FsError, FsResult, INODES_DIR, ROOT_INODE, SECURITY_DIR};
+use crate::encrypted_fs::{CONTENTS_DIR, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, EncryptionType, FileAttr, FileType, FsError, FsResult, INODES_DIR, ROOT_INODE, SECURITY_DIR};
 
 const TESTS_DATA_DIR: &str = "./tests-data/";
 
@@ -293,6 +293,127 @@ fn test_read_dir() {
                 ino: dir_attr.ino,
                 name: test_dir_2.to_string(),
                 kind: FileType::Directory,
+            }];
+        sample.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(entries.len(), 4);
+        assert_eq!(sample, entries);
+    });
+}
+#[test]
+fn test_read_dir_plus() {
+    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_read_dir_plus") }, |setup| {
+        let fs = setup.fs.as_mut().unwrap();
+
+        // file and directory in root
+        let test_file = "test-file";
+        let (fh, file_attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+
+        let test_dir = "test-dir";
+        let (fh, dir_attr) = fs.create_nod(ROOT_INODE, test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let mut entries: Vec<FsResult<DirectoryEntryPlus>> = fs.read_dir_plus(dir_attr.ino).unwrap().collect();
+        entries.sort_by(|a, b| a.as_ref().unwrap().name.cmp(&b.as_ref().unwrap().name));
+        let entries: Vec<DirectoryEntryPlus> = entries.into_iter().map(|e| e.unwrap()).collect();
+        assert_eq!(entries.len(), 2);
+        let attr_root = fs.get_inode(ROOT_INODE).unwrap();
+        assert_eq!(vec![
+            DirectoryEntryPlus {
+                ino: dir_attr.ino,
+                name: ".".to_string(),
+                kind: FileType::Directory,
+                attr: dir_attr,
+            },
+            DirectoryEntryPlus {
+                ino: ROOT_INODE,
+                name: "..".to_string(),
+                kind: FileType::Directory,
+                attr: attr_root,
+            },
+        ], entries);
+
+        let iter = fs.read_dir_plus(ROOT_INODE);
+        let mut entries: Vec<FsResult<DirectoryEntryPlus>> = iter.unwrap().into_iter().collect();
+        entries.sort_by(|a, b| a.as_ref().unwrap().name.cmp(&b.as_ref().unwrap().name));
+        let entries: Vec<DirectoryEntryPlus> = entries.into_iter().map(|e| e.unwrap()).collect();
+        let mut sample = vec![
+            DirectoryEntryPlus {
+                ino: ROOT_INODE,
+                name: ".".to_string(),
+                kind: FileType::Directory,
+                attr: attr_root,
+            },
+            DirectoryEntryPlus {
+                ino: file_attr.ino,
+                name: test_file.to_string(),
+                kind: FileType::RegularFile,
+                attr: file_attr,
+            },
+            DirectoryEntryPlus {
+                ino: dir_attr.ino,
+                name: test_dir.to_string(),
+                kind: FileType::Directory,
+                attr: dir_attr,
+            }];
+        sample.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(entries.len(), 3);
+        assert_eq!(sample, entries);
+
+        // file and directory in another directory
+        let parent = dir_attr.ino;
+        let attr_parent = dir_attr;
+        let test_file_2 = "test-file-2";
+        let (fh, file_attr) = fs.create_nod(parent, test_file_2, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+
+        let test_dir_2 = "test-dir-2";
+        let (fh, dir_attr) = fs.create_nod(parent, test_dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        // for some reason the tv_nsec is not the same between what create_nod() and read_dir_plus() returns, so we reload it again
+        let dir_attr = fs.get_inode(dir_attr.ino).unwrap();
+        let attr_parent = fs.get_inode(attr_parent.ino).unwrap();
+        let mut entries: Vec<FsResult<DirectoryEntryPlus>> = fs.read_dir_plus(dir_attr.ino).unwrap().collect();
+        entries.sort_by(|a, b| a.as_ref().unwrap().name.cmp(&b.as_ref().unwrap().name));
+        let entries: Vec<DirectoryEntryPlus> = entries.into_iter().map(|e| e.unwrap()).collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(vec![
+            DirectoryEntryPlus {
+                ino: dir_attr.ino,
+                name: ".".to_string(),
+                kind: FileType::Directory,
+                attr: dir_attr,
+            },
+            DirectoryEntryPlus {
+                ino: parent,
+                name: "..".to_string(),
+                kind: FileType::Directory,
+                attr: attr_parent,
+            },
+        ], entries);
+
+        let iter = fs.read_dir_plus(parent);
+        let mut entries: Vec<DirectoryEntryPlus> = iter.unwrap().map(|e| e.unwrap()).collect();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut sample = vec![
+            DirectoryEntryPlus {
+                ino: parent,
+                name: ".".to_string(),
+                kind: FileType::Directory,
+                attr: attr_parent,
+            },
+            DirectoryEntryPlus {
+                ino: ROOT_INODE,
+                name: "..".to_string(),
+                kind: FileType::Directory,
+                attr: attr_root,
+            },
+            DirectoryEntryPlus {
+                ino: file_attr.ino,
+                name: test_file_2.to_string(),
+                kind: FileType::RegularFile,
+                attr: file_attr,
+            },
+            DirectoryEntryPlus {
+                ino: dir_attr.ino,
+                name: test_dir_2.to_string(),
+                kind: FileType::Directory,
+                attr: dir_attr,
             }];
         sample.sort_by(|a, b| a.name.cmp(&b.name));
         assert_eq!(entries.len(), 4);
