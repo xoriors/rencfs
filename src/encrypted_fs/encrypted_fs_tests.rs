@@ -1,13 +1,10 @@
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::string::String;
 
-use fuser::{FileAttr, FileType};
-
-use crate::encrypted_fs::{CONTENTS_DIR, DirectoryEntry, EncryptedFs, EncryptionType, FsError, FsResult, INODES_DIR, ROOT_INODE, SECURITY_DIR};
+use crate::encrypted_fs::{CONTENTS_DIR, DirectoryEntry, EncryptedFs, EncryptionType, FileAttr, FileType, FsError, FsResult, INODES_DIR, ROOT_INODE, SECURITY_DIR};
 
 const TESTS_DATA_DIR: &str = "./tests-data/";
 

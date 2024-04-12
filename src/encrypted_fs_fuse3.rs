@@ -8,9 +8,9 @@ use std::os::raw::c_int;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use fuse3::{Inode, Result, Timestamp};
-use fuse3::raw::prelude::*;
-use fuser::consts::FOPEN_DIRECT_IO;
+use fuse3::{Inode, Result, SetAttr, Timestamp};
+use fuse3::raw::prelude::{DirectoryEntry, DirectoryEntryPlus, ReplyAttr, ReplyCopyFileRange, ReplyCreated, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEntry, ReplyInit, ReplyOpen, ReplyStatFs, ReplyWrite};
+use fuse3::raw::{Filesystem, Request};
 use futures_util::stream;
 use futures_util::stream::Iter;
 use libc::{EACCES, EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
@@ -18,7 +18,7 @@ use parking_lot::{const_reentrant_mutex, RawMutex, RawThreadId, ReentrantMutex};
 use parking_lot::lock_api::ReentrantMutexGuard;
 use tracing::{debug, instrument, warn};
 
-use crate::encrypted_fs::{EncryptedFs, EncryptionType, FsError, FsResult};
+use crate::encrypted_fs::{EncryptedFs, EncryptionType, FileAttr, FileType, FsError, FsResult};
 
 const TTL: Duration = Duration::from_secs(1);
 const STATFS: ReplyStatFs = ReplyStatFs {
@@ -38,6 +38,9 @@ const MAX_NAME_LENGTH: u32 = 255;
 
 const BLOCK_SIZE: u64 = 512;
 
+// Flags returned by the open request
+pub const FOPEN_DIRECT_IO: u32 = 1 << 0; // bypass page cache for this open file
+
 pub struct DirectoryEntryIterator(crate::encrypted_fs::DirectoryEntryIterator, u64);
 
 impl Iterator for DirectoryEntryIterator {
@@ -46,10 +49,10 @@ impl Iterator for DirectoryEntryIterator {
     fn next(&mut self) -> Option<Self::Item> {
         match self.0.next() {
             Some(Ok(entry)) => {
-                let kind = if entry.kind == fuser::FileType::Directory {
-                    FileType::Directory
+                let kind = if entry.kind == FileType::Directory {
+                    fuse3::raw::prelude::FileType::Directory
                 } else {
-                    FileType::RegularFile
+                    fuse3::raw::prelude::FileType::RegularFile
                 };
                 self.1 += 1;
                 Some(Ok(DirectoryEntry {
@@ -77,10 +80,10 @@ impl Iterator for DirectoryEntryPlusIterator {
     fn next(&mut self) -> Option<Self::Item> {
         match self.0.next() {
             Some(Ok(entry)) => {
-                let kind = if entry.kind == fuser::FileType::Directory {
-                    FileType::Directory
+                let kind = if entry.kind == FileType::Directory {
+                    fuse3::raw::prelude::FileType::Directory
                 } else {
-                    FileType::RegularFile
+                    fuse3::raw::prelude::FileType::RegularFile
                 };
                 self.1 += 1;
                 Some(Ok(DirectoryEntryPlus {
@@ -142,7 +145,7 @@ impl EncryptedFsFuse3 {
     }
 
     #[instrument(skip(self))]
-    fn create_nod(&self, parent: u64, mut mode: u32, req: &Request, name: &OsStr, read: bool, write: bool) -> std::result::Result<(u64, fuser::FileAttr), c_int> {
+    fn create_nod(&self, parent: u64, mut mode: u32, req: &Request, name: &OsStr, read: bool, write: bool) -> std::result::Result<(u64, FileAttr), c_int> {
         let parent_attr = match self.get_fs().borrow_mut().get_inode(parent) {
             Err(err) => {
                 debug!("create_nod() error {}", err);
@@ -167,7 +170,7 @@ impl EncryptedFsFuse3 {
         }
 
         let kind = as_file_kind(mode);
-        let mut attr = if kind == fuser::FileType::Directory {
+        let mut attr = if kind == FileType::Directory {
             dir_attr()
         } else {
             file_attr(0)
@@ -189,7 +192,7 @@ impl EncryptedFsFuse3 {
     }
 }
 
-fn creation_gid(parent: &fuser::FileAttr, gid: u32) -> u32 {
+fn creation_gid(parent: &FileAttr, gid: u32) -> u32 {
     if parent.perm & libc::S_ISGID as u16 != 0 {
         return parent.gid;
     }
@@ -197,18 +200,18 @@ fn creation_gid(parent: &fuser::FileAttr, gid: u32) -> u32 {
     gid
 }
 
-fn from_attr(from: fuser::FileAttr) -> FileAttr {
-    FileAttr {
+fn from_attr(from: FileAttr) -> fuse3::raw::prelude::FileAttr {
+    fuse3::raw::prelude::FileAttr {
         ino: from.ino,
         size: from.size,
         blocks: from.blocks,
         atime: from.atime.into(),
         mtime: from.mtime.into(),
         ctime: from.ctime.into(),
-        kind: if from.kind == fuser::FileType::Directory {
-            FileType::Directory
+        kind: if from.kind == FileType::Directory {
+            fuse3::raw::prelude::FileType::Directory
         } else {
-            FileType::RegularFile
+            fuse3::raw::prelude::FileType::RegularFile
         },
         perm: from.perm,
         nlink: from.nlink,
@@ -270,7 +273,7 @@ impl Filesystem for EncryptedFsFuse3 {
             }
         };
 
-        if attr.kind == fuser::FileType::Directory {
+        if attr.kind == FileType::Directory {
             debug!("dir {}", attr.ino);
         } else {
             debug!("file {}", attr.ino);
@@ -302,7 +305,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 return Err(ENOENT.into());
             }
             Ok(attr) => {
-                if attr.kind == fuser::FileType::Directory {
+                if attr.kind == FileType::Directory {
                     debug!("dir {}", inode);
                 } else {
                     debug!("file {}", inode);
@@ -648,7 +651,7 @@ impl Filesystem for EncryptedFsFuse3 {
             }
         };
 
-        if attr.kind != fuser::FileType::Directory {
+        if attr.kind != FileType::Directory {
             return Err(ENOTDIR.into());
         }
 
@@ -738,7 +741,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         // Only move an existing directory to a new parent, if we have write access to it,
         // because that will change the ".." link in it
-        if attr.kind == fuser::FileType::Directory
+        if attr.kind == FileType::Directory
             && parent != new_parent
             && !check_access(
             attr.uid,
@@ -1133,7 +1136,7 @@ fn get_groups(pid: u32) -> Vec<u32> {
     vec![]
 }
 
-fn clear_suid_sgid(attr: &mut fuser::FileAttr) {
+fn clear_suid_sgid(attr: &mut FileAttr) {
     attr.perm &= !libc::S_ISUID as u16;
     // SGID is only suppose to be cleared if XGRP is set
     if attr.perm & libc::S_IXGRP as u16 != 0 {
@@ -1141,22 +1144,22 @@ fn clear_suid_sgid(attr: &mut fuser::FileAttr) {
     }
 }
 
-fn as_file_kind(mut mode: u32) -> fuser::FileType {
+fn as_file_kind(mut mode: u32) -> FileType {
     mode &= libc::S_IFMT as u32;
 
     if mode == libc::S_IFREG as u32 {
-        return fuser::FileType::RegularFile;
-    } else if mode == libc::S_IFLNK as u32 {
-        return fuser::FileType::Symlink;
+        return FileType::RegularFile;
+    // } else if mode == libc::S_IFLNK as u32 {
+    //     return FileType::Symlink;
     } else if mode == libc::S_IFDIR as u32 {
-        return fuser::FileType::Directory;
+        return FileType::Directory;
     } else {
         unimplemented!("{}", mode);
     }
 }
 
-fn dir_attr() -> fuser::FileAttr {
-    let mut f = fuser::FileAttr {
+fn dir_attr() -> FileAttr {
+    let mut f = FileAttr {
         ino: 0,
         size: BLOCK_SIZE,
         blocks: 0,
@@ -1164,7 +1167,7 @@ fn dir_attr() -> fuser::FileAttr {
         mtime: SystemTime::now(),
         ctime: SystemTime::now(),
         crtime: SystemTime::now(),
-        kind: fuser::FileType::Directory,
+        kind: FileType::Directory,
         perm: 0o777,
         nlink: 2,
         uid: 0,
@@ -1178,8 +1181,8 @@ fn dir_attr() -> fuser::FileAttr {
     f
 }
 
-fn file_attr(size: u64) -> fuser::FileAttr {
-    let mut f = fuser::FileAttr {
+fn file_attr(size: u64) -> FileAttr {
+    let mut f = FileAttr {
         ino: 0,
         size,
         blocks: (size + BLOCK_SIZE - 1) / BLOCK_SIZE,
@@ -1187,7 +1190,7 @@ fn file_attr(size: u64) -> fuser::FileAttr {
         mtime: SystemTime::now(),
         ctime: SystemTime::now(),
         crtime: SystemTime::now(),
-        kind: fuser::FileType::RegularFile,
+        kind: FileType::RegularFile,
         perm: 0o644,
         nlink: 1,
         uid: 0,

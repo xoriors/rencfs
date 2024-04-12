@@ -1,6 +1,6 @@
 use std::{env, io, panic, process};
 use std::ffi::OsStr;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::str::FromStr;
 
 use clap::{Arg, ArgAction, ArgMatches, Command, crate_version};
@@ -11,8 +11,8 @@ use rpassword::read_password;
 use strum::IntoEnumIterator;
 use tokio::task;
 use tracing::Level;
-use encrypted_fs::encrypted_fs::{EncryptedFs, EncryptionType};
 
+use encrypted_fs::encrypted_fs::{EncryptedFs, EncryptionType};
 use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
 
 #[tokio::main]

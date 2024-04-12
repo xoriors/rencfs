@@ -13,6 +13,7 @@ use futures_util::stream::Iter;
 use tracing::Level;
 
 mod aes_stream_with_writer_seek;
+pub mod encrypted_fs_fuse;
 
 const CONTENT: &str = "hello world\n";
 

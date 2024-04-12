@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fuser = { version = "0.14.0", features = ["serializable"] }
 clap = { version = "4.5.4", features = ["derive", "cargo"] }
 libc = "0.2.153"
 env_logger = "0.11.3"
@@ -15,18 +14,13 @@ serde = { version = "1.0.197", features = ["derive"] }
 bincode = "1.3.3"
 thiserror = "1.0.58"
 rand = "0.3"
-cryptostream = "0.3.2"
 base64 = "=0.13.1"
 openssl = "=0.10.64"
-aes-stream = "0.2.1"
 rust-crypto = "=0.2.36"
-ring = "0.17.8"
-hex = "0.4.3"
 fuse3 = { version = "0.7.1", features = ["tokio-runtime", "unprivileged"] }
 tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "time", "signal"] }
 futures-util = "0.3.30"
 mio = { version = "0.8.11", features = ["os-poll"] }
-tempfile = "3.10"
 bytes = "1.5"
 tracing = "0.1.40"
 tracing-subscriber = "0.3"
@@ -37,3 +31,4 @@ sha2 = "0.11.0-pre.3"
 strum = "0.26.2"
 strum_macros = "0.26.2"
 rpassword = "7.3.1"
+cryptostream = "0.3.2"

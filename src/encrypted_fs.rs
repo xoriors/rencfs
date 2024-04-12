@@ -10,9 +10,9 @@ use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 
 use cryptostream::{read, write};
-use fuser::{FileAttr, FileType};
 use openssl::error::ErrorStack;
 use rand::{OsRng, Rng};
+use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tracing::debug;
@@ -27,6 +27,60 @@ pub(crate) const SECURITY_DIR: &str = "security";
 pub(crate) const KEY_ENC_FILENAME: &str = "key.enc";
 
 pub(crate) const ROOT_INODE: u64 = 1;
+
+/// File attributes
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FileAttr {
+    /// Inode number
+    pub ino: u64,
+    /// Size in bytes
+    pub size: u64,
+    /// Size in blocks
+    pub blocks: u64,
+    /// Time of last access
+    pub atime: SystemTime,
+    /// Time of last modification
+    pub mtime: SystemTime,
+    /// Time of last change
+    pub ctime: SystemTime,
+    /// Time of creation (macOS only)
+    pub crtime: SystemTime,
+    /// Kind of file (directory, file, pipe, etc)
+    pub kind: FileType,
+    /// Permissions
+    pub perm: u16,
+    /// Number of hard links
+    pub nlink: u32,
+    /// User id
+    pub uid: u32,
+    /// Group id
+    pub gid: u32,
+    /// Rdev
+    pub rdev: u32,
+    /// Block size
+    pub blksize: u32,
+    /// Flags (macOS only, see chflags(2))
+    pub flags: u32,
+}
+
+/// File types
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum FileType {
+    // /// Named pipe (S_IFIFO)
+    // NamedPipe,
+    // /// Character device (S_IFCHR)
+    // CharDevice,
+    // /// Block device (S_IFBLK)
+    // BlockDevice,
+    /// Directory (S_IFDIR)
+    Directory,
+    /// Regular file (S_IFREG)
+    RegularFile,
+    // /// Symbolic link (S_IFLNK)
+    // Symlink,
+    // /// Unix domain socket (S_IFSOCK)
+    // Socket,
+}
 
 #[derive(Error, Debug)]
 pub enum FsError {
@@ -313,8 +367,8 @@ impl EncryptedFs {
         })?;
 
         let mut parent_attr = self.get_inode(parent)?;
-        parent_attr.mtime = std::time::SystemTime::now();
-        parent_attr.ctime = std::time::SystemTime::now();
+        parent_attr.mtime = SystemTime::now();
+        parent_attr.ctime = SystemTime::now();
         self.write_inode(&parent_attr)?;
 
         let handle = if attr.kind == FileType::RegularFile {

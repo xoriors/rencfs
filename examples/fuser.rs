@@ -7,7 +7,9 @@ use clap::{Arg, ArgAction, Command, crate_version};
 use fuser::MountOption;
 use strum::IntoEnumIterator;
 use encrypted_fs::encrypted_fs::EncryptionType;
-use encrypted_fs::encrypted_fs_fuse::EncryptedFsFuse;
+use crate::encrypted_fs_fuse::EncryptedFsFuse;
+
+mod encrypted_fs_fuse;
 
 fn main() {
     let matches = Command::new("hello")
