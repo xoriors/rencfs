@@ -27,11 +27,11 @@ pub struct EncryptedFsFuse {
 }
 
 impl EncryptedFsFuse {
-    pub fn new(data_dir: &str, password: &str, encryption_type: EncryptionType, derive_key_hash_rounds: u32,
+    pub fn new(data_dir: &str, password: &str, cipher: EncryptionType, derive_key_hash_rounds: u32,
                direct_io: bool, _suid_support: bool) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")] {
             Ok(EncryptedFsFuse {
-                fs: EncryptedFs::new(data_dir, password, encryption_type, derive_key_hash_rounds)?,
+                fs: EncryptedFs::new(data_dir, password, cipher, derive_key_hash_rounds)?,
                 direct_io,
                 suid_support: _suid_support,
                 current_file_handle: 0,
@@ -39,7 +39,7 @@ impl EncryptedFsFuse {
         }
         #[cfg(not(feature = "abi-7-26"))] {
             Ok(EncryptedFsFuse {
-                fs: EncryptedFs::new(data_dir, password, encryption_type, derive_key_hash_rounds)?,
+                fs: EncryptedFs::new(data_dir, password, cipher, derive_key_hash_rounds)?,
                 direct_io,
                 suid_support: false,
                 dir_handle: 0,
@@ -1058,7 +1058,7 @@ fn creation_gid(parent: &FileAttr, gid: u32) -> u32 {
     gid
 }
 
-pub fn check_access(
+fn check_access(
     file_uid: u32,
     file_gid: u32,
     file_mode: u16,

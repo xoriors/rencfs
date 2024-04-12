@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::string::String;
 
-use crate::encrypted_fs::{CONTENTS_DIR, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, EncryptionType, FileAttr, FileType, FsError, FsResult, INODES_DIR, ROOT_INODE, SECURITY_DIR};
+use crate::encrypted_fs::{CONTENTS_DIR, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult, INODES_DIR, ROOT_INODE, SECURITY_DIR};
 
 const TESTS_DATA_DIR: &str = "./tests-data/";
 
@@ -27,7 +27,7 @@ fn setup(setup: TestSetup) -> SetupResult {
         fs::remove_dir_all(path).unwrap();
     }
     fs::create_dir_all(path).unwrap();
-    let fs = EncryptedFs::new(path, "pass-42", EncryptionType::ChaCha20, 0).unwrap();
+    let fs = EncryptedFs::new(path, "pass-42", Cipher::ChaCha20, 0).unwrap();
 
     SetupResult {
         fs: Some(fs),
@@ -299,6 +299,7 @@ fn test_read_dir() {
         assert_eq!(sample, entries);
     });
 }
+
 #[test]
 fn test_read_dir_plus() {
     run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_read_dir_plus") }, |setup| {

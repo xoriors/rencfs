@@ -6,7 +6,7 @@ use std::str::FromStr;
 use clap::{Arg, ArgAction, Command, crate_version};
 use fuser::MountOption;
 use strum::IntoEnumIterator;
-use encrypted_fs::encrypted_fs::EncryptionType;
+use encrypted_fs::encrypted_fs::Cipher;
 use crate::encrypted_fs_fuse::EncryptedFsFuse;
 
 mod encrypted_fs_fuse;
@@ -35,7 +35,7 @@ fn main() {
                 .value_name("encryption-type")
                 .default_value("ChaCha20")
                 .help(format!("Encryption type, possible values: {}",
-                              EncryptionType::iter().fold(String::new(), |mut acc, x| {
+                              Cipher::iter().fold(String::new(), |mut acc, x| {
                                   acc.push_str(format!("{}{}{:?}", acc, if acc.len() != 0 { ", " } else { "" }, x).as_str());
                                   acc
                               }).as_str()),
@@ -92,16 +92,16 @@ fn main() {
     let mut password = String::new();
     io::stdin().read_to_string(&mut password).unwrap();
 
-    let encryption_type: String = matches
+    let cipher: String = matches
         .get_one::<String>("encryption-type")
         .unwrap()
         .to_string();
-    let encryption_type = EncryptionType::from_str(encryption_type.as_str());
-    if encryption_type.is_err() {
+    let cipher = Cipher::from_str(cipher.as_str());
+    if cipher.is_err() {
         println!("Invalid encryption type");
         return;
     }
-    let encryption_type = encryption_type.unwrap();
+    let cipher = cipher.unwrap();
 
     let derive_key_hash_rounds: String = matches
         .get_one::<String>("derive-key-hash-rounds")
@@ -144,7 +144,7 @@ fn main() {
         options.push(MountOption::AllowRoot);
     }
 
-    fuser::mount2(EncryptedFsFuse::new(&data_dir, &password, encryption_type, derive_key_hash_rounds,
+    fuser::mount2(EncryptedFsFuse::new(&data_dir, &password, cipher, derive_key_hash_rounds,
                                        matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(), mountpoint, &options).unwrap();
 }
 

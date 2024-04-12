@@ -18,7 +18,7 @@ use parking_lot::{const_reentrant_mutex, RawMutex, RawThreadId, ReentrantMutex};
 use parking_lot::lock_api::ReentrantMutexGuard;
 use tracing::{debug, instrument, warn};
 
-use crate::encrypted_fs::{EncryptedFs, EncryptionType, FileAttr, FileType, FsError, FsResult};
+use crate::encrypted_fs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult};
 
 const TTL: Duration = Duration::from_secs(1);
 const STATFS: ReplyStatFs = ReplyStatFs {
@@ -39,7 +39,7 @@ const MAX_NAME_LENGTH: u32 = 255;
 const BLOCK_SIZE: u64 = 512;
 
 // Flags returned by the open request
-pub const FOPEN_DIRECT_IO: u32 = 1 << 0; // bypass page cache for this open file
+const FOPEN_DIRECT_IO: u32 = 1 << 0; // bypass page cache for this open file
 
 pub struct DirectoryEntryIterator(crate::encrypted_fs::DirectoryEntryIterator, u64);
 
@@ -114,18 +114,18 @@ pub struct EncryptedFsFuse3 {
 }
 
 impl EncryptedFsFuse3 {
-    pub fn new(data_dir: &str, password: &str, encryption_type: EncryptionType, derive_key_hash_rounds: u32,
+    pub fn new(data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
                direct_io: bool, suid_support: bool) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")] {
             Ok(Self {
-                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password, encryption_type, derive_key_hash_rounds).unwrap())),
+                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password, cipher, derive_key_hash_rounds).unwrap())),
                 direct_io,
                 suid_support,
             })
         }
         #[cfg(not(feature = "abi-7-26"))] {
             Ok(Self {
-                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password, encryption_type, derive_key_hash_rounds).unwrap())),
+                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password, cipher, derive_key_hash_rounds).unwrap())),
                 direct_io,
                 suid_support: false,
             })
@@ -959,7 +959,7 @@ impl Filesystem for EncryptedFsFuse3 {
         ) {
             let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
             Ok(ReplyOpen {
-                fh: self.get_fs().borrow_mut().allocate_next_handle(),
+                fh: 0, // we don't use handles for directories
                 flags: open_flags,
             })
         } else {
@@ -1204,7 +1204,7 @@ fn file_attr(size: u64) -> FileAttr {
     f
 }
 
-pub fn check_access(
+fn check_access(
     file_uid: u32,
     file_gid: u32,
     file_mode: u16,

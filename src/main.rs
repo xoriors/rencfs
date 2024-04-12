@@ -1,3 +1,45 @@
+//! # EncryptedFS
+//! An encrypted file system in Rust that mounts with FUSE. It can be used to create encrypted directories.
+//!
+//! # Usage
+//!
+//! To use the encrypted file system, you need to have FUSE installed on your system. You can install it by running the following command (or based on your distribution):
+//!
+//! ```bash
+//! sudo apt-get update
+//! sudo apt-get -y install fuse3
+//! ```
+//! A basic example of how to use the encrypted file system is shown below:
+//!
+//! ```
+//! encrypted_fs --mount-point MOUNT_POINT --data-dir DATA_DIR
+//! ```
+//! Where `MOUNT_POINT` is the directory where the encrypted file system will be mounted and `DATA_DIR` is the directory where the encrypted data will be stored.\
+//! It will prompt you to enter a password to encrypt/decrypt the data.
+//!
+//! ## Change Password
+//! The encryption key is stored in a file and encrypted with a key derived from the password.
+//! This offers the possibility to change the password without needing to decrypt and re-encrypt the whole data.
+//! This is done by decrypting the key with the old password and re-encrypting it with the new password.
+//!
+//! To change the password, you can run the following command:
+//! ```
+//! encrypted_fs --change-password --data-dir DATA_DIR
+//! ```
+//! Where `DATA_DIR` is the directory where the encrypted data is stored.\
+//! It will prompt you to enter the old password and then the new password.
+//!
+//! ## Encryption info
+//! You can specify the encryption algorithm and derive key hash rounds adding these arguments to the command line:
+//!
+//! ```
+//! --cipher CIPHER --derive-key-hash-rounds ROUNDS
+//! ```
+//! Where `CIPHER` is the encryption algorithm and `ROUNDS` is the number of rounds to derive the key hash.\
+//! You can check the available ciphers with `encrypted_fs --help`.
+//!
+//! Default values are `ChaCha20` and `600_000` respectively.
+
 use std::{env, io, panic, process};
 use std::ffi::OsStr;
 use std::io::Write;
@@ -12,7 +54,7 @@ use strum::IntoEnumIterator;
 use tokio::task;
 use tracing::Level;
 
-use encrypted_fs::encrypted_fs::{EncryptedFs, EncryptionType};
+use encrypted_fs::encrypted_fs::{EncryptedFs, Cipher};
 use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
 
 #[tokio::main]
@@ -52,12 +94,12 @@ fn async_main() {
                     .help("Where to store the encrypted data"),
             )
             .arg(
-                Arg::new("encryption-type")
-                    .long("encryption-type")
-                    .value_name("encryption-type")
+                Arg::new("cipher")
+                    .long("cipher")
+                    .value_name("cipher")
                     .default_value("ChaCha20")
                     .help(format!("Encryption type, possible values: {}",
-                                  EncryptionType::iter().fold(String::new(), |mut acc, x| {
+                                  Cipher::iter().fold(String::new(), |mut acc, x| {
                                       acc.push_str(format!("{}{}{:?}", acc, if acc.len() != 0 { ", " } else { "" }, x).as_str());
                                       acc
                                   }).as_str()),
@@ -114,16 +156,16 @@ fn async_main() {
             .unwrap()
             .to_string();
 
-        let encryption_type: String = matches
-            .get_one::<String>("encryption-type")
+        let cipher: String = matches
+            .get_one::<String>("cipher")
             .unwrap()
             .to_string();
-        let encryption_type = EncryptionType::from_str(encryption_type.as_str());
-        if encryption_type.is_err() {
+        let cipher = Cipher::from_str(cipher.as_str());
+        if cipher.is_err() {
             println!("Invalid encryption type");
             return;
         }
-        let encryption_type = encryption_type.unwrap();
+        let cipher = cipher.unwrap();
 
         let derive_key_hash_rounds: String = matches
             .get_one::<String>("derive-key-hash-rounds")
@@ -147,7 +189,7 @@ fn async_main() {
             print!("Enter new password: ");
             io::stdout().flush().unwrap();
             let new_password = read_password().unwrap();
-            EncryptedFs::change_password(&data_dir, &password, &new_password, &encryption_type, derive_key_hash_rounds).unwrap();
+            EncryptedFs::change_password(&data_dir, &password, &new_password, &cipher, derive_key_hash_rounds).unwrap();
             println!("Password changed successfully");
 
             return;
@@ -180,12 +222,12 @@ fn async_main() {
                 process::exit(0);
             }).unwrap();
 
-            run_fuse(matches, mountpoint, &data_dir, &password, encryption_type, derive_key_hash_rounds).await;
+            run_fuse(matches, mountpoint, &data_dir, &password, cipher, derive_key_hash_rounds).await;
         }
     });
 }
 
-async fn run_fuse(matches: ArgMatches, mountpoint: String, data_dir: &str, password: &str, encryption_type: EncryptionType, derive_key_hash_rounds: u32) {
+async fn run_fuse(matches: ArgMatches, mountpoint: String, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32) {
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
 
@@ -196,7 +238,7 @@ async fn run_fuse(matches: ArgMatches, mountpoint: String, data_dir: &str, passw
 
     let mount_path = OsStr::new(mountpoint.as_str());
     Session::new(mount_options)
-        .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, encryption_type, derive_key_hash_rounds,
+        .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, cipher, derive_key_hash_rounds,
                                                        matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(), mount_path)
         .await
         .unwrap()
