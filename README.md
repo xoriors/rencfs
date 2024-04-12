@@ -1,10 +1,11 @@
 # EncryptedFS
-An encrypted file system that mounts with FUSE. It can be used to create encrypted directories.
+An encrypted file system that mounts with FUSE. It can be used to create encrypted directories. 
+
+Crate [https://crates.io/crates/encrypted_fs](https://crates.io/crates/encrypted_fs) on crates.io.
 
 # Usage
 
 To use the encrypted file system, you need to have FUSE installed on your system. You can install it by running the following command (or based on your distribution):
-
 ```bash
 sudo apt-get update
 sudo apt-get -y install fuse3
