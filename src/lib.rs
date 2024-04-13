@@ -1,9 +1,20 @@
 //! # Encrypted File System
 //!
 //! An encrypted file system that mounts with FUSE. It can be used to create encrypted directories.
+//!
 //! # Usage
 //!
+//! It can be used a library to create an encrypted file system or mount it with FUSE.\
+//! \
+//! This crate also contains a `main.rs` file that can be used to run the encrypted file system from the command line.
+//! Documentation for that can be found [here](https://crates.io/crates/encrypted_fs).
+//!
+//! In the following example, we will see how we can use the library.
+//!
+//! ## EncryptedFsFuse3
+//!
 //! You can use the [EncryptedFsFuse3](encrypted_fs_fuse3::EncryptedFsFuse3) to mount the file system.
+//!
 //! # Example
 //!
 //! ```
@@ -39,6 +50,8 @@
 //! - `allow_other`: Allow other users to access the file system.
 //! - `direct_io`: Use direct I/O.
 //! - `suid_support`: Enable suid support.
+//!
+//! ## EncryptedFs
 //!
 //! Or directly work with ['EncryptedFs'](encrypted_fs::EncryptedFs). You need to specify several parameters to create an encrypted file system:
 //! - `data_dir`: The directory where the file system will be mounted.
@@ -91,9 +104,5 @@
 //!     create_attr(0, file_type)
 //! }
 //! ```
-//!
-//! This crate also contains a `main.rs` file that can be used to run the encrypted file system from the command line.
-//! Documentation for that can be found in the `main.rs` file.
-
 pub mod encrypted_fs;
 pub mod encrypted_fs_fuse3;
