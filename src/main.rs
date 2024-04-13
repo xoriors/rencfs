@@ -180,24 +180,24 @@ fn async_main() {
                 process::exit(0);
             }).unwrap();
 
-            run_fuse(matches, mountpoint, &data_dir, &password, cipher, derive_key_hash_rounds).await;
+            run_fuse(mountpoint, &data_dir, &password, cipher, derive_key_hash_rounds,
+                     matches.get_flag("allow-root"), matches.get_flag("allow-other"),
+                     matches.get_flag("direct-io"), matches.get_flag("suid")).await;
         }
     });
 }
 
-async fn run_fuse(matches: ArgMatches, mountpoint: String, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32) {
+async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
+                  allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) {
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
 
     let mut mount_options = MountOptions::default();
     mount_options.uid(uid).gid(gid).read_only(false);
-    mount_options.allow_root(matches.get_flag("allow-root"));
-    mount_options.allow_other(matches.get_flag("allow-other"));
-
     let mount_path = OsStr::new(mountpoint.as_str());
+
     Session::new(mount_options)
-        .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, cipher, derive_key_hash_rounds,
-                                                       matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(), mount_path)
+        .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, cipher, derive_key_hash_rounds, direct_io, suid_support).unwrap(), mount_path)
         .await
         .unwrap()
         .await

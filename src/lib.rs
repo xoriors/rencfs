@@ -1,40 +1,53 @@
 //! # Encrypted File System
+//!
 //! An encrypted file system that mounts with FUSE. It can be used to create encrypted directories.
 //! # Usage
+//!
 //! You can use the [EncryptedFsFuse3](encrypted_fs_fuse3::EncryptedFsFuse3) to mount the file system.
 //! # Example
+//!
 //! ```
 //! use std::ffi::OsStr;
-//! use clap::ArgMatches;
 //! use fuse3::MountOptions;
 //! use fuse3::raw::Session;
 //! use encrypted_fs::encrypted_fs::Cipher;
 //! use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
-//!  async fn run_fuse(matches: ArgMatches, mountpoint: String, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32) {
+//!
+//! async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
+//!                   allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) {
 //!     let uid = unsafe { libc::getuid() };
 //!     let gid = unsafe { libc::getgid() };
 //!
 //!     let mut mount_options = MountOptions::default();
 //!     mount_options.uid(uid).gid(gid).read_only(false);
-//!     mount_options.allow_root(matches.get_flag("allow-root"));
-//!     mount_options.allow_other(matches.get_flag("allow-other"));
-//!
 //!     let mount_path = OsStr::new(mountpoint.as_str());
+//!
 //!     Session::new(mount_options)
-//!         .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, cipher, derive_key_hash_rounds,
-//!                                                        matches.get_flag("direct-io"), matches.get_flag("suid")).unwrap(), mount_path)
+//!         .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, cipher, derive_key_hash_rounds, direct_io, suid_support).unwrap(), mount_path)
 //!         .await
 //!         .unwrap()
 //!         .await
 //!         .unwrap();
 //! }
 //! ```
-//! Or directly work with [EncryptedFs](encrypted_fs::EncryptedFs). You need to specify several parameters to create an encrypted file system:
+//! Parameters:
 //! - `data_dir`: The directory where the file system will be mounted.
 //! - `password`: The password to encrypt/decrypt the data.
 //! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](encrypted_fs::Cipher).
 //! - `derive_key_hash_rounds`: The number of rounds to derive the key hash.
+//! - `allow_root`: Allow root to access the file system.
+//! - `allow_other`: Allow other users to access the file system.
+//! - `direct_io`: Use direct I/O.
+//! - `suid_support`: Enable suid support.
+//!
+//! Or directly work with ['EncryptedFs'](encrypted_fs::EncryptedFs). You need to specify several parameters to create an encrypted file system:
+//! - `data_dir`: The directory where the file system will be mounted.
+//! - `password`: The password to encrypt/decrypt the data.
+//! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](encrypted_fs::Cipher).
+//! - `derive_key_hash_rounds`: The number of rounds to derive the key hash.
+//!
 //! # Example
+//!
 //! ```
 //! use encrypted_fs::encrypted_fs::{EncryptedFs, FileAttr, FileType};
 //! const ROOT_INODE: u64 = 1;
