@@ -274,7 +274,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 return Err(ENOENT.into());
             }
             _ => {
-                error!("not found {} {:?}", parent, name);
+                debug!("not found {} {:?}", parent, name);
                 return Err(ENOENT.into());
             }
         };

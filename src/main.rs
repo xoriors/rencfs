@@ -183,7 +183,7 @@ fn async_main() {
                 password = read_password().unwrap();
             }
 
-            if matches.get_flag("change-password") {
+            if matches.get_flag("umount-on-start") {
                 unomunt(mountpoint.as_str());
             }
 
