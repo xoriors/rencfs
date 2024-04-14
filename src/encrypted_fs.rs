@@ -15,7 +15,7 @@ use rand::{OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, error};
 
 #[cfg(test)]
 mod encrypted_fs_tests;
@@ -223,13 +223,13 @@ impl Iterator for DirectoryEntryPlusIterator {
     fn next(&mut self) -> Option<Self::Item> {
         let entry = self.0.next()?;
         if let Err(e) = entry {
-            debug!("error reading directory entry: {:?}", e);
+            error!("error reading directory entry: {:?}", e);
             return Some(Err(e.into()));
         }
         let entry = entry.unwrap();
         let file = File::open(entry.path());
         if let Err(e) = file {
-            debug!("error opening file: {:?}", e);
+            error!("error opening file: {:?}", e);
             return Some(Err(e.into()));
         }
         let file = file.unwrap();
@@ -243,20 +243,20 @@ impl Iterator for DirectoryEntryPlusIterator {
         }
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.2, &self.3));
         if let Err(e) = res {
-            debug!("error deserializing directory entry: {:?}", e);
+            error!("error deserializing directory entry: {:?}", e);
             return Some(Err(e.into()));
         }
         let (ino, kind): (u64, FileType) = res.unwrap();
 
         let file = File::open(&self.1.join(ino.to_string()));
         if let Err(e) = file {
-            debug!("error opening file: {:?}", e);
+            error!("error opening file: {:?}", e);
             return Some(Err(e.into()));
         }
         let file = file.unwrap();
         let attr = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.2, &self.3));
         if let Err(e) = attr {
-            debug!("error deserializing file attr: {:?}", e);
+            error!("error deserializing file attr: {:?}", e);
             return Some(Err(e.into()));
         }
         let attr = attr.unwrap();
