@@ -47,7 +47,7 @@ fn async_main() {
                 Arg::new("data-dir")
                     .long("data-dir")
                     .required(true)
-                    .value_name("data-dir")
+                    .value_name("DATA_DIR")
                     .help("Where to store the encrypted data"),
             )
             .arg(
