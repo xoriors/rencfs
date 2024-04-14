@@ -17,8 +17,6 @@ use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
 
 #[tokio::main]
 async fn main() {
-    log_init();
-
     let result = task::spawn_blocking(|| {
         panic::catch_unwind(|| {
             async_main()
@@ -106,7 +104,22 @@ fn async_main() {
                     .action(ArgAction::SetTrue)
                     .help("Change password for the encrypted data. Old password and new password with be read from stdin"),
             )
+            .arg(
+                Arg::new("umount-on-start")
+                    .long("umount-on-start")
+                    .action(ArgAction::SetTrue)
+                    .help("If we should try to umount the mountpoint before starting the FUSE server. This can be useful when the previous run crashed or was forced kll and the mountpoint is still mounted."),
+            )
+            .arg(
+                Arg::new("log-level")
+                    .long("log-level")
+                    .value_name("log-level")
+                    .default_value("INFO")
+                    .help("Log level, possible values: TRACE, DEBUG, INFO, WARN, ERROR"),
+            )
             .get_matches();
+
+        log_init(matches.get_one::<String>("log-level").unwrap().as_str());
 
         let data_dir: String = matches
             .get_one::<String>("data-dir")
@@ -170,7 +183,9 @@ fn async_main() {
                 password = read_password().unwrap();
             }
 
-            // unomunt(mountpoint.as_str());
+            if matches.get_flag("change-password") {
+                unomunt(mountpoint.as_str());
+            }
 
             // unmount on process kill
             let mountpoint_kill = mountpoint.clone();
@@ -214,13 +229,14 @@ fn unomunt(mountpoint: &str) {
         println!("{}", result);
     } else {
         let err = String::from_utf8(output.stderr).unwrap();
-        println!("Error: {}", err);
+        println!("Cannot umount, maybe it was not mounted");
+        // println!("Error: {}", err);
     }
 }
 
-fn log_init() {
+fn log_init(level: &str) {
     let subscriber = tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(level.into())
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 }

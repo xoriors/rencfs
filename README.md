@@ -54,3 +54,10 @@ Where `CIPHER` is the encryption algorithm and `ROUNDS` is the number of rounds 
 You can check the available ciphers with `encrypted_fs --help`.
 
 Default values are `ChaCha20` and `600_000` respectively.
+
+### Log level
+You can specify the log level adding the `--log-level` argument to the command line. Possible values: `TRACE`, `DEBUG`, `INFO` (default), `WARN`, `ERROR`.
+
+```
+--log-level LEVEL
+```
