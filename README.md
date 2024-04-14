@@ -1,6 +1,9 @@
 # EncryptedFS
 
-An encrypted file system that mounts with FUSE. It can be used to create encrypted directories. 
+An encrypted file system that mounts with FUSE. It can be used to create encrypted directories.
+
+It can then safely backup the encrypted folder on an untrusted server without worrying about the data being exposed.\
+You can also store it in any clound storage like Google Drive, Dropbox, etc. and have it synced across multiple devices.
 
 Crate [encrypted_fs](https://crates.io/crates/encrypted_fs) on crates.io.
 
