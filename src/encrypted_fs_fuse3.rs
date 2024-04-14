@@ -16,7 +16,7 @@ use futures_util::stream::Iter;
 use libc::{EACCES, EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use parking_lot::{const_reentrant_mutex, RawMutex, RawThreadId, ReentrantMutex};
 use parking_lot::lock_api::ReentrantMutexGuard;
-use tracing::{debug, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
 use crate::encrypted_fs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult};
 
@@ -62,9 +62,12 @@ impl Iterator for DirectoryEntryIterator {
                     offset: self.1 as i64,
                 }))
             }
-            Some(Err(FsError::Io(err))) => Some(Err(err.into())),
+            Some(Err(FsError::Io(err))) => {
+                error!("DirectoryEntryIterator error {:?}", err);
+                Some(Err(err.into()))
+            }
             Some(Err(err)) => {
-                debug!("DirectoryEntryIterator error {:?}", err);
+                error!("DirectoryEntryIterator error {:?}", err);
                 Some(Err(EIO.into()))
             }
             None => None,
@@ -97,11 +100,14 @@ impl Iterator for DirectoryEntryPlusIterator {
                     attr_ttl: TTL,
                 }))
             }
-            Some(Err(FsError::Io(err))) => Some(Err(err.into())),
+            Some(Err(FsError::Io(err))) => {
+                error!("DirectoryEntryPlusIterator error {:?}", err);
+                Some(Err(err.into()))
+            }
             Some(Err(err)) => {
-                debug!("DirectoryEntryPlusIterator error {:?}", err);
+                error!("DirectoryEntryPlusIterator error {:?}", err);
                 Some(Err(EIO.into()))
-            },
+            }
             None => None,
         }
     }
@@ -148,7 +154,7 @@ impl EncryptedFsFuse3 {
     fn create_nod(&self, parent: u64, mut mode: u32, req: &Request, name: &OsStr, read: bool, write: bool) -> std::result::Result<(u64, FileAttr), c_int> {
         let parent_attr = match self.get_fs().borrow_mut().get_inode(parent) {
             Err(err) => {
-                debug!("create_nod() error {}", err);
+                error!("create_nod() error {}", err);
                 return Err(ENOENT);
             }
             Ok(parent_attr) => parent_attr,
@@ -182,7 +188,7 @@ impl EncryptedFsFuse3 {
         match self.get_fs().borrow_mut().create_nod(parent, name.to_str().unwrap(), attr, read, write) {
             Ok((fh, attr)) => Ok((fh, attr)),
             Err(err) => {
-                debug!("create_nod() error {}", err);
+                error!("create_nod() error {}", err);
                 match err {
                     FsError::AlreadyExists => { Err(libc::EEXIST) }
                     _ => { return Err(ENOENT); }
@@ -244,7 +250,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         match self.get_fs().borrow_mut().get_inode(parent) {
             Err(err) => {
-                debug!("not found {} {:?} {}", parent, name, err);
+                error!("not found {} {:?} {}", parent, name, err);
                 return Err(libc::ENOENT.into());
             }
             Ok(parent_attr) => {
@@ -264,11 +270,11 @@ impl Filesystem for EncryptedFsFuse3 {
         let attr = match self.get_fs().borrow_mut().find_by_name(parent, name.to_str().unwrap()) {
             Ok(Some(attr)) => attr,
             Err(err) => {
-                debug!("lookup() error {}", err);
+                error!("lookup() error {}", err);
                 return Err(ENOENT.into());
             }
             _ => {
-                debug!("not found");
+                error!("not found {} {:?}", parent, name);
                 return Err(ENOENT.into());
             }
         };
@@ -301,7 +307,7 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyAttr> {
         match self.get_fs().borrow_mut().get_inode(inode) {
             Err(err) => {
-                debug!("getattr() error {}", err);
+                error!("getattr() error {}", err);
                 return Err(ENOENT.into());
             }
             Ok(attr) => {
@@ -330,7 +336,7 @@ impl Filesystem for EncryptedFsFuse3 {
         debug!("setattr() called with {:?} {:#?}", inode, set_attr);
 
         let mut attr = if let Ok(attr) = self.get_fs().borrow_mut().get_inode(inode) { attr } else {
-            debug!("not found {}", inode);
+            error!("not found {}", inode);
             return Err(ENOENT.into());
         };
 
@@ -351,7 +357,7 @@ impl Filesystem for EncryptedFsFuse3 {
             }
             attr.ctime = SystemTime::now();
             if let Err(err) = self.get_fs().borrow_mut().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
-                debug!("setattr() error {}", err);
+                error!("setattr() error {}", err);
                 return Err(EBADF.into());
             }
             return Ok(ReplyAttr {
@@ -400,7 +406,7 @@ impl Filesystem for EncryptedFsFuse3 {
             }
             attr.ctime = SystemTime::now();
             if let Err(err) = self.get_fs().borrow_mut().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
-                debug!("setattr() error {}", err);
+                error!("setattr() error {}", err);
                 return Err(EBADF.into());
             }
             return Ok(ReplyAttr {
@@ -413,7 +419,7 @@ impl Filesystem for EncryptedFsFuse3 {
             debug!("truncate() called with {:?} {:?}", inode, size);
 
             if let Err(err) = self.get_fs().borrow_mut().truncate(inode, size) {
-                debug!("truncate error {}", err);
+                error!("truncate error {}", err);
                 return Err(EBADF.into());
             }
             attr.size = size;
@@ -461,7 +467,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         if let Err(err) = self.get_fs().borrow_mut().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
-            debug!("setattr() error {}", err);
+            error!("setattr() error {}", err);
             return Err(EBADF.into());
         }
 
@@ -503,7 +509,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 })
             }
             Err(err) => {
-                debug!("mknod() error {}", err);
+                error!("mknod() error {}", err);
                 Err(err.into())
             }
         }
@@ -522,7 +528,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         let parent_attr = match self.get_fs().borrow_mut().get_inode(parent) {
             Err(err) => {
-                debug!("mkdir() error {}", err);
+                error!("mkdir() error {}", err);
                 return Err(ENOENT.into());
             }
             Ok(parent_attr) => parent_attr,
@@ -559,7 +565,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         match self.get_fs().borrow_mut().create_nod(parent, name.to_str().unwrap(), attr, false, false) {
             Err(err) => {
-                debug!("mkdir() error {}", err);
+                error!("mkdir() error {}", err);
                 return Err(ENOENT.into());
             }
             Ok((_, attr)) => {
@@ -578,7 +584,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         let parent_attr = match self.get_fs().borrow_mut().get_inode(parent) {
             Err(err) => {
-                debug!("unlink() error {}", err);
+                error!("unlink() error {}", err);
                 return Err(ENOENT.into());
             }
             Ok(attr) => attr,
@@ -598,7 +604,7 @@ impl Filesystem for EncryptedFsFuse3 {
         let attr = match self.get_fs().borrow_mut().find_by_name(parent, name.to_str().unwrap()) {
             Ok(Some(attr)) => attr,
             Err(err) => {
-                debug!("unlink() error {}", err);
+                error!("unlink() error {}", err);
                 return Err(ENOENT.into());
             }
             _ => return Err(ENOENT.into()),
@@ -615,7 +621,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         if let Err(err) = self.get_fs().borrow_mut().remove_file(parent, name.to_str().unwrap()) {
-            debug!("unlink() error {}", err);
+            error!("unlink() error {}", err);
             return Err(ENOENT.into());
         }
 
@@ -628,7 +634,7 @@ impl Filesystem for EncryptedFsFuse3 {
         debug!("rmdir() called with {:?} {:?}", parent, name);
 
         let parent_attr = if let Ok(attr) = self.get_fs().borrow_mut().get_inode(parent) { attr } else {
-            debug!("rmdir() not found");
+            error!("rmdir() not found {} {:?}", parent, name);
             return Err(ENOENT.into());
         };
 
@@ -646,7 +652,7 @@ impl Filesystem for EncryptedFsFuse3 {
         let attr = match self.get_fs().borrow_mut().find_by_name(parent, name.to_str().unwrap()) {
             Ok(Some(attr)) => attr,
             _ => {
-                debug!("rmdir() name not found");
+                error!("rmdir() name not found {} {:?}", parent, name);
                 return Err(ENOENT.into());
             }
         };
@@ -666,7 +672,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         if let Err(err) = self.get_fs().borrow_mut().remove_dir(parent, name.to_str().unwrap()) {
-            debug!("rmdir() error {}", err);
+            error!("rmdir() error {}", err);
             return Err(EBADF.into());
         }
 
@@ -685,12 +691,12 @@ impl Filesystem for EncryptedFsFuse3 {
         let attr = if let Ok(Some(attr)) = self.get_fs().borrow_mut().find_by_name(parent, name.to_str().unwrap()) {
             attr
         } else {
-            debug!("rename() name not found");
+            error!("rename() name not found {} {:?} {} {:?}", parent, name, new_parent, new_name);
             return Err(ENOENT.into());
         };
 
         let parent_attr = if let Ok(attr) = self.get_fs().borrow_mut().get_inode(parent) { attr } else {
-            debug!("rename() parent not found");
+            error!("rename() parent not found {}", parent);
             return Err(ENOENT.into());
         };
 
@@ -713,7 +719,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         let new_parent_attr = if let Ok(attr) = self.get_fs().borrow_mut().get_inode(new_parent) { attr } else {
-            debug!("rename() new parent not found");
+            error!("rename() new parent not found {}", new_parent);
             return Err(ENOENT.into());
         };
 
@@ -793,7 +799,7 @@ impl Filesystem for EncryptedFsFuse3 {
         let attr = match self.get_fs().borrow_mut().get_inode(inode) {
             Ok(attr) => attr,
             Err(err) => {
-                debug!("open() error {}", err);
+                error!("open() error {}", err);
                 return Err(EBADF.into());
             }
         };
@@ -802,7 +808,7 @@ impl Filesystem for EncryptedFsFuse3 {
             let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
             match self.get_fs().borrow_mut().open(inode, read, write) {
                 Err(err) => {
-                    debug!("open error {}", err);
+                    error!("open error {}", err);
                     return Err(EBADF.into());
                 }
                 Ok(fh) => {
@@ -829,7 +835,7 @@ impl Filesystem for EncryptedFsFuse3 {
         let mut buf = vec![0; size as usize];
         match self.get_fs().borrow_mut().read(inode, offset, &mut buf, fh) {
             Err(err) => {
-                debug!("read error {}", err);
+                error!("read error {}", err);
                 return Err(EIO.into());
             }
             Ok(len) => {
@@ -855,7 +861,7 @@ impl Filesystem for EncryptedFsFuse3 {
         debug!("write() called with {:?} offfset {:?} size={:?}", inode, offset, data.len());
 
         if let Err(err) = self.get_fs().borrow_mut().write_all(inode, offset, data, fh) {
-            debug!("write error {}", err);
+            error!("write error {}", err);
             return Err(EIO.into());
         }
 
@@ -885,13 +891,13 @@ impl Filesystem for EncryptedFsFuse3 {
 
         if flush {
             if let Err(err) = self.get_fs().borrow_mut().flush(fh) {
-                debug!("flush error {}", err);
+                error!("flush error {}", err);
                 return Err(EIO.into());
             }
         }
 
         if let Err(err) = self.get_fs().borrow_mut().release_handle(fh) {
-            debug!("release error {}", err);
+            error!("release error {}", err);
             return Err(EIO.into());
         }
 
@@ -901,7 +907,7 @@ impl Filesystem for EncryptedFsFuse3 {
             // However, xfstests fail in that case
             clear_suid_sgid(&mut attr);
             if let Err(err) = self.get_fs().borrow_mut().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags) {
-                debug!("replace attr error {}", err);
+                error!("replace attr error {}", err);
                 return Err(EBADF.into());
             }
         }
@@ -914,7 +920,7 @@ impl Filesystem for EncryptedFsFuse3 {
         debug!("flush() called with {:?} {:?} {:?}", inode, fh, lock_owner);
 
         if let Err(err) = self.get_fs().borrow_mut().flush(fh) {
-            debug!("flush error {}", err);
+            error!("flush error {}", err);
             return Err(EIO.into());
         }
 
@@ -943,7 +949,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         let attr = match self.get_fs().borrow_mut().get_inode(inode) {
             Err(err) => {
-                debug!("error {}", err);
+                error!("error {}", err);
                 return Err(ENOENT.into());
             }
             Ok(attr) => attr
@@ -981,7 +987,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         let iter = match self.get_fs().borrow().read_dir(inode) {
             Err(err) => {
-                debug!("readdir error {}", err);
+                error!("readdir error {}", err);
                 return Err(EIO.into());
             }
             Ok(iter) => iter,
@@ -1050,7 +1056,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 })
             }
             Err(err) => {
-                debug!("create() error {}", err);
+                error!("create() error {}", err);
                 Err(ENOENT.into())
             }
         };
@@ -1071,7 +1077,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         let iter = match self.get_fs().borrow().read_dir_plus(parent) {
             Err(err) => {
-                debug!("readdirplus error {}", err);
+                error!("readdirplus error {}", err);
                 return Err(EIO.into());
             }
             Ok(iter) => iter,
@@ -1104,7 +1110,7 @@ impl Filesystem for EncryptedFsFuse3 {
         match self.get_fs().borrow_mut()
             .copy_file_range(inode, off_in, inode_out, off_out, length as usize, fh_in, fh_out) {
             Err(err) => {
-                debug!("copy_file_range error {}", err);
+                error!("copy_file_range error {}", err);
                 return Err(EBADF.into());
             }
             Ok(len) => {
@@ -1149,8 +1155,8 @@ fn as_file_kind(mut mode: u32) -> FileType {
 
     if mode == libc::S_IFREG as u32 {
         return FileType::RegularFile;
-    // } else if mode == libc::S_IFLNK as u32 {
-    //     return FileType::Symlink;
+        // } else if mode == libc::S_IFLNK as u32 {
+        //     return FileType::Symlink;
     } else if mode == libc::S_IFDIR as u32 {
         return FileType::Directory;
     } else {
