@@ -236,7 +236,7 @@ fn unomunt(mountpoint: &str) {
 
 fn log_init(level: &str) {
     let subscriber = tracing_subscriber::fmt()
-        .with_max_level(level.into())
+        .with_max_level(Level::from_str(level).unwrap())
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 }
