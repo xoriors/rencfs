@@ -1,7 +1,7 @@
 [package]
 name = "encrypted_fs"
 description = "An encrypted file system that mounts with FUSE. It can be used to create encrypted directories."
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Radu Marias"]
@@ -10,22 +10,18 @@ readme = "README.md"
 keywords = ["encrypted", "filesystem", "fuse", "encryption"]
 categories = ["cryptography", "filesystem"]
 documentation = "https://docs.rs/encrypted_fs"
-license-file = "LICENSE"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive", "cargo"] }
 libc = "0.2.153"
-env_logger = "0.11.3"
-log = "0.4.21"
 serde = { version = "1.0.197", features = ["derive"] }
 bincode = "1.3.3"
 thiserror = "1.0.58"
 rand = "0.3"
 base64 = "=0.13.1"
 openssl = "=0.10.64"
-rust-crypto = "=0.2.36"
 fuse3 = { version = "0.7.1", features = ["tokio-runtime", "unprivileged"] }
 tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "time", "signal"] }
 futures-util = "0.3.30"
