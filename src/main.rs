@@ -18,7 +18,6 @@ use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
 #[tokio::main]
 async fn main() {
     log_init();
-    env_logger::init();
 
     let result = task::spawn_blocking(|| {
         panic::catch_unwind(|| {
