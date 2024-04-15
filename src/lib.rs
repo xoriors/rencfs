@@ -1,6 +1,6 @@
 //! # Encrypted File System
 //!
-//! An encrypted file system that mounts with FUSE. It can be used to create encrypted directories.
+//! An encrypted file system that mounts with FUSE on Linux. It can be used to create encrypted directories.
 //!
 //! # Usage
 //!
