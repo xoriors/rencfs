@@ -23,10 +23,14 @@ async fn main() {
         })
     }).await;
 
-    // match result {
-    //     Ok(Ok(_)) => println!("There was no panic"),
-    //     Ok(Err(_)) | Err(_) => println!("A panic occurred"),
-    // }
+    match result {
+        Ok(Ok(_)) => println!("Program terminated successfully"),
+        Ok(Err(err1)) | Err(err2) => {
+            eprintln!("Error: {:?}", err1);
+            eprintln!("Error: {:?}", err2);
+            panic!("Error: {:?}", err1);
+        }
+    }
 }
 
 fn async_main() {
