@@ -25,10 +25,13 @@ async fn main() {
 
     match result {
         Ok(Ok(_)) => println!("Program terminated successfully"),
-        Ok(Err(err1)) | Err(err2) => {
-            eprintln!("Error: {:?}", err1);
-            eprintln!("Error: {:?}", err2);
-            panic!("Error: {:?}", err1);
+        Ok(Err(err)) => {
+            eprintln!("Error: {:?}", err);
+            panic!("Error: {:?}", err);
+        }
+        Err(err) => {
+            eprintln!("Error: {:?}", err);
+            panic!("Error: {:?}", err);
         }
     }
 }
