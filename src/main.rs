@@ -10,7 +10,7 @@ use fuse3::raw::prelude::*;
 use rpassword::read_password;
 use strum::IntoEnumIterator;
 use tokio::task;
-use tracing::Level;
+use tracing::{error, Level};
 
 use encrypted_fs::encrypted_fs::{EncryptedFs, Cipher};
 use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
@@ -26,10 +26,12 @@ async fn main() {
     match result {
         Ok(Ok(_)) => println!("Program terminated successfully"),
         Ok(Err(err)) => {
+            error!("Error: {:?}", err);
             eprintln!("Error: {:?}", err);
             panic!("Error: {:?}", err);
         }
         Err(err) => {
+            error!("Error: {:?}", err);
             eprintln!("Error: {:?}", err);
             panic!("Error: {:?}", err);
         }
