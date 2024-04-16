@@ -10,7 +10,7 @@ use fuse3::raw::prelude::*;
 use rpassword::read_password;
 use strum::IntoEnumIterator;
 use tokio::task;
-use tracing::{error, Level};
+use tracing::{error, Level, warn};
 
 use encrypted_fs::encrypted_fs::{EncryptedFs, Cipher};
 use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
@@ -199,6 +199,7 @@ fn async_main() {
             // unmount on process kill
             let mountpoint_kill = mountpoint.clone();
             set_handler(move || {
+                warn!("Received signal to exit");
                 unomunt(mountpoint_kill.as_str());
                 process::exit(0);
             }).unwrap();
