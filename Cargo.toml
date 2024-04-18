@@ -23,7 +23,7 @@ rand = "0.3"
 base64 = "=0.13.1"
 openssl = "=0.10.64"
 fuse3 = { version = "0.7.1", features = ["tokio-runtime", "unprivileged"] }
-tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "time", "signal"] }
+tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "time", "signal", "process", "rt"] }
 futures-util = "0.3.30"
 mio = { version = "0.8.11", features = ["os-poll"] }
 bytes = "1.5"
