@@ -195,14 +195,14 @@ fn async_main() {
             }
 
             if matches.get_flag("umount-on-start") {
-                unomunt(mountpoint.as_str());
+                umount(mountpoint.as_str(), false);
             }
 
             // unmount on process kill
             let mountpoint_kill = mountpoint.clone();
             set_handler(move || {
                 info!("Received signal to exit");
-                unomunt(mountpoint_kill.as_str());
+                umount(mountpoint_kill.as_str(), true);
                 process::exit(0);
             }).unwrap();
 
@@ -230,19 +230,14 @@ async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Ci
         .unwrap();
 }
 
-fn unomunt(mountpoint: &str) {
+fn umount(mountpoint: &str, print_fail_status: bool) {
     let output = process::Command::new("umount")
         .arg(mountpoint)
         .output()
         .expect("Failed to execute command");
 
-    if output.status.success() {
-        let result = String::from_utf8(output.stdout).unwrap();
-        println!("{}", result);
-    } else {
-        let err = String::from_utf8(output.stderr).unwrap();
+    if print_fail_status && !output.status.success() {
         println!("Cannot umount, maybe it was not mounted");
-        // println!("Error: {}", err);
     }
 }
 
