@@ -2,6 +2,8 @@ use std::{env, io, panic, process};
 use std::ffi::OsStr;
 use std::io::Write;
 use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Arg, ArgAction, ArgMatches, Command, crate_version};
 use ctrlc::set_handler;
@@ -10,7 +12,7 @@ use fuse3::raw::prelude::*;
 use rpassword::read_password;
 use strum::IntoEnumIterator;
 use tokio::task;
-use tracing::{error, Level, warn};
+use tracing::{error, info, Level, warn};
 
 use encrypted_fs::encrypted_fs::{EncryptedFs, Cipher};
 use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
@@ -199,7 +201,7 @@ fn async_main() {
             // unmount on process kill
             let mountpoint_kill = mountpoint.clone();
             set_handler(move || {
-                warn!("Received signal to exit");
+                info!("Received signal to exit");
                 unomunt(mountpoint_kill.as_str());
                 process::exit(0);
             }).unwrap();
