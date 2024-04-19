@@ -1,4 +1,5 @@
 use std::{env, io, panic, process};
+use std::backtrace::Backtrace;
 use std::ffi::OsStr;
 use std::io::Write;
 use std::str::FromStr;
@@ -28,14 +29,14 @@ async fn main() {
     match result {
         Ok(Ok(_)) => println!("Program terminated successfully"),
         Ok(Err(err)) => {
-            error!("Error: {:?}", err);
-            eprintln!("Error: {:?}", err);
-            panic!("Error: {:?}", err);
+            error!("Error panic: {:#?}", err);
+            error!("Backtrace: {}", Backtrace::force_capture());
+            panic!("Error panic: {:#?}", err);
         }
         Err(err) => {
-            error!("Error: {:?}", err);
-            eprintln!("Error: {:?}", err);
-            panic!("Error: {:?}", err);
+            error!("Error panic: {}", err);
+            error!("Backtrace: {}", Backtrace::force_capture());
+            panic!("Error panic: {}", err);
         }
     }
 }
