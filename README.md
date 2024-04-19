@@ -9,13 +9,16 @@ Crate [encrypted_fs](https://crates.io/crates/encrypted_fs) on crates.io.
 
 # Usage
 
-You can use it as a command line tool to mount an encrypted file system. or directly using the library to build your own binary.
-
-## Library
-
-For using the library, you can follow the [documentation](https://docs.rs/encrypted_fs/latest/encrypted_fs/).
+You can use it as a command line tool to mount an encrypted file system. or directly using the library to build your own binary (for library, you can follow the [documentation](https://docs.rs/encrypted_fs/latest/encrypted_fs/)).
 
 ## Command Line Tool
+
+## Installation
+
+You can install the encrypted file system binary using the following command:
+```bash
+cargo install encrypted_fs
+```
 
 To use the encrypted file system, you need to have FUSE installed on your system. You can install it by running the following command (or based on your distribution):
 ```bash
@@ -37,7 +40,7 @@ This offers the possibility to change the password without needing to decrypt an
 This is done by decrypting the key with the old password and re-encrypting it with the new password.
 
 To change the password, you can run the following command:
-```
+```bash
 encrypted_fs --change-password --data-dir DATA_DIR
 ```
 Where `DATA_DIR` is the directory where the encrypted data is stored.\
@@ -47,7 +50,7 @@ It will prompt you to enter the old password and then the new password.
 
 You can specify the encryption algorithm and derive key hash rounds adding these arguments to the command line:
 
-```
+```bash
 --cipher CIPHER --derive-key-hash-rounds ROUNDS
 ```
 Where `CIPHER` is the encryption algorithm and `ROUNDS` is the number of rounds to derive the key hash.\
@@ -58,6 +61,6 @@ Default values are `ChaCha20` and `600_000` respectively.
 ### Log level
 You can specify the log level adding the `--log-level` argument to the command line. Possible values: `TRACE`, `DEBUG`, `INFO` (default), `WARN`, `ERROR`.
 
-```
+```bash
 --log-level LEVEL
 ```
