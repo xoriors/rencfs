@@ -102,6 +102,7 @@ fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
     String::from_utf8(buf).unwrap()
 }
 
+#[allow(dead_code)]
 fn write(path: PathBuf, data: &[u8], fs: &EncryptedFs) {
     let mut enc = fs.create_encryptor(OpenOptions::new().read(true).write(true).open(&path).unwrap());
     enc.write_all(data).unwrap();
@@ -722,7 +723,7 @@ fn test_copy_file_range() {
 #[test]
 fn test_rename() {
     run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_rename") }, |setup| {
-        let mut fs = setup.fs.as_mut().unwrap();
+        let fs = setup.fs.as_mut().unwrap();
 
         // new file in same directory
         let new_parent = ROOT_INODE;
@@ -974,6 +975,7 @@ fn test_open() {
     });
 }
 
+#[allow(dead_code)]
 fn test_sample() {
     run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_sample") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();

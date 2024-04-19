@@ -8,10 +8,6 @@ use openssl::symm::Cipher;
 use encrypted_fs::encrypted_fs::crypto_util::{decrypt_string, encrypt_string};
 
 fn main() {
-    let enc = encrypt_string("1");
-    println!("enc {}", enc);
-    println!("dec {}", decrypt_string(enc.as_str()));
-
 // This is the cipher text, base64-encoded to avoid any whitespace munging. In this
 // contrived example, we are using a binary `Vec<u8>` as the `Read` source containing
 // the encrypted data; in practice it could be a binary file, a network stream, or
