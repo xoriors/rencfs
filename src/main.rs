@@ -3,19 +3,17 @@ use std::backtrace::Backtrace;
 use std::ffi::OsStr;
 use std::io::Write;
 use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-use clap::{Arg, ArgAction, ArgMatches, Command, crate_version};
+use clap::{Arg, ArgAction, Command, crate_version};
 use ctrlc::set_handler;
 use fuse3::MountOptions;
 use fuse3::raw::prelude::*;
 use rpassword::read_password;
 use strum::IntoEnumIterator;
 use tokio::task;
-use tracing::{error, info, Level, warn};
+use tracing::{error, info, Level};
 
-use encrypted_fs::encrypted_fs::{EncryptedFs, Cipher};
+use encrypted_fs::encrypted_fs::{Cipher, EncryptedFs};
 use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
 
 #[tokio::main]
@@ -220,7 +218,12 @@ async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Ci
     let gid = unsafe { libc::getgid() };
 
     let mut mount_options = MountOptions::default();
-    mount_options.uid(uid).gid(gid).read_only(false);
+    mount_options
+        .uid(uid)
+        .gid(gid)
+        .read_only(false).
+        allow_root(allow_root).
+        allow_other(allow_other);
     let mount_path = OsStr::new(mountpoint.as_str());
 
     Session::new(mount_options)

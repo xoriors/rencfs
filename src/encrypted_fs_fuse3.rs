@@ -121,12 +121,12 @@ pub struct EncryptedFsFuse3 {
 
 impl EncryptedFsFuse3 {
     pub fn new(data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
-               direct_io: bool, suid_support: bool) -> FsResult<Self> {
+               direct_io: bool, _suid_support: bool) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")] {
             Ok(Self {
                 fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password, cipher, derive_key_hash_rounds).unwrap())),
                 direct_io,
-                suid_support,
+                suid_support: _suid_support,
             })
         }
         #[cfg(not(feature = "abi-7-26"))] {

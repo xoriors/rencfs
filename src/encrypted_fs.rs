@@ -15,7 +15,7 @@ use rand::{OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
-use tracing::{debug, error};
+use tracing::error;
 
 #[cfg(test)]
 mod encrypted_fs_tests;
@@ -137,6 +137,7 @@ struct TimeAndSizeFileAttr {
 }
 
 impl TimeAndSizeFileAttr {
+    #[allow(dead_code)]
     fn new(ino: u64, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, size: u64) -> Self {
         Self {
             ino,
@@ -696,7 +697,7 @@ impl EncryptedFs {
             // when we release the handle we will move this tmp file to the actual file
 
             // remove handle data because we will replace it with the tmp one
-            let (attr, path, mut position, encryptor) =
+            let (attr, path, _, encryptor) =
                 self.write_handles.remove(&handle).unwrap();
 
             // finish the current writer so we flush all data to the file
@@ -719,7 +720,7 @@ impl EncryptedFs {
 
             let mut buffer: [u8; 4096] = [0; 4096];
             let mut pos_read = 0;
-            position = 0;
+            let mut position = 0;
             if offset > 0 {
                 loop {
                     let offset_in_bounds = min(offset, attr.size); // keep offset in bounds of file
