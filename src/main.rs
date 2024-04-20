@@ -217,13 +217,13 @@ async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Ci
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
 
-    let mut mount_options = MountOptions::default();
-    mount_options
+    let mount_options = MountOptions::default()
         .uid(uid)
         .gid(gid)
         .read_only(false).
         allow_root(allow_root).
-        allow_other(allow_other);
+        allow_other(allow_other)
+        .clone();
     let mount_path = OsStr::new(mountpoint.as_str());
 
     Session::new(mount_options)

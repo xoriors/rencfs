@@ -502,7 +502,7 @@ impl EncryptedFs {
         Ok(DirectoryEntryIterator(iter.into_iter(), self.cipher.clone(), self.key.clone()))
     }
 
-    /// Like [`read_dir`] but with ['FileAttr'] so we don't need to query again for those.
+    /// Like [read_dir](EncryptedFs::read_dir) but with [FileAttr] so we don't need to query again for those.
     pub fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
         let contents_dir = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         if !contents_dir.is_dir() {

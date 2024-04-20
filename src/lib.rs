@@ -6,7 +6,7 @@
 //!
 //! It can be used a library to create an encrypted file system or mount it with FUSE.\
 //! \
-//! This crate also contains a `main.rs` file that can be used to run the encrypted file system from the command line.
+//! This crate also contains [main.rs] file that can be used as an example on how to run the encrypted file system from the command line.
 //! Documentation for that can be found [here](https://crates.io/crates/encrypted_fs).
 //!
 //! In the following example, we will see how we can use the library.
@@ -29,8 +29,12 @@
 //!     let uid = unsafe { libc::getuid() };
 //!     let gid = unsafe { libc::getgid() };
 //!
-//!     let mut mount_options = MountOptions::default();
-//!     mount_options.uid(uid).gid(gid).read_only(false);
+//!     let mut mount_options = MountOptions::default()
+//!         .uid(uid).gid(gid)
+//!         .read_only(false)
+//!         .allow_root(allow_root)
+//!         .allow_other(allow_other)
+//!         .clone();
 //!     let mount_path = OsStr::new(mountpoint.as_str());
 //!
 //!     Session::new(mount_options)
@@ -53,7 +57,7 @@
 //!
 //! ## EncryptedFs
 //!
-//! Or directly work with ['EncryptedFs'](encrypted_fs::EncryptedFs). You need to specify several parameters to create an encrypted file system:
+//! Or directly work with [EncryptedFs](encrypted_fs::EncryptedFs). You need to specify several parameters to create an encrypted file system:
 //! - `data_dir`: The directory where the file system will be mounted.
 //! - `password`: The password to encrypt/decrypt the data.
 //! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](encrypted_fs::Cipher).
