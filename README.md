@@ -12,7 +12,7 @@ You can also store it in any clound storage like Google Drive, Dropbox, etc. and
 
 # Usage
 
-You can use it as a command line tool to mount an encrypted file system. or directly using the library to build your own binary (for library, you can follow the [documentation](https://docs.rs/encryptedfs/latest/encryptedfs/)).
+You can use it as a command line tool to mount an encrypted file system, or directly using the library to build your own binary (for library, you can follow the [documentation](https://docs.rs/encryptedfs/latest/encryptedfs/)).
 
 ## Command Line Tool
 
