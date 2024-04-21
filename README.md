@@ -9,6 +9,7 @@ You can also store it in any clound storage like Google Drive, Dropbox, etc. and
 [![encryptedfs-bin](https://img.shields.io/aur/version/encryptedfs-bin?color=1793d1&label=encryptedfs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/encryptedfs-bin/)
 ![crates.io](https://img.shields.io/crates/v/encryptedfs.svg)
 ![docs.rs](https://img.shields.io/docsrs/encryptedfs?label=docs.rs)
+[![test](https://github.com/radumarias/encryptedfs/actions/workflows/test.yml/badge.svg)](https://github.com/radumarias/encryptedfs/actions/workflows/test.yml)
 
 # Usage
 
