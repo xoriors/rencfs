@@ -9,7 +9,6 @@ You can also store it in any clound storage like Google Drive, Dropbox, etc. and
 [![encrypted_fs-bin](https://img.shields.io/aur/version/encrypted_fs-bin?color=1793d1&label=encrypted_fs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/encrypted_fs-bin/)
 ![crates.io](https://img.shields.io/crates/v/encrypted_fs.svg)
 ![docs.rs](https://img.shields.io/docsrs/encrypted_fs?label=docs.rs)
-![license](https://github.com/hyperium/tonic/blob/HEAD/LICENSE)
 
 # Usage
 
