@@ -33,10 +33,16 @@ cargo install encryptedfs
 ```
 
 To use the encrypted file system, you need to have FUSE installed on your system. You can install it by running the following command (or based on your distribution):
+
+Arch
 ```bash
-sudo apt-get update
-sudo apt-get -y install fuse3
+sudo pacman -Syu && sudo pacman -S fuse3
 ```
+Ubuntu
+```bash
+sudo apt-get update && sudo apt-get -y install fuse3
+```
+
 A basic example of how to use the encrypted file system is shown below:
 
 ```
@@ -75,4 +81,39 @@ You can specify the log level adding the `--log-level` argument to the command l
 
 ```bash
 --log-level LEVEL
+```
+
+## Start it in docker
+```bash
+docker pull xorio42/encryptedfs
+```
+Start a container to set up mount in it
+
+`docker run -it --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined xorio42/encryptedfs:latest /bin/sh`
+
+In the container create mount and data directories
+
+`mkdir fsmnt && mkdir fsdata`
+
+Start `encryptedfs`
+
+`encryptedfs --mount-point fsmnt --data-dir fsdata`
+
+Enter a password for encryption.
+
+Get the container ID
+
+`docker ps`
+
+In another terminal  attach to running container with the above ID
+
+`docker exec -it <ID> /bin/sh`
+
+From here you can play with it by creating files in `fsmnt` directory
+```
+cd fsmnt
+mkdir 1
+ls
+echo "test" > 1/test
+cat 1/test
 ```
