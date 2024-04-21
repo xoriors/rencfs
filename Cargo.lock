@@ -293,7 +293,7 @@ checksum = "11157ac094ffbdde99aa67b23417ebdd801842852b500e395a45a9c0aac03e4a"
 
 [[package]]
 name = "encryptedfs"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "base64",
  "bincode",

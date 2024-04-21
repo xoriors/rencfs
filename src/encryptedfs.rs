@@ -119,6 +119,9 @@ pub enum FsError {
 
     #[error("encryption error: {0}")]
     Encryption(#[from] ErrorStack),
+
+    #[error("invalid password")]
+    InvalidPassword,
 }
 
 #[derive(Debug, Clone, EnumIter, EnumString, Display)]
@@ -297,7 +300,7 @@ impl EncryptedFs {
             opened_files_for_write: HashMap::new(),
         };
         let _ = fs.ensure_root_exists();
-        fs.check_password();
+        fs.check_password()?;
 
         Ok(fs)
     }
@@ -993,13 +996,13 @@ impl EncryptedFs {
         encryptedfs::normalize_end_encrypt_file_name(name, &self.cipher, &self.key)
     }
     /// Change the password of the filesystem used to access the encryption key.
-    pub fn change_password(data_dir: &str, old_password: &str, new_password: &str, cipher: &Cipher, derive_key_hash_rounds: u32) -> FsResult<()> {
+    pub fn change_password(data_dir: &str, old_password: &str, new_password: &str, cipher: Cipher, derive_key_hash_rounds: u32) -> FsResult<()> {
         let data_dir = PathBuf::from(data_dir);
 
         // decrypt key
         let initial_key = encryptedfs::derive_key(old_password, &cipher, derive_key_hash_rounds, "salt-42");
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
-        let mut decryptor = encryptedfs::create_decryptor(File::open(enc_file.clone())?, cipher, &initial_key);
+        let mut decryptor = encryptedfs::create_decryptor(File::open(enc_file.clone())?, &cipher, &initial_key);
         let mut key: Vec<u8> = vec![];
         decryptor.read_to_end(&mut key)?;
         decryptor.finish();
@@ -1008,7 +1011,7 @@ impl EncryptedFs {
         let new_key = encryptedfs::derive_key(new_password, &cipher, derive_key_hash_rounds, "salt-42");
         fs::remove_file(enc_file.clone())?;
         let mut encryptor = encryptedfs::create_encryptor(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
-                                                          cipher, &new_key);
+                                                          &cipher, &new_key);
         encryptor.write_all(&key)?;
         encryptor.finish()?;
 
@@ -1027,14 +1030,11 @@ impl EncryptedFs {
         }
     }
 
-    fn check_password(&mut self) {
+    fn check_password(&mut self) -> FsResult<()> {
         match self.get_inode(ROOT_INODE) {
-            Err(FsError::SerializeError(_)) => {
-                println!("Cannot decrypt data, maybe password is wrong");
-                process::exit(2);
-            }
-            Err(err) => { panic!("Error while checking password: {:?}", err); }
-            _ => {}
+            Ok(_) => Ok(()),
+            Err(FsError::SerializeError(_)) => return Err(FsError::InvalidPassword),
+            Err(err) => return Err(err),
         }
     }
 
