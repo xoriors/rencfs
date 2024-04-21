@@ -6,7 +6,7 @@ It can then safely backup the encrypted folder on an untrusted server without wo
 You can also store it in any clound storage like Google Drive, Dropbox, etc. and have it synced across multiple devices.
 
 \
-[![encryptedfs-bin](https://img.shields.io/aur/version/encrypted_fs-bin?color=1793d1&label=encrypted_fs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/encryptedfs-bin/)
+[![encryptedfs-bin](https://img.shields.io/aur/version/encryptedfs-bin?color=1793d1&label=encryptedfs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/encryptedfs-bin/)
 ![crates.io](https://img.shields.io/crates/v/encryptedfs.svg)
 ![docs.rs](https://img.shields.io/docsrs/encryptedfs?label=docs.rs)
 
