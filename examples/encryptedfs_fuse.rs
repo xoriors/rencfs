@@ -11,7 +11,7 @@ use fuser::TimeOrNow::Now;
 use libc::{EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY};
 use log::{debug, warn};
 
-use crate::encrypted_fs::{EncryptedFs, EncryptionType, FsError, FsResult};
+use crate::encryptedfs::{EncryptedFs, EncryptionType, FsError, FsResult};
 
 const BLOCK_SIZE: u64 = 512;
 

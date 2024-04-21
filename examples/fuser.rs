@@ -6,10 +6,10 @@ use std::str::FromStr;
 use clap::{Arg, ArgAction, Command, crate_version};
 use fuser::MountOption;
 use strum::IntoEnumIterator;
-use encrypted_fs::encrypted_fs::Cipher;
-use crate::encrypted_fs_fuse::EncryptedFsFuse;
+use encryptedfs::encryptedfs::Cipher;
+use crate::encryptedfs_fuse::EncryptedFsFuse;
 
-mod encrypted_fs_fuse;
+mod encryptedfs_fuse;
 
 fn main() {
     let matches = Command::new("hello")

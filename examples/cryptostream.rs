@@ -5,7 +5,6 @@ use std::io::{Read, Write};
 use base64::decode;
 use cryptostream::{read, write};
 use openssl::symm::Cipher;
-use encrypted_fs::encrypted_fs::crypto_util::{decrypt_string, encrypt_string};
 
 fn main() {
 // This is the cipher text, base64-encoded to avoid any whitespace munging. In this

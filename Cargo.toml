@@ -1,15 +1,15 @@
 [package]
-name = "encrypted_fs"
+name = "encryptedfs"
 description = "An encrypted file system that mounts with FUSE on Linux. It can be used to create encrypted directories."
-version = "0.1.21"
+version = "0.1.22"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Radu Marias <radumarias@gmail.com>"]
-repository = "https://github.com/radumarias/encrypted_fs"
+repository = "https://github.com/radumarias/encryptedfs"
 readme = "README.md"
 keywords = ["filesystem", "fuse", "encryption", "system", "security"]
 categories = ["cryptography", "filesystem"]
-documentation = "https://docs.rs/encrypted_fs"
+documentation = "https://docs.rs/encryptedfs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

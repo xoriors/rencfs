@@ -7,13 +7,13 @@
 //! It can be used a library to create an encrypted file system or mount it with FUSE.\
 //! \
 //! This crate also contains [main.rs] file that can be used as an example on how to run the encrypted file system from the command line.
-//! Documentation for that can be found [here](https://crates.io/crates/encrypted_fs).
+//! Documentation for that can be found [here](https://crates.io/crates/encryptedfs).
 //!
 //! In the following example, we will see how we can use the library.
 //!
 //! ## EncryptedFsFuse3
 //!
-//! You can use the [EncryptedFsFuse3](encrypted_fs_fuse3::EncryptedFsFuse3) to mount the file system.
+//! You can use the [EncryptedFsFuse3](encryptedfs_fuse3::EncryptedFsFuse3) to mount the file system.
 //!
 //! # Example
 //!
@@ -21,8 +21,8 @@
 //! use std::ffi::OsStr;
 //! use fuse3::MountOptions;
 //! use fuse3::raw::Session;
-//! use encrypted_fs::encrypted_fs::Cipher;
-//! use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
+//! use encryptedfs::encryptedfs::Cipher;
+//! use encryptedfs::encryptedfs_fuse3::EncryptedFsFuse3;
 //!
 //! async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
 //!                   allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) {
@@ -48,7 +48,7 @@
 //! Parameters:
 //! - `data_dir`: The directory where the file system will be mounted.
 //! - `password`: The password to encrypt/decrypt the data.
-//! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](encrypted_fs::Cipher).
+//! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](encryptedfs::Cipher).
 //! - `derive_key_hash_rounds`: The number of rounds to derive the key hash.
 //! - `allow_root`: Allow root to access the file system.
 //! - `allow_other`: Allow other users to access the file system.
@@ -57,20 +57,20 @@
 //!
 //! ## EncryptedFs
 //!
-//! Or directly work with [EncryptedFs](encrypted_fs::EncryptedFs). You need to specify several parameters to create an encrypted file system:
+//! Or directly work with [EncryptedFs](encryptedfs::EncryptedFs). You need to specify several parameters to create an encrypted file system:
 //! - `data_dir`: The directory where the file system will be mounted.
 //! - `password`: The password to encrypt/decrypt the data.
-//! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](encrypted_fs::Cipher).
+//! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](encryptedfs::Cipher).
 //! - `derive_key_hash_rounds`: The number of rounds to derive the key hash.
 //!
 //! # Example
 //!
 //! ```
-//! use encrypted_fs::encrypted_fs::{EncryptedFs, FileAttr, FileType};
+//! use encryptedfs::encryptedfs::{EncryptedFs, FileAttr, FileType};
 //! const ROOT_INODE: u64 = 1;
-//! let data_dir = "/tmp/encrypted_fs";
+//! let data_dir = "/tmp/encryptedfs";
 //! let password = "password";
-//! let cipher = encrypted_fs::encrypted_fs::Cipher::ChaCha20;
+//! let cipher = encryptedfs::encryptedfs::Cipher::ChaCha20;
 //! let derive_key_hash_rounds = 1000;
 //! let mut fs = EncryptedFs::new(data_dir, password, cipher, derive_key_hash_rounds).unwrap();
 //!
@@ -108,5 +108,5 @@
 //!     create_attr(0, file_type)
 //! }
 //! ```
-pub mod encrypted_fs;
-pub mod encrypted_fs_fuse3;
+pub mod encryptedfs;
+pub mod encryptedfs_fuse3;

@@ -5,7 +5,7 @@ use rand::Rng;
 use std::io::{Read, Write};
 use base64::decode;
 use std::io;
-use crate::encrypted_fs::Cipher;
+use crate::encryptedfs::Cipher;
 
 pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &Vec<u8>) -> write::Encryptor<File> {
     let mut iv: Vec<u8> = vec![0; 16];

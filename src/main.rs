@@ -13,8 +13,8 @@ use strum::IntoEnumIterator;
 use tokio::task;
 use tracing::{error, info, Level};
 
-use encrypted_fs::encrypted_fs::{Cipher, EncryptedFs};
-use encrypted_fs::encrypted_fs_fuse3::EncryptedFsFuse3;
+use encryptedfs::encryptedfs::{Cipher, EncryptedFs};
+use encryptedfs::encryptedfs_fuse3::EncryptedFsFuse3;
 
 #[tokio::main]
 async fn main() {
@@ -185,7 +185,7 @@ fn async_main() {
                 .to_string();
 
             // when running from IDE we can't read from stdin with rpassword, get it from env var
-            let mut password = env::var("ENCRYPTED_FS_PASSWORD").unwrap_or_else(|_| "".to_string());
+            let mut password = env::var("ENCRYPTEDFS_PASSWORD").unwrap_or_else(|_| "".to_string());
             if password.is_empty() {
                 // read password from stdin
                 print!("Enter password: ");

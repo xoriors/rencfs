@@ -18,7 +18,7 @@ use parking_lot::{const_reentrant_mutex, RawMutex, RawThreadId, ReentrantMutex};
 use parking_lot::lock_api::ReentrantMutexGuard;
 use tracing::{debug, error, instrument, warn};
 
-use crate::encrypted_fs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult};
+use crate::encryptedfs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult};
 
 const TTL: Duration = Duration::from_secs(1);
 const STATFS: ReplyStatFs = ReplyStatFs {
@@ -41,7 +41,7 @@ const BLOCK_SIZE: u64 = 512;
 // Flags returned by the open request
 const FOPEN_DIRECT_IO: u32 = 1 << 0; // bypass page cache for this open file
 
-pub struct DirectoryEntryIterator(crate::encrypted_fs::DirectoryEntryIterator, u64);
+pub struct DirectoryEntryIterator(crate::encryptedfs::DirectoryEntryIterator, u64);
 
 impl Iterator for DirectoryEntryIterator {
     type Item = Result<DirectoryEntry>;
@@ -75,7 +75,7 @@ impl Iterator for DirectoryEntryIterator {
     }
 }
 
-pub struct DirectoryEntryPlusIterator(crate::encrypted_fs::DirectoryEntryPlusIterator, u64);
+pub struct DirectoryEntryPlusIterator(crate::encryptedfs::DirectoryEntryPlusIterator, u64);
 
 impl Iterator for DirectoryEntryPlusIterator {
     type Item = Result<DirectoryEntryPlus>;

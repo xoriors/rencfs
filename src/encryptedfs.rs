@@ -18,8 +18,8 @@ use thiserror::Error;
 use tracing::error;
 
 #[cfg(test)]
-mod encrypted_fs_tests;
-pub mod crypto_util;
+mod encryptedfs_tests;
+pub mod encryptedfs;
 
 pub(crate) const INODES_DIR: &str = "inodes";
 pub(crate) const CONTENTS_DIR: &str = "contents";
@@ -201,9 +201,9 @@ impl Iterator for DirectoryEntryIterator {
         } else if name == "$.." {
             name = "..".to_string();
         } else {
-            name = crypto_util::decrypt_and_unnormalize_end_file_name(&name, &self.1, &self.2);
+            name = encryptedfs::decrypt_and_unnormalize_end_file_name(&name, &self.1, &self.2);
         }
-        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.1, &self.2));
+        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(encryptedfs::create_decryptor(file, &self.1, &self.2));
         if let Err(e) = res {
             return Some(Err(e.into()));
         }
@@ -240,9 +240,9 @@ impl Iterator for DirectoryEntryPlusIterator {
         } else if name == "$.." {
             name = "..".to_string();
         } else {
-            name = crypto_util::decrypt_and_unnormalize_end_file_name(&name, &self.2, &self.3);
+            name = encryptedfs::decrypt_and_unnormalize_end_file_name(&name, &self.2, &self.3);
         }
-        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.2, &self.3));
+        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(encryptedfs::create_decryptor(file, &self.2, &self.3));
         if let Err(e) = res {
             error!("error deserializing directory entry: {:?}", e);
             return Some(Err(e.into()));
@@ -255,7 +255,7 @@ impl Iterator for DirectoryEntryPlusIterator {
             return Some(Err(e.into()));
         }
         let file = file.unwrap();
-        let attr = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.2, &self.3));
+        let attr = bincode::deserialize_from(encryptedfs::create_decryptor(file, &self.2, &self.3));
         if let Err(e) = attr {
             error!("error deserializing file attr: {:?}", e);
             return Some(Err(e.into()));
@@ -403,9 +403,9 @@ impl EncryptedFs {
         } else if name == ".." {
             name = "$..";
         }
-        let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
+        let name = encryptedfs::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
         let file = File::open(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
-        let (inode, _): (u64, FileType) = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.cipher, &self.key))?;
+        let (inode, _): (u64, FileType) = bincode::deserialize_from(encryptedfs::create_decryptor(file, &self.cipher, &self.key))?;
         Ok(Some(self.get_inode(inode)?))
     }
 
@@ -441,7 +441,7 @@ impl EncryptedFs {
         // remove contents directory
         fs::remove_dir_all(self.data_dir.join(CONTENTS_DIR).join(&ino_str))?;
         // remove from parent directory
-        let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
+        let name = encryptedfs::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
         fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
 
         let mut parent_attr = self.get_inode(parent)?;
@@ -471,7 +471,7 @@ impl EncryptedFs {
         // remove contents file
         fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(&ino_str))?;
         // remove from parent directory
-        let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
+        let name = encryptedfs::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
         fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
 
         let mut parent_attr = self.get_inode(parent)?;
@@ -488,7 +488,7 @@ impl EncryptedFs {
         } else if name == ".." {
             name = "$..";
         }
-        let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
+        let name = encryptedfs::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
         self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name).exists()
     }
 
@@ -516,7 +516,7 @@ impl EncryptedFs {
     pub fn get_inode(&mut self, ino: u64) -> FsResult<FileAttr> {
         let path = self.data_dir.join(INODES_DIR).join(ino.to_string());
         if let Ok(file) = OpenOptions::new().read(true).write(true).open(path) {
-            let mut attr: FileAttr = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.cipher, &self.key))?;
+            let mut attr: FileAttr = bincode::deserialize_from(encryptedfs::create_decryptor(file, &self.cipher, &self.key))?;
             if self.opened_files_for_write.contains_key(&ino) {
                 // merge time info and size with any open write handles
                 if let Some((attr_handle, _, _, _)) = self.write_handles.get(&self.opened_files_for_write.get(&ino).unwrap()) {
@@ -715,8 +715,8 @@ impl EncryptedFs {
             let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
             let tmp_file = OpenOptions::new().read(true).write(true).create(true).open(tmp_path.clone())?;
 
-            let mut decryptor = crypto_util::create_decryptor(in_file, &self.cipher, &self.key);
-            let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
+            let mut decryptor = encryptedfs::create_decryptor(in_file, &self.cipher, &self.key);
+            let mut encryptor = encryptedfs::create_encryptor(tmp_file, &self.cipher, &self.key);
 
             let mut buffer: [u8; 4096] = [0; 4096];
             let mut pos_read = 0;
@@ -765,7 +765,7 @@ impl EncryptedFs {
         // if position is before file end we copy the rest of the file from position to the end
         if *position < attr.size {
             let mut buffer: [u8; 4096] = [0; 4096];
-            let mut decryptor = crypto_util::create_decryptor(OpenOptions::new().read(true).open(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()))?,
+            let mut decryptor = encryptedfs::create_decryptor(OpenOptions::new().read(true).open(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()))?,
                                                               &self.cipher, &self.key);
             // move read position to the desired position
             loop {
@@ -965,49 +965,49 @@ impl EncryptedFs {
             .create(true)
             .truncate(true)
             .open(&path)?;
-        Ok(bincode::serialize_into(crypto_util::create_encryptor(file, &self.cipher, &self.key), &attr)?)
+        Ok(bincode::serialize_into(encryptedfs::create_encryptor(file, &self.cipher, &self.key), &attr)?)
     }
 
     /// Create an encryptor using internal encryption info.
     pub fn create_encryptor(&self, file: File) -> write::Encryptor<File> {
-        crypto_util::create_encryptor(file, &self.cipher, &self.key)
+        encryptedfs::create_encryptor(file, &self.cipher, &self.key)
     }
 
     /// Create a decryptor using internal encryption info.
     pub fn create_decryptor(&self, file: File) -> read::Decryptor<File> {
-        crypto_util::create_decryptor(file, &self.cipher, &self.key)
+        encryptedfs::create_decryptor(file, &self.cipher, &self.key)
     }
 
     /// Encrypts a string using internal encryption info.
     pub fn encrypt_string(&self, s: &str) -> String {
-        crypto_util::encrypt_string(s, &self.cipher, &self.key)
+        encryptedfs::encrypt_string(s, &self.cipher, &self.key)
     }
 
     /// Decrypts a string using internal encryption info.
     pub fn decrypt_string(&self, s: &str) -> String {
-        crypto_util::decrypt_string(s, &self.cipher, &self.key)
+        encryptedfs::decrypt_string(s, &self.cipher, &self.key)
     }
 
     /// Normalize and encrypt a file name.
     pub fn normalize_end_encrypt_file_name(&self, name: &str) -> String {
-        crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key)
+        encryptedfs::normalize_end_encrypt_file_name(name, &self.cipher, &self.key)
     }
     /// Change the password of the filesystem used to access the encryption key.
     pub fn change_password(data_dir: &str, old_password: &str, new_password: &str, cipher: &Cipher, derive_key_hash_rounds: u32) -> FsResult<()> {
         let data_dir = PathBuf::from(data_dir);
 
         // decrypt key
-        let initial_key = crypto_util::derive_key(old_password, &cipher, derive_key_hash_rounds, "salt-42");
+        let initial_key = encryptedfs::derive_key(old_password, &cipher, derive_key_hash_rounds, "salt-42");
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
-        let mut decryptor = crypto_util::create_decryptor(File::open(enc_file.clone())?, cipher, &initial_key);
+        let mut decryptor = encryptedfs::create_decryptor(File::open(enc_file.clone())?, cipher, &initial_key);
         let mut key: Vec<u8> = vec![];
         decryptor.read_to_end(&mut key)?;
         decryptor.finish();
 
         // encrypt it with new key derived from new password
-        let new_key = crypto_util::derive_key(new_password, &cipher, derive_key_hash_rounds, "salt-42");
+        let new_key = encryptedfs::derive_key(new_password, &cipher, derive_key_hash_rounds, "salt-42");
         fs::remove_file(enc_file.clone())?;
-        let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
+        let mut encryptor = encryptedfs::create_encryptor(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
                                                           cipher, &new_key);
         encryptor.write_all(&key)?;
         encryptor.finish()?;
@@ -1042,7 +1042,7 @@ impl EncryptedFs {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path)?;
 
-        let decryptor = crypto_util::create_decryptor(file, &self.cipher, &self.key);
+        let decryptor = encryptedfs::create_decryptor(file, &self.cipher, &self.key);
         let attr = self.get_inode(ino)?;
         // save attr also to avoid loading it multiple times while reading
         self.read_handles.insert(handle, (TimeAndSizeFileAttr::from_file_attr(&attr), 0, decryptor));
@@ -1053,7 +1053,7 @@ impl EncryptedFs {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path.clone())?;
 
-        let encryptor = crypto_util::create_encryptor(file, &self.cipher, &self.key);
+        let encryptor = encryptedfs::create_encryptor(file, &self.cipher, &self.key);
         // save attr also to avoid loading it multiple times while writing
         let attr = self.get_inode(ino)?;
         self.write_handles.insert(handle, (TimeAndSizeFileAttr::from_file_attr(&attr), path, 0, encryptor));
@@ -1110,7 +1110,7 @@ impl EncryptedFs {
     fn insert_directory_entry(&self, parent: u64, entry: DirectoryEntry) -> FsResult<()> {
         let parent_path = self.data_dir.join(CONTENTS_DIR).join(parent.to_string());
         // remove path separators from name
-        let name = crypto_util::normalize_end_encrypt_file_name(&entry.name, &self.cipher, &self.key);
+        let name = encryptedfs::normalize_end_encrypt_file_name(&entry.name, &self.cipher, &self.key);
         let file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -1119,14 +1119,14 @@ impl EncryptedFs {
 
         // write inode and file type
         let entry = (entry.ino, entry.kind);
-        bincode::serialize_into(crypto_util::create_encryptor(file, &self.cipher, &self.key), &entry)?;
+        bincode::serialize_into(encryptedfs::create_encryptor(file, &self.cipher, &self.key), &entry)?;
 
         Ok(())
     }
 
     fn remove_directory_entry(&self, parent: u64, name: &str) -> FsResult<()> {
         let parent_path = self.data_dir.join(CONTENTS_DIR).join(parent.to_string());
-        let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
+        let name = encryptedfs::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
         fs::remove_file(parent_path.join(name))?;
         Ok(())
     }
@@ -1193,7 +1193,7 @@ fn merge_attr_time_and_time_obj(attr: &mut FileAttr, from: &TimeAndSizeFileAttr)
 }
 
 fn read_or_create_key(path: PathBuf, password: &str, cipher: &Cipher, rounds: u32) -> FsResult<Vec<u8>> {
-    let derived_key = crypto_util::derive_key(password, cipher, rounds, "salt-42");
+    let derived_key = encryptedfs::derive_key(password, cipher, rounds, "salt-42");
     if !path.exists() {
         // first time, create a random key and encrypt it with the derived key from password
         let mut key: Vec<u8> = vec![];
@@ -1203,14 +1203,14 @@ fn read_or_create_key(path: PathBuf, password: &str, cipher: &Cipher, rounds: u3
         };
         key.resize(key_len, 0);
         OsRng::new()?.fill_bytes(&mut key);
-        let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path.clone())?,
+        let mut encryptor = encryptedfs::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path.clone())?,
                                                           cipher, &derived_key);
         encryptor.write_all(&key)?;
         encryptor.finish()?;
 
         return Ok(key);
     }
-    let mut decryptor = crypto_util::create_decryptor(File::open(path)?, cipher, &derived_key);
+    let mut decryptor = encryptedfs::create_decryptor(File::open(path)?, cipher, &derived_key);
     let mut key: Vec<u8> = vec![];
     decryptor.read_to_end(&mut key)?;
     decryptor.finish();
