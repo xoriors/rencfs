@@ -3,7 +3,7 @@
 An encrypted file system that mounts with FUSE on Linux. It can be used to create encrypted directories.
 
 It can then safely backup the encrypted folder on an untrusted server without worrying about the data being exposed.\
-You can also store it in any clound storage like Google Drive, Dropbox, etc. and have it synced across multiple devices.
+You can also store it in any cloud storage like Google Drive, Dropbox, etc. and have it synced across multiple devices.
 
 \
 [![encryptedfs-bin](https://img.shields.io/aur/version/encryptedfs-bin?color=1793d1&label=encryptedfs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/encryptedfs-bin/)

@@ -18,7 +18,7 @@ use thiserror::Error;
 use tracing::error;
 
 #[cfg(test)]
-mod encryptedfs_tests;
+mod encryptedfs_test;
 pub mod encryptedfs;
 
 pub(crate) const INODES_DIR: &str = "inodes";
