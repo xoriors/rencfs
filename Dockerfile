@@ -2,7 +2,7 @@
 ##### Builder
 FROM alpine:3.16.0 as builder
 
-RUN apk add binutils build-base ca-certificates curl file g++ gcc libressl-dev make patch postgresql rust
+RUN apk add binutils build-base ca-certificates curl file g++ gcc libressl-dev make patch rust
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 

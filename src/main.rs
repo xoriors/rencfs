@@ -9,13 +9,12 @@ use clap::{Arg, ArgAction, ArgMatches, Command, crate_version};
 use ctrlc::set_handler;
 use fuse3::MountOptions;
 use fuse3::raw::prelude::*;
-use libc::system;
 use rpassword::read_password;
 use strum::IntoEnumIterator;
 use tokio::{fs, task};
 use tracing::{error, info, Level};
 
-use encryptedfs::encryptedfs::{Cipher, EncryptedFs, FsError, FsResult};
+use encryptedfs::encryptedfs::{Cipher, EncryptedFs, FsError};
 use encryptedfs::encryptedfs_fuse3::EncryptedFsFuse3;
 
 #[tokio::main]

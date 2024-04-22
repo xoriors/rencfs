@@ -37,3 +37,6 @@ strum = "0.26.2"
 strum_macros = "0.26.2"
 rpassword = "7.3.1"
 cryptostream = "0.3.2"
+
+[package.metadata.aur]
+depends = ["fuse3"]

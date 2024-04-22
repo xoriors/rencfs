@@ -17,22 +17,7 @@ You can use it as a command line tool to mount an encrypted file system, or dire
 
 ## Command Line Tool
 
-### Install from AUR
-
-You can install the encrypted file system binary using the following command:
-```bash
-yay -Syu
-yay -S encryptedfs
-```
-
-### Install with cargo
-
-You can install the encrypted file system binary using the following command:
-```bash
-cargo install encryptedfs
-```
-
-To use the encrypted file system, you need to have FUSE installed on your system. You can install it by running the following command (or based on your distribution):
+To use the encrypted file system, you need to have FUSE installed on your system. You can install it by running the following command (or based on your distribution)
 
 Arch
 ```bash
@@ -43,7 +28,22 @@ Ubuntu
 sudo apt-get update && sudo apt-get -y install fuse3
 ```
 
-A basic example of how to use the encrypted file system is shown below:
+### Install from AUR
+
+You can install the encrypted file system binary using the following command
+```bash
+yay -Syu
+yay -S encryptedfs
+```
+
+### Install with cargo
+
+You can install the encrypted file system binary using the following command
+```bash
+cargo install encryptedfs
+```
+
+A basic example of how to use the encrypted file system is shown below
 
 ```
 encryptedfs --mount-point MOUNT_POINT --data-dir DATA_DIR
@@ -57,7 +57,7 @@ The encryption key is stored in a file and encrypted with a key derived from the
 This offers the possibility to change the password without needing to decrypt and re-encrypt the whole data.
 This is done by decrypting the key with the old password and re-encrypting it with the new password.
 
-To change the password, you can run the following command:
+To change the password, you can run the following command
 ```bash
 encryptedfs --change-password --data-dir DATA_DIR
 ```
@@ -66,7 +66,7 @@ It will prompt you to enter the old password and then the new password.
 
 ### Encryption info
 
-You can specify the encryption algorithm and derive key hash rounds adding these arguments to the command line:
+You can specify the encryption algorithm and derive key hash rounds adding these arguments to the command line
 
 ```bash
 --cipher CIPHER --derive-key-hash-rounds ROUNDS
@@ -116,4 +116,32 @@ mkdir 1
 ls
 echo "test" > 1/test
 cat 1/test
+```
+
+# Building from source
+You need to have openssl adn fuse3 packages installed
+
+Arch
+```bash
+sudo pacman -Syu && sudo pacman -S openssl lib32-openssl fuse3
+```
+
+Ubuntu
+```bash
+sudo apg-get uupdate && sudo apt-get install libssl-dev openssl fuse3
+```
+
+Build for debug
+```bash
+cargo build
+```
+
+Or for release
+```bash
+cargo build --release
+```
+
+Run
+```bash
+cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
 ```
