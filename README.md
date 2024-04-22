@@ -117,3 +117,25 @@ ls
 echo "test" > 1/test
 cat 1/test
 ```
+# Building from source
+You need to have openssl packages installed
+
+Arch
+```bash
+sudo pacman -Syu && sudo pacman -S openssl lib32-openssl
+```
+
+Ubuntu
+```bash
+sudo apg-get uupdate && sudo apt-get install libssl-dev openssl
+```
+
+Build for debug
+```bash
+cargo build
+```
+
+Or for release
+```bash
+cargo build --release
+```
