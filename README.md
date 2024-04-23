@@ -128,17 +128,21 @@ git@github.com:radumarias/encryptedfs.git
 
 ## Dependencies
 
+### Rust
+
 To build from source, you need to have Rust installed, you can see more details on how to install it [here](https://www.rust-lang.org/tools/install).
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ````
 
-Accordingly, it is customary for Rust developers to include this directory in their `PATH` environment variable.\ 
+Accordingly, it is customary for Rust developers to include this directory in their `PATH` environment variable.
 During installation `rustup` will attempt to configure the `PATH`. Because of differences between platforms, command shells, 
 and bugs in `rustup`, the modifications to `PATH` may not take effect until the console is restarted, or the user is logged out, or it may not succeed at all.
 
 If, after installation, running `rustc --version` in the console fails, this is the most likely reason.
 In that case please add it to the `PATH` manually.
+
+### Other dependencies
 
 Also these deps are required (or based on your distribution):
 
