@@ -119,29 +119,53 @@ cat 1/test
 ```
 
 # Building from source
-You need to have openssl adn fuse3 packages installed
+
+## Getting the sources
+
+```bash
+git@github.com:radumarias/encryptedfs.git
+````
+
+## Dependencies
+
+To build from source, you need to have Rust installed, you can see more details on how to install it [here](https://www.rust-lang.org/tools/install).
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+````
+
+Accordingly, it is customary for Rust developers to include this directory in their `PATH` environment variable.\ 
+During installation `rustup` will attempt to configure the `PATH`. Because of differences between platforms, command shells, 
+and bugs in `rustup`, the modifications to `PATH` may not take effect until the console is restarted, or the user is logged out, or it may not succeed at all.
+
+If, after installation, running `rustc --version` in the console fails, this is the most likely reason.
+In that case please add it to the `PATH` manually.
+
+Also these deps are required (or based on your distribution):
 
 Arch
 ```bash
-sudo pacman -Syu && sudo pacman -S openssl lib32-openssl fuse3
+sudo pacman -Syu && sudo pacman -S openssl lib32-openssl fuse3 base-devel
 ```
 
 Ubuntu
 ```bash
-sudo apg-get uupdate && sudo apt-get install libssl-dev openssl fuse3
+sudo apt-get update && sudo apt-get install libssl-dev openssl fuse3 build-essentials
 ```
 
-Build for debug
+## Build for debug
+
 ```bash
 cargo build
 ```
 
-Or for release
+## Build release
+
 ```bash
 cargo build --release
 ```
 
-Run
+## Run
+
 ```bash
 cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
 ```
