@@ -976,6 +976,7 @@ fn test_open() {
 }
 
 #[allow(dead_code)]
+// #[test]
 fn test_sample() {
     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_sample") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();

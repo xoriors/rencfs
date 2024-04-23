@@ -28,14 +28,14 @@ async fn main() {
     match result {
         Ok(Ok(_)) => {}
         Ok(Err(err)) => {
-            error!("Error panic: {err:#?}");
-            error!("Backtrace: {}", Backtrace::force_capture());
-            panic!("Error panic: {err:#?}");
+            error!("panic {err:#?}");
+            error!(backtrace = %Backtrace::force_capture());
+            panic!("{err:#?}");
         }
         Err(err) => {
-            error!("Error panic: {err}");
-            error!("Backtrace: {}", Backtrace::force_capture());
-            panic!("Error panic: {err}");
+            error!(err = %err, "panic");
+            error!(backtrace = %Backtrace::force_capture());
+            panic!("{err}");
         }
     }
 }
@@ -69,7 +69,7 @@ fn async_main() {
                     .default_value("ChaCha20")
                     .help(format!("Encryption type, possible values: {}",
                                   Cipher::iter().fold(String::new(), |mut acc, x| {
-                                      acc.push_str(format!("{}{}{:?}", acc, if acc.len() != 0 { ", " } else { "" }, x).as_str());
+                                      acc.push_str(format!("{acc}{}{x}", if acc.len() != 0 { ", " } else { "" }).as_str());
                                       acc
                                   }).as_str()),
                     )
