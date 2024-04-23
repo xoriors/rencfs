@@ -12,7 +12,7 @@ use fuse3::raw::prelude::*;
 use rpassword::read_password;
 use strum::IntoEnumIterator;
 use tokio::{fs, task};
-use tracing::{error, info, Level};
+use tracing::{error, info, instrument, Level};
 
 use encryptedfs::encryptedfs::{Cipher, EncryptedFs, FsError};
 use encryptedfs::encryptedfs_fuse3::EncryptedFsFuse3;
@@ -261,6 +261,7 @@ async fn run_normal(matches: ArgMatches, data_dir: &String, cipher: Cipher, deri
              matches.get_flag("direct-io"), matches.get_flag("suid")).await;
 }
 
+#[instrument]
 async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
                   allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) {
     let uid = unsafe { libc::getuid() };
@@ -275,6 +276,7 @@ async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Ci
         .clone();
     let mount_path = OsStr::new(mountpoint.as_str());
 
+    info!("Mounting FUSE filesystem");
     match EncryptedFsFuse3::new(&data_dir, &password, cipher, derive_key_hash_rounds, direct_io, suid_support) {
         Err(FsError::InvalidPassword) => {
             println!("Cannot decrypt data, maybe the password is wrong");
