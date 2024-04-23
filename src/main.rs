@@ -28,14 +28,14 @@ async fn main() {
     match result {
         Ok(Ok(_)) => {}
         Ok(Err(err)) => {
-            error!("Error panic: {:#?}", err);
+            error!("Error panic: {err:#?}");
             error!("Backtrace: {}", Backtrace::force_capture());
-            panic!("Error panic: {:#?}", err);
+            panic!("Error panic: {err:#?}");
         }
         Err(err) => {
-            error!("Error panic: {}", err);
+            error!("Error panic: {err}");
             error!("Backtrace: {}", Backtrace::force_capture());
-            panic!("Error panic: {}", err);
+            panic!("Error panic: {err}");
         }
     }
 }
@@ -281,7 +281,7 @@ async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Ci
             process::exit(1);
         }
         Err(err) => {
-            error!("{}", err);
+            error!("{err}");
             process::exit(1);
         }
         Ok(fs) =>

@@ -75,7 +75,7 @@ fn create_attr_from_type(file_type: FileType) -> FileAttr {
 
 #[test]
 fn test_write_and_get_inode() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_write_and_get_inode") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_write_and_get_inode") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         let attr = create_attr(42, FileType::RegularFile);
@@ -111,7 +111,7 @@ fn write(path: PathBuf, data: &[u8], fs: &EncryptedFs) {
 
 #[test]
 fn test_create_structure_and_root() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_create_structure_and_root") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_create_structure_and_root") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         assert!(fs.node_exists(ROOT_INODE));
@@ -128,7 +128,7 @@ fn test_create_structure_and_root() {
 
 #[test]
 fn test_create_nod() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_create_nod") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_create_nod") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         // file in root
@@ -197,7 +197,7 @@ fn test_create_nod() {
 
 #[test]
 fn test_read_dir() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_read_dir") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_read_dir") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         // file and directory in root
@@ -303,7 +303,7 @@ fn test_read_dir() {
 
 #[test]
 fn test_read_dir_plus() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_read_dir_plus") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_read_dir_plus") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         // file and directory in root
@@ -425,7 +425,7 @@ fn test_read_dir_plus() {
 
 #[test]
 fn test_find_by_name() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_find_by_name") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_find_by_name") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         let test_file = "test-file";
@@ -437,7 +437,7 @@ fn test_find_by_name() {
 
 #[test]
 fn test_remove_dir() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_remove_dir") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_remove_dir") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         let test_dir = "test-dir";
@@ -461,7 +461,7 @@ fn test_remove_dir() {
 
 #[test]
 fn test_remove_file() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_remove_file") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_remove_file") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         let test_file = "test-file";
@@ -478,7 +478,7 @@ fn test_remove_file() {
 
 #[test]
 fn test_write_all() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_write_all") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_write_all") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         let test_file = "test-file";
@@ -543,7 +543,7 @@ fn test_write_all() {
 
 #[test]
 fn test_read() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_read") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_read") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         let test_test_file = "test-file";
@@ -645,7 +645,7 @@ fn test_read() {
 
 #[test]
 fn test_truncate() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_truncate") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_truncate") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         let (fh, attr) = fs.create_nod(ROOT_INODE, "test-file", create_attr_from_type(FileType::RegularFile), false, false).unwrap();
@@ -670,7 +670,7 @@ fn test_truncate() {
 
 #[test]
 fn test_copy_file_range() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_copy_file_range") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_copy_file_range") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         let test_file_1 = "test-file-1";
@@ -722,7 +722,7 @@ fn test_copy_file_range() {
 
 #[test]
 fn test_rename() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_rename") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_rename") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         // new file in same directory
@@ -957,7 +957,7 @@ fn test_rename() {
 
 #[test]
 fn test_open() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_open") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_open") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
         let test_file = "test-file";
@@ -977,7 +977,7 @@ fn test_open() {
 
 #[allow(dead_code)]
 fn test_sample() {
-    run_test(TestSetup { data_path: format!("{}{}", TESTS_DATA_DIR, "test_sample") }, |setup| {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_sample") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
     });
 }
