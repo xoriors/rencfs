@@ -1069,7 +1069,7 @@ impl EncryptedFs {
         let keys: Vec<u64> = self.read_handles.keys().cloned().collect();
         for key in keys {
             let (attr, _, _, _) = self.read_handles.get(&key).unwrap();
-            if attr.ino != ino{
+            if attr.ino != ino {
                 continue;
             }
             let (attr, _, _, lock) = self.read_handles.remove(&key).unwrap();
@@ -1080,8 +1080,8 @@ impl EncryptedFs {
     fn check_password(&mut self) -> FsResult<()> {
         match self.get_inode(ROOT_INODE) {
             Ok(_) => Ok(()),
-            Err(FsError::SerializeError(_)) => return Err(FsError::InvalidPassword),
-            Err(err) => return Err(err),
+            Err(FsError::SerializeError(_)) => Err(FsError::InvalidPassword),
+            Err(err) => Err(err),
         }
     }
 
