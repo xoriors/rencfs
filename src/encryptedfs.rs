@@ -566,7 +566,7 @@ impl EncryptedFs {
         if !self.read_handles.contains_key(&handle) {
             return Err(FsError::InvalidFileHandle);
         }
-        let (attr, position, _, lock) = self.read_handles.get(&handle).unwrap();
+        let (attr, _, _, _) = self.read_handles.get(&handle).unwrap();
         if attr.ino != ino {
             return Err(FsError::InvalidFileHandle);
         }
@@ -583,9 +583,10 @@ impl EncryptedFs {
         }
 
         // lock for reading
-        let global_lock = self.inode_lock.lock().unwrap().get(&ino).unwrap();
-        let _guard = global_lock.read().unwrap();
+        let binding = self.get_inode_lock(ino);
+        let _guard = binding.read().unwrap();
 
+        let (_, position, _, lock) = self.read_handles.get(&handle).unwrap();
         if *position != offset {
             // in order to seek we need to read the bytes from current position until the offset
             if *position > offset {
@@ -647,14 +648,12 @@ impl EncryptedFs {
             let mut attr_0 = self.get_inode(attr.ino)?;
             merge_attr_time_and_set_size_obj(&mut attr_0, &attr);
             self.write_inode(&attr_0)?;
-            self.write_inode(&attr_0)?;
             encryptor.finish()?;
             // if we are in tmp file move it to actual file
             if path.to_str().unwrap().ends_with(".tmp") {
                 fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).unwrap();
-
                 // also recreate readers because the file has changed
-                self.recreate_read_handles(attr.ino);
+                self.recreate_handles(attr.ino);
             }
             self.opened_files_for_write.remove(&attr.ino);
             valid_fh = true;
@@ -695,8 +694,7 @@ impl EncryptedFs {
         if self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
-        let (attr, _, position, _, _) =
-            self.write_handles.get_mut(&handle).unwrap();
+        let (attr, _, _, _, _) = self.write_handles.get_mut(&handle).unwrap();
         if attr.ino != ino {
             return Err(FsError::InvalidFileHandle);
         }
@@ -706,11 +704,12 @@ impl EncryptedFs {
         }
 
         // write lock to avoid writing from multiple threads
-        let global_lock = self.inode_lock.lock().unwrap().get(&ino).unwrap();
-        let _guard = global_lock.write().unwrap();
+        let binding = self.get_inode_lock(ino);
+        let _guard = binding.write().unwrap();
 
         let mut decryptor: Option<Decryptor<File>> = None;
 
+        let (_, _, position, _, _) = self.write_handles.get_mut(&handle).unwrap();
         if *position != offset {
             // in order to seek we need to recreate all stream from the beginning until the desired position of file size
             // for that we create a new encryptor into a tmp file reading from original file and writing to tmp one
@@ -726,14 +725,16 @@ impl EncryptedFs {
             // if we are already in the tmp file first copy tmp to actual file
             if path.to_str().unwrap().ends_with(".tmp") {
                 fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).unwrap();
+                // also recreate readers because the file has changed
+                self.recreate_handles(attr.ino);
             }
 
             let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
-            let in_file = OpenOptions::new().read(true).write(true).open(in_path.clone())?;
+            let in_file = OpenOptions::new().read(true).open(in_path.clone())?;
 
             let tmp_path_str = format!("{}.{}.tmp", attr.ino.to_string(), &handle.to_string());
             let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
-            let tmp_file = OpenOptions::new().read(true).write(true).create(true).open(tmp_path.clone())?;
+            let tmp_file = OpenOptions::new().write(true).create(true).open(tmp_path.clone())?;
 
             let mut decryptor2 = crypto_util::create_decryptor(in_file, &self.cipher, &self.key);
             let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
@@ -876,11 +877,7 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
 
-        let lock;
-        {
-            let mut map_guard = self.inode_lock.lock().unwrap();
-            lock = map_guard.entry(ino).or_insert_with(|| Arc::new(RwLock::new(0)));
-        }
+        let lock = self.get_inode_lock(ino);
         let mut handle = 0_u64;
         if read {
             handle = self.allocate_next_handle();
@@ -891,7 +888,7 @@ impl EncryptedFs {
                 return Err(FsError::AlreadyOpenForWrite);
             }
             handle = self.allocate_next_handle();
-            self.create_write_handle(ino, handle, lock)?;
+            self.create_write_handle(ino, None, handle, lock)?;
         }
         Ok(handle)
     }
@@ -906,28 +903,85 @@ impl EncryptedFs {
             // no-op
             return Ok(());
         } else if size == 0 {
+            let binding = self.get_inode_lock(ino);
+            let _guard = binding.write().unwrap();
             // truncate to zero
             OpenOptions::new().write(true).create(true).truncate(true).open(self.data_dir.join(CONTENTS_DIR).join(ino.to_string()))?;
         } else if size < attr.size {
             // decrease size, copy from beginning until size as offset
-            // TODO
-            let fh = self.open(ino, false, true)?;
-            self.write_all(ino, size, &[], fh)?;
-            self.release_handle(fh)?;
+
+            let binding = self.get_inode_lock(ino);
+            let _guard = binding.write().unwrap();
+
+            // if we have opened writers before the truncated size, flush those
+            self.flush_writers(ino)?;
+
+            let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
+            let in_file = OpenOptions::new().read(true).write(true).open(in_path.clone())?;
+            let mut decryptor = crypto_util::create_decryptor(in_file, &self.cipher, &self.key);
+
+            let tmp_path_str = format!("{}.truncate.tmp", attr.ino.to_string());
+            let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
+            let tmp_file = OpenOptions::new().write(true).create(true).open(tmp_path.clone())?;
+            let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
+
+            // copy existing data until new size
+            let mut buf: [u8; 4096] = [0; 4096];
+            let mut pos = 0_u64;
+            loop {
+                let len = min(4096, size - pos) as usize;
+                decryptor.read_exact(&mut buf[..len])?;
+                encryptor.write_all(&buf[..len])?;
+                pos += len as u64;
+                if pos == size {
+                    break;
+                }
+            }
+            fs::rename(tmp_path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).unwrap();
         } else {
             // increase size, write zeros from actual size to new size
-            let fh = self.open(ino, false, true)?;
+
+            let binding = self.get_inode_lock(ino);
+            let _guard = binding.write().unwrap();
+
+            // if we have opened writers, flush those
+            self.flush_writers(ino)?;
+
+            let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
+            let in_file = OpenOptions::new().read(true).write(true).open(in_path.clone())?;
+            let mut decryptor = crypto_util::create_decryptor(in_file, &self.cipher, &self.key);
+
+            let tmp_path_str = format!("{}.truncate.tmp", attr.ino.to_string());
+            let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
+            let tmp_file = OpenOptions::new().write(true).create(true).open(tmp_path.clone())?;
+            let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
+
+            // copy existing data
+            let mut buf: [u8; 4096] = [0; 4096];
+            let mut pos = 0_u64;
+            loop {
+                let len = min(4096, attr.size - pos) as usize;
+                decryptor.read_exact(&mut buf[..len])?;
+                encryptor.write_all(&buf[..len])?;
+                pos += len as u64;
+                if pos == attr.size {
+                    break;
+                }
+            }
+
+            // now fill up with zeros until new size
             let buf: [u8; 4096] = [0; 4096];
             loop {
                 let len = min(4096, size - attr.size) as usize;
-                self.write_all(ino, attr.size, &buf[..len], fh)?;
+                encryptor.write_all(&buf[..len])?;
                 attr.size += len as u64;
                 if attr.size == size {
                     break;
                 }
             }
-            self.flush(fh)?;
-            self.release_handle(fh)?;
+
+            encryptor.finish()?;
+            fs::rename(tmp_path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).unwrap();
         }
 
         attr.size = size;
@@ -935,10 +989,47 @@ impl EncryptedFs {
         attr.ctime = SystemTime::now();
         self.write_inode(&attr)?;
 
-        // also recreate readers because the file has changed
-        self.recreate_read_handles(attr.ino);
+        // also recreate handles because the file has changed
+        self.recreate_handles(attr.ino);
 
         Ok(())
+    }
+
+    /// This will write any dirty data to the file and recreate handles.
+    /// > ⚠️ **Warning**
+    /// > Need to be called in a context with write lock on self.inode_lock.
+    fn flush_writers(&mut self, ino: u64) -> FsResult<()> {
+        let keys: Vec<u64> = self.write_handles.keys().cloned().collect();
+        for key in keys {
+            // using if let to skip if the key was removed from another thread
+            if let Some((attr, _, _, _, _)) = self.write_handles.get(&key) {
+                if attr.ino != ino {
+                    continue;
+                }
+            }
+            if let Some((attr, path, _, encryptor, _)) = self.write_handles.remove(&key) {
+                encryptor.finish()?;
+                // if we are in tmp file move it to actual file
+                if path.to_str().unwrap().ends_with(".tmp") {
+                    fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).unwrap();
+                    // also recreate handles because the file has changed
+                    self.recreate_handles(attr.ino);
+                }
+                let mut attr_0 = self.get_inode(attr.ino)?;
+                merge_attr_time_and_set_size_obj(&mut attr_0, &attr);
+                self.write_inode(&attr_0)?;
+                // recreate the write handle so opened handle can continue writing
+                let lock = self.get_inode_lock(ino);
+                self.create_write_handle(attr.ino, Some(attr), key, lock)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn get_inode_lock(&mut self, ino: u64) -> Arc<RwLock<u8>> {
+        let mut map_guard = self.inode_lock.lock().unwrap();
+        map_guard.entry(ino).or_insert_with(|| Arc::new(RwLock::new(0)))
     }
 
     pub fn rename(&mut self, parent: u64, name: &str, new_parent: u64, new_name: &str) -> FsResult<()> {
@@ -1065,15 +1156,36 @@ impl EncryptedFs {
         self.current_handle.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
-    fn recreate_read_handles(&mut self, ino: u64) {
+    fn recreate_handles(&mut self, ino: u64) {
+        // read
         let keys: Vec<u64> = self.read_handles.keys().cloned().collect();
         for key in keys {
-            let (attr, _, _, _) = self.read_handles.get(&key).unwrap();
-            if attr.ino != ino {
-                continue;
+            // using if let to skip if the key was removed from another thread
+            if let Some((attr, _, _, _)) = self.read_handles.get(&key) {
+                if attr.ino != ino {
+                    continue;
+                }
             }
-            let (attr, _, _, lock) = self.read_handles.remove(&key).unwrap();
-            self.create_read_handle(attr.ino, Some(attr), key, lock).unwrap();
+            if let Some((attr, _, _, lock)) = self.read_handles.remove(&key) {
+                self.create_read_handle(attr.ino, Some(attr), key, lock).unwrap();
+            }
+        }
+
+        // write
+        let keys: Vec<u64> = self.write_handles.keys().cloned().collect();
+        for key in keys {
+            // using if let to skip if the key was removed from another thread
+            if let Some((attr, _, _, _, _)) = self.write_handles.get(&key) {
+                if attr.ino != ino {
+                    continue;
+                }
+            }
+            if let Some((attr, _, position, _, lock)) = self.write_handles.remove(&key) {
+                self.create_write_handle(attr.ino,
+                                         // if we don't have dirty content (position == 0) we don't have custom attr to preserve
+                                         if position == 0 { None } else { Some(attr) },
+                                         key, lock).unwrap();
+            }
         }
     }
 
@@ -1096,14 +1208,14 @@ impl EncryptedFs {
         Ok(handle)
     }
 
-    fn create_write_handle(&mut self, ino: u64, handle: u64, lock: Arc<RwLock<u8>>) -> FsResult<u64> {
+    fn create_write_handle(&mut self, ino: u64, attr: Option<TimeAndSizeFileAttr>, handle: u64, lock: Arc<RwLock<u8>>) -> FsResult<u64> {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path.clone())?;
 
         let encryptor = crypto_util::create_encryptor(file, &self.cipher, &self.key);
         // save attr also to avoid loading it multiple times while writing
-        let attr = self.get_inode(ino)?;
-        self.write_handles.insert(handle, (TimeAndSizeFileAttr::from_file_attr(&attr), path, 0, encryptor, lock));
+        let attr2 = self.get_inode(ino)?;
+        self.write_handles.insert(handle, (if attr.is_some() { attr.unwrap() } else { TimeAndSizeFileAttr::from_file_attr(&attr2) }, path, 0, encryptor, lock));
         self.opened_files_for_write.insert(ino, handle);
         Ok(handle)
     }

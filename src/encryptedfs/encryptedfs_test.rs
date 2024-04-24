@@ -505,8 +505,7 @@ fn test_write_all() {
         fs.write_all(attr.ino, 42, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
         fs.release_handle(fh).unwrap();
-        assert_eq!(format!("test-37{}37", "\0".repeat(35)),
-                   read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+        assert_eq!(format!("test-37{}37", "\0".repeat(35)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
 
         // offset before current position, several blocks
         // first write no bytes to the end to move the position
@@ -653,23 +652,39 @@ fn test_truncate() {
     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_truncate") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
-        let (_fh, attr) = fs.create_nod(ROOT_INODE, "test-file", create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (fh, attr) = fs.create_nod(ROOT_INODE, "test-file", create_attr_from_type(FileType::RegularFile), false, true).unwrap();
+        let data = "test-42";
+        fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
+        fs.flush(fh).unwrap();
+        fs.release_handle(fh).unwrap();
 
-        // size increase
-        fs.truncate(attr.ino, 42).unwrap();
-        assert_eq!(42, fs.get_inode(attr.ino).unwrap().size);
+        // size increase, preserve opened writer content
+        let fh = fs.open(attr.ino, false, true).unwrap();
+        let data = "37";
+        fs.write_all(attr.ino, 5, data.as_bytes(), fh).unwrap();
+        fs.truncate(attr.ino, 10).unwrap();
+        assert_eq!(10, fs.get_inode(attr.ino).unwrap().size);
+        assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+        fs.release_handle(fh).unwrap();
 
         // size doesn't change
-        fs.truncate(attr.ino, 42).unwrap();
-        assert_eq!(42, fs.get_inode(attr.ino).unwrap().size);
+        fs.truncate(attr.ino, 10).unwrap();
+        assert_eq!(10, fs.get_inode(attr.ino).unwrap().size);
+        assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
 
-        // size decrease
-        fs.truncate(attr.ino, 37).unwrap();
-        assert_eq!(37, fs.get_inode(attr.ino).unwrap().size);
+        // size decrease, preserve opened writer content
+        let fh = fs.open(attr.ino, false, true).unwrap();
+        let data = "37";
+        fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
+        fs.truncate(attr.ino, 4).unwrap();
+        assert_eq!(4, fs.get_inode(attr.ino).unwrap().size);
+        assert_eq!("37st", read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+        fs.release_handle(fh).unwrap();
 
         // size decrease to 0
         fs.truncate(attr.ino, 0).unwrap();
         assert_eq!(0, fs.get_inode(attr.ino).unwrap().size);
+        assert_eq!("".to_string(), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
     });
 }
 
