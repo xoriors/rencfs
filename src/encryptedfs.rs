@@ -591,7 +591,7 @@ impl EncryptedFs {
             if *position > offset {
                 // if we need an offset before the current position, we can't seek back, we need
                 // to read from the beginning until the desired offset
-                self.create_read_handle(ino, handle, lock.clone())?;
+                self.create_read_handle(ino, None, handle, lock.clone())?;
             }
             if offset > 0 {
                 let (_, position, decryptor, _) =
@@ -654,7 +654,7 @@ impl EncryptedFs {
                 fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).unwrap();
 
                 // also recreate readers because the file has changed
-                self.recreate_read_handles();
+                self.recreate_read_handles(attr.ino);
             }
             self.opened_files_for_write.remove(&attr.ino);
             valid_fh = true;
@@ -884,7 +884,7 @@ impl EncryptedFs {
         let mut handle = 0_u64;
         if read {
             handle = self.allocate_next_handle();
-            self.create_read_handle(ino, handle, lock.clone())?;
+            self.create_read_handle(ino, None, handle, lock.clone())?;
         }
         if write {
             if self.opened_files_for_write.contains_key(&ino) {
@@ -931,12 +931,12 @@ impl EncryptedFs {
         }
 
         attr.size = size;
-        attr.mtime = std::time::SystemTime::now();
-        attr.ctime = std::time::SystemTime::now();
+        attr.mtime = SystemTime::now();
+        attr.ctime = SystemTime::now();
         self.write_inode(&attr)?;
 
         // also recreate readers because the file has changed
-        self.recreate_read_handles();
+        self.recreate_read_handles(attr.ino);
 
         Ok(())
     }
@@ -1065,11 +1065,15 @@ impl EncryptedFs {
         self.current_handle.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
-    fn recreate_read_handles(&mut self) {
+    fn recreate_read_handles(&mut self, ino: u64) {
         let keys: Vec<u64> = self.read_handles.keys().cloned().collect();
         for key in keys {
+            let (attr, _, _, _) = self.read_handles.get(&key).unwrap();
+            if attr.ino != ino{
+                continue;
+            }
             let (attr, _, _, lock) = self.read_handles.remove(&key).unwrap();
-            self.create_read_handle(attr.ino, key, lock).unwrap();
+            self.create_read_handle(attr.ino, Some(attr), key, lock).unwrap();
         }
     }
 
@@ -1081,14 +1085,14 @@ impl EncryptedFs {
         }
     }
 
-    fn create_read_handle(&mut self, ino: u64, handle: u64, lock: Arc<RwLock<u8>>) -> FsResult<u64> {
+    fn create_read_handle(&mut self, ino: u64, attr: Option<TimeAndSizeFileAttr>, handle: u64, lock: Arc<RwLock<u8>>) -> FsResult<u64> {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path)?;
 
         let decryptor = crypto_util::create_decryptor(file, &self.cipher, &self.key);
-        let attr = self.get_inode(ino)?;
         // save attr also to avoid loading it multiple times while reading
-        self.read_handles.insert(handle, (TimeAndSizeFileAttr::from_file_attr(&attr), 0, decryptor, lock));
+        let attr2 = self.get_inode(ino)?;
+        self.read_handles.insert(handle, (if attr.is_some() { attr.unwrap() } else { TimeAndSizeFileAttr::from_file_attr(&attr2) }, 0, decryptor, lock));
         Ok(handle)
     }
 
@@ -1104,7 +1108,7 @@ impl EncryptedFs {
         Ok(handle)
     }
 
-    fn replace_handle_data(&mut self, handle: u64, attr: TimeAndSizeFileAttr, new_path: PathBuf, position: u64, new_encryptor: write::Encryptor<File>, lock: Arc<RwLock<u8>>) {
+    fn replace_handle_data(&mut self, handle: u64, attr: TimeAndSizeFileAttr, new_path: PathBuf, position: u64, new_encryptor: Encryptor<File>, lock: Arc<RwLock<u8>>) {
         self.write_handles.insert(handle, (attr, new_path, position, new_encryptor, lock));
     }
 
