@@ -7,8 +7,8 @@ You can also store it in any cloud storage like Google Drive, Dropbox, etc. and 
 
 \
 [![rencfs-bin](https://img.shields.io/aur/version/rencfs-bin?color=1793d1&label=rencfs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/rencfs-bin/)
-![crates.io](https://img.shields.io/crates/v/rencfs.svg)
-![docs.rs](https://img.shields.io/docsrs/rencfs?label=docs.rs)
+[![crates.io](https://img.shields.io/crates/v/rencfs.svg)](https://crates.io/crates/rencfs)
+[![docs.rs](https://img.shields.io/docsrs/rencfs?label=docs.rs)](https://docs.rs/rencfs/)
 [![test](https://github.com/radumarias/rencfs/actions/workflows/test.yml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/test.yml)
 
 # Usage
