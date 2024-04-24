@@ -293,7 +293,7 @@ checksum = "11157ac094ffbdde99aa67b23417ebdd801842852b500e395a45a9c0aac03e4a"
 
 [[package]]
 name = "encryptedfs"
-version = "0.1.25"
+version = "0.1.26"
 dependencies = [
  "base64",
  "bincode",
@@ -318,6 +318,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "weak-table",
 ]
 
 [[package]]
@@ -1132,6 +1133,12 @@ name = "wasi"
 version = "0.11.0+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
+
+[[package]]
+name = "weak-table"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "323f4da9523e9a669e1eaf9c6e763892769b1d38c623913647bfdc1532fe4549"
 
 [[package]]
 name = "which"

@@ -147,7 +147,7 @@ fn test_create_nod() {
 
         // directory in root
         let test_dir = "test-dir";
-        let (fh, attr) = fs.create_nod(ROOT_INODE, test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_fh, attr) = fs.create_nod(ROOT_INODE, test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
         assert_ne!(attr.ino, 0);
         assert!(fs.data_dir.join(INODES_DIR).join(attr.ino.to_string()).is_file());
         assert!(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).is_dir());
@@ -165,7 +165,7 @@ fn test_create_nod() {
         // directory in another directory
         let parent = attr.ino;
         let test_dir_2 = "test-dir-2";
-        let (fh, attr) = fs.create_nod(parent, test_dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_fh, attr) = fs.create_nod(parent, test_dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
         assert!(fs.data_dir.join(INODES_DIR).join(attr.ino.to_string()).is_file());
         assert!(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).is_dir());
         assert!(fs.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(fs.normalize_end_encrypt_file_name(test_dir_2)).is_file());
@@ -202,10 +202,10 @@ fn test_read_dir() {
 
         // file and directory in root
         let test_file = "test-file";
-        let (fh, file_attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (_fh, file_attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
 
         let test_dir = "test-dir";
-        let (fh, dir_attr) = fs.create_nod(ROOT_INODE, test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_fh, dir_attr) = fs.create_nod(ROOT_INODE, test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
         let mut entries: Vec<FsResult<DirectoryEntry>> = fs.read_dir(dir_attr.ino).unwrap().collect();
         entries.sort_by(|a, b| a.as_ref().unwrap().name.cmp(&b.as_ref().unwrap().name));
         let entries: Vec<DirectoryEntry> = entries.into_iter().map(|e| e.unwrap()).collect();
@@ -250,10 +250,10 @@ fn test_read_dir() {
         // file and directory in another directory
         let parent = dir_attr.ino;
         let test_file_2 = "test-file-2";
-        let (fh, file_attr) = fs.create_nod(parent, test_file_2, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (_fh, file_attr) = fs.create_nod(parent, test_file_2, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
 
         let test_dir_2 = "test-dir-2";
-        let (fh, dir_attr) = fs.create_nod(parent, test_dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_fh, dir_attr) = fs.create_nod(parent, test_dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
         let mut entries: Vec<FsResult<DirectoryEntry>> = fs.read_dir(dir_attr.ino).unwrap().collect();
         entries.sort_by(|a, b| a.as_ref().unwrap().name.cmp(&b.as_ref().unwrap().name));
         let entries: Vec<DirectoryEntry> = entries.into_iter().map(|e| e.unwrap()).collect();
@@ -308,10 +308,10 @@ fn test_read_dir_plus() {
 
         // file and directory in root
         let test_file = "test-file";
-        let (fh, file_attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (_fh, file_attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
 
         let test_dir = "test-dir";
-        let (fh, dir_attr) = fs.create_nod(ROOT_INODE, test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_fh, dir_attr) = fs.create_nod(ROOT_INODE, test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
         let mut entries: Vec<FsResult<DirectoryEntryPlus>> = fs.read_dir_plus(dir_attr.ino).unwrap().collect();
         entries.sort_by(|a, b| a.as_ref().unwrap().name.cmp(&b.as_ref().unwrap().name));
         let entries: Vec<DirectoryEntryPlus> = entries.into_iter().map(|e| e.unwrap()).collect();
@@ -363,10 +363,10 @@ fn test_read_dir_plus() {
         let parent = dir_attr.ino;
         let attr_parent = dir_attr;
         let test_file_2 = "test-file-2";
-        let (fh, file_attr) = fs.create_nod(parent, test_file_2, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (_fh, file_attr) = fs.create_nod(parent, test_file_2, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
 
         let test_dir_2 = "test-dir-2";
-        let (fh, dir_attr) = fs.create_nod(parent, test_dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_fh, dir_attr) = fs.create_nod(parent, test_dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
         // for some reason the tv_nsec is not the same between what create_nod() and read_dir_plus() returns, so we reload it again
         let dir_attr = fs.get_inode(dir_attr.ino).unwrap();
         let attr_parent = fs.get_inode(attr_parent.ino).unwrap();
@@ -441,9 +441,9 @@ fn test_remove_dir() {
         let fs = setup.fs.as_mut().unwrap();
 
         let test_dir = "test-dir";
-        let (fh, dir_attr) = fs.create_nod(ROOT_INODE, test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_fh, dir_attr) = fs.create_nod(ROOT_INODE, test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
         let test_file = "test-file";
-        let (fh, file_attr) = fs.create_nod(dir_attr.ino, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (_fh, file_attr) = fs.create_nod(dir_attr.ino, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
 
         assert!(matches!(fs.remove_dir(ROOT_INODE, test_dir), Err(FsError::NotEmpty)));
         assert!(fs.data_dir.join(INODES_DIR).join(dir_attr.ino.to_string()).is_file());
@@ -465,7 +465,7 @@ fn test_remove_file() {
         let fs = setup.fs.as_mut().unwrap();
 
         let test_file = "test-file";
-        let (fh, attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (_fh, attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
         assert!(fs.remove_file(ROOT_INODE, test_file).is_ok());
         assert_ne!(fs.data_dir.join(INODES_DIR).join(attr.ino.to_string()).is_file(), true);
         assert_ne!(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).is_file(), true);
@@ -499,29 +499,34 @@ fn test_write_all() {
         fs.release_handle(fh).unwrap();
         assert_eq!(data, &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs)[5..]);
 
-        // offset before current position
-        // first write no bytes to the end to move the position
-        let fh = fs.open(attr.ino, false, true).unwrap();
-        fs.write_all(attr.ino, 7, &[0u8; 0], fh).unwrap();
-        let data = "42";
-        fs.write_all(attr.ino, 5, data.as_bytes(), fh).unwrap();
-        fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
-        assert_eq!(data, &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs)[5..]);
-
         // offset after file end
         let data = "37";
         let fh = fs.open(attr.ino, false, true).unwrap();
         fs.write_all(attr.ino, 42, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
         fs.release_handle(fh).unwrap();
-        assert_eq!(format!("test-42{}37", "                                   ".replace(" ", "\0")),
+        assert_eq!(format!("test-37{}37", "\0".repeat(35)),
                    read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+
+        // offset before current position, several blocks
+        // first write no bytes to the end to move the position
+        let test_file_2 = "test-file-2";
+        let (fh, attr) = fs.create_nod(ROOT_INODE, test_file_2, create_attr_from_type(FileType::RegularFile), false, true).unwrap();
+        let data = "test-42-37-42";
+        fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
+        fs.write_all(attr.ino, data.len() as u64, &[0_u8; 0], fh).unwrap();
+        let data1 = "01";
+        fs.write_all(attr.ino, 5, data1.as_bytes(), fh).unwrap();
+        let data2 = "02";
+        fs.write_all(attr.ino, 8, data2.as_bytes(), fh).unwrap();
+        fs.flush(fh).unwrap();
+        fs.release_handle(fh).unwrap();
+        assert_eq!("test-01-02-42", &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
 
         // write before current position then write to the end, also check it preserves the content from
         // the first write to offset to end of the file
-        let test_file_2 = "test-file-2";
-        let (fh, attr) = fs.create_nod(ROOT_INODE, test_file_2, create_attr_from_type(FileType::RegularFile), false, true).unwrap();
+        let test_file_3 = "test-file-3";
+        let (fh, attr) = fs.create_nod(ROOT_INODE, test_file_3, create_attr_from_type(FileType::RegularFile), false, true).unwrap();
         let data = "test-42-37";
         fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
         fs.write_all(attr.ino, 5, b"37", fh).unwrap();
@@ -587,13 +592,13 @@ fn test_read() {
         fs.flush(fh).unwrap();
         fs.release_handle(fh).unwrap();
         let fh = fs.open(attr.ino, true, false).unwrap();
-        fs.read(attr.ino, 0, &mut [0u8; 1], fh).unwrap();
+        fs.read(attr.ino, 0, &mut [0_u8; 1], fh).unwrap();
         let fh_2 = fs.open(attr.ino, false, true).unwrap();
         let new_data = "37";
         fs.write_all(attr.ino, 5, new_data.as_bytes(), fh_2).unwrap();
         fs.flush(fh_2).unwrap();
         fs.release_handle(fh_2).unwrap();
-        let mut buf = [0u8; 2];
+        let mut buf = [0_u8; 2];
         fs.read(attr.ino, 5, &mut buf, fh).unwrap();
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
@@ -605,13 +610,13 @@ fn test_read() {
         fs.flush(fh).unwrap();
         fs.release_handle(fh).unwrap();
         let fh = fs.open(attr.ino, true, false).unwrap();
-        fs.read(attr.ino, 8, &mut [0u8; 1], fh).unwrap();
+        fs.read(attr.ino, 8, &mut [0_u8; 1], fh).unwrap();
         let fh_2 = fs.open(attr.ino, false, true).unwrap();
         let new_data = "37";
         fs.write_all(attr.ino, 5, new_data.as_bytes(), fh_2).unwrap();
         fs.flush(fh_2).unwrap();
         fs.release_handle(fh_2).unwrap();
-        let mut buf = [0u8; 2];
+        let mut buf = [0_u8; 2];
         fs.read(attr.ino, 5, &mut buf, fh).unwrap();
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
@@ -623,13 +628,13 @@ fn test_read() {
         fs.flush(fh).unwrap();
         fs.release_handle(fh).unwrap();
         let fh = fs.open(attr.ino, true, false).unwrap();
-        fs.read(attr.ino, 7, &mut [0u8; 1], fh).unwrap();
+        fs.read(attr.ino, 7, &mut [0_u8; 1], fh).unwrap();
         let fh_2 = fs.open(attr.ino, false, true).unwrap();
         let new_data = "37";
         fs.write_all(attr.ino, 5, new_data.as_bytes(), fh_2).unwrap();
         fs.flush(fh_2).unwrap();
         fs.release_handle(fh_2).unwrap();
-        let mut buf = [0u8; 2];
+        let mut buf = [0_u8; 2];
         fs.read(attr.ino, 8, &mut buf, fh).unwrap();
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
@@ -648,7 +653,7 @@ fn test_truncate() {
     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_truncate") }, |setup| {
         let fs = setup.fs.as_mut().unwrap();
 
-        let (fh, attr) = fs.create_nod(ROOT_INODE, "test-file", create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (_fh, attr) = fs.create_nod(ROOT_INODE, "test-file", create_attr_from_type(FileType::RegularFile), false, false).unwrap();
 
         // size increase
         fs.truncate(attr.ino, 42).unwrap();
@@ -798,7 +803,7 @@ fn test_rename() {
         // file to existing file in same directory
         let new_parent = ROOT_INODE;
         let (_, attr) = fs.create_nod(ROOT_INODE, file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
-        let (_, attr_2) = fs.create_nod(new_parent, file_2, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (_, _attr_2) = fs.create_nod(new_parent, file_2, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
         fs.rename(ROOT_INODE, file_1, new_parent, file_2).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, file_1), true);
         assert_eq!(fs.exists_by_name(new_parent, file_2), true);
@@ -812,7 +817,7 @@ fn test_rename() {
         // directory to existing directory in same directory
         let new_parent = ROOT_INODE;
         let (_, attr) = fs.create_nod(ROOT_INODE, dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
-        let (_, attr_2) = fs.create_nod(new_parent, dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_, _attr_2) = fs.create_nod(new_parent, dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
         fs.rename(ROOT_INODE, dir_1, new_parent, dir_2).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, dir_1), true);
         assert_eq!(fs.exists_by_name(new_parent, dir_2), true);
@@ -830,7 +835,7 @@ fn test_rename() {
         // file to existing file in another directory
         let new_parent = new_parent_attr.ino;
         let (_, attr) = fs.create_nod(ROOT_INODE, file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
-        let (_, attr_2) = fs.create_nod(new_parent, file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (_, _attr_2) = fs.create_nod(new_parent, file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
         fs.rename(ROOT_INODE, file_1, new_parent, file_1).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, file_1), true);
         assert_eq!(fs.exists_by_name(new_parent, file_1), true);
@@ -844,7 +849,7 @@ fn test_rename() {
         // directory to existing directory in another directory
         let new_parent = new_parent_attr.ino;
         let (_, attr) = fs.create_nod(ROOT_INODE, dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
-        let (_, attr_2) = fs.create_nod(new_parent, dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_, _attr_2) = fs.create_nod(new_parent, dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
         fs.rename(ROOT_INODE, dir_1, new_parent, dir_1).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, dir_1), true);
         assert_eq!(fs.exists_by_name(new_parent, dir_1), true);
@@ -862,7 +867,7 @@ fn test_rename() {
         // overwriting directory with file
         let new_parent = ROOT_INODE;
         let (_, attr) = fs.create_nod(ROOT_INODE, file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
-        let (_, attr_2) = fs.create_nod(new_parent, dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_, _attr_2) = fs.create_nod(new_parent, dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
         fs.rename(ROOT_INODE, file_1, new_parent, dir_1).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, file_1), true);
         assert_eq!(fs.exists_by_name(new_parent, dir_1), true);
@@ -877,7 +882,7 @@ fn test_rename() {
         let new_parent = ROOT_INODE;
         let dir_3 = "dir-3";
         let (_, attr) = fs.create_nod(ROOT_INODE, dir_3, create_attr_from_type(FileType::Directory), false, false).unwrap();
-        let (_, attr_2) = fs.create_nod(new_parent, file_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
+        let (_, _attr_2) = fs.create_nod(new_parent, file_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
         fs.rename(ROOT_INODE, dir_3, new_parent, file_1).unwrap();
         assert_ne!(fs.exists_by_name(ROOT_INODE, dir_3), true);
         assert_eq!(fs.exists_by_name(new_parent, file_1), true);
@@ -895,7 +900,7 @@ fn test_rename() {
         // overwriting non-empty directory
         let new_parent = ROOT_INODE;
         let (_, attr) = fs.create_nod(ROOT_INODE, dir_3, create_attr_from_type(FileType::Directory), false, false).unwrap();
-        let attr_2 = new_parent_attr;
+        let _attr_2 = new_parent_attr;
         let name_2 = "dir-new-parent";
         assert!(matches!(fs.rename(ROOT_INODE, dir_3, new_parent, name_2), Err(FsError::NotEmpty)));
         assert_eq!(fs.exists_by_name(ROOT_INODE, dir_3), true);
@@ -961,7 +966,7 @@ fn test_open() {
         let fs = setup.fs.as_mut().unwrap();
 
         let test_file = "test-file";
-        let (fh, attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+        let (_fh, attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
         // single read
         let fh = fs.open(attr.ino, true, false).unwrap();
         assert_ne!(fh, 0);
@@ -969,7 +974,7 @@ fn test_open() {
         let fh_2 = fs.open(attr.ino, true, false).unwrap();
         assert_ne!(fh_2, 0);
         // write and read
-        let fh_w = fs.open(attr.ino, false, true).unwrap();
+        let _fh_w = fs.open(attr.ino, false, true).unwrap();
         // ensure cannot open multiple write
         assert!(matches!(fs.open(attr.ino, false, true), Err(FsError::AlreadyOpenForWrite)));
     });
@@ -979,6 +984,6 @@ fn test_open() {
 // #[test]
 fn test_sample() {
     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_sample") }, |setup| {
-        let fs = setup.fs.as_mut().unwrap();
+        let _fs = setup.fs.as_mut().unwrap();
     });
 }

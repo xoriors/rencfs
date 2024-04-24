@@ -8,7 +8,7 @@ fn main() {
     let n = 600_000;
 // Expected value of generated key
 
-    // let mut key1 = [0u8; 20];
+    // let mut key1 = [0_u8; 20];
     // pbkdf2_hmac::<Sha256>(password, salt, n, &mut key1);
     // println!("{:?}", key1);
 

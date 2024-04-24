@@ -213,7 +213,7 @@ impl<E: BlockEncryptor, R:Read + Seek, W: Write + Seek> AesWriter<E, R, W> {
     ///
     /// [be]: https://docs.rs/rust-crypto/0.2.36/crypto/symmetriccipher/trait.BlockEncryptor.html
     pub fn new(mut writer: W, mut reader: R, enc: E, first_write: bool) -> Result<AesWriter<E, R, W>> {
-        let mut iv = vec![0u8; enc.block_size()];
+        let mut iv = vec![0_u8; enc.block_size()];
         if first_write {
             OsRng::new()?.fill_bytes(&mut iv);
             writer.write_all(&iv)?;
@@ -235,7 +235,7 @@ impl<E: BlockEncryptor, R:Read + Seek, W: Write + Seek> AesWriter<E, R, W> {
 
         self.reader.as_mut().unwrap().seek(SeekFrom::Start(self.block_size as u64))?;
         self.reader.as_mut().unwrap().seek(SeekFrom::Current((writer_size - self.block_size as u64) as i64))?;
-        let mut iv = vec![0u8; self.block_size];
+        let mut iv = vec![0_u8; self.block_size];
         self.reader.as_mut().unwrap().read_exact(&mut iv)?;
         self.enc.reset(&iv);
 
@@ -249,17 +249,17 @@ impl<E: BlockEncryptor, R:Read + Seek, W: Write + Seek> AesWriter<E, R, W> {
 
         // reset CbcDecryptor
         self.writer.as_mut().unwrap().seek(SeekFrom::Start((block_num - 1) * self.block_size as u64))?;
-        let mut iv = vec![0u8; self.block_size];
+        let mut iv = vec![0_u8; self.block_size];
         self.reader.as_mut().unwrap().seek(SeekFrom::Start((block_num - 1) * self.block_size as u64))?;
         self.reader.as_mut().unwrap().read_exact(&mut iv)?;
         self.writer.as_mut().unwrap().seek(SeekFrom::Current(iv.len() as i64))?;
         self.enc.reset(&iv);
 
         // skip remaining
-        let mut skip = vec![0u8; block_offset as usize];
+        let mut skip = vec![0_u8; block_offset as usize];
         self.reader.as_mut().unwrap().read_exact(&mut skip)?;
         let mut read_buf = RefReadBuffer::new(skip.as_slice());
-        let mut out = [0u8; BUFFER_SIZE];
+        let mut out = [0_u8; BUFFER_SIZE];
         let mut write_buf = RefWriteBuffer::new(&mut out);
 
         loop {
@@ -287,7 +287,7 @@ impl<E: BlockEncryptor, R:Read + Seek, W: Write + Seek> AesWriter<E, R, W> {
     ///     finished and padding added.
     fn encrypt_write(&mut self, buf: &[u8], eof: bool) -> Result<usize> {
         let mut read_buf = RefReadBuffer::new(buf);
-        let mut out = [0u8; BUFFER_SIZE];
+        let mut out = [0_u8; BUFFER_SIZE];
         let mut write_buf = RefWriteBuffer::new(&mut out);
         loop {
             let res = self.enc.encrypt(&mut read_buf, &mut write_buf, eof)
@@ -471,7 +471,7 @@ impl<D: BlockDecryptor, R: Read> AesReader<D, R> {
     ///
     /// [bd]: https://docs.rs/rust-crypto/0.2.36/crypto/symmetriccipher/trait.BlockDecryptor.html
     pub fn new(mut reader: R, dec: D) -> Result<AesReader<D, R>> {
-        let mut iv = vec![0u8; dec.block_size()];
+        let mut iv = vec![0_u8; dec.block_size()];
         reader.read_exact(&mut iv)?;
         Ok(AesReader {
             reader,
@@ -484,7 +484,7 @@ impl<D: BlockDecryptor, R: Read> AesReader<D, R> {
 
     /// Reads at max BUFFER_SIZE bytes, handles potential eof and returns the buffer as Vec<u8>
     fn fill_buf(&mut self) -> Result<Vec<u8>> {
-        let mut eof_buffer = vec![0u8; BUFFER_SIZE];
+        let mut eof_buffer = vec![0_u8; BUFFER_SIZE];
         let read = self.reader.read(&mut eof_buffer)?;
         self.eof = read == 0;
         eof_buffer.truncate(read);
@@ -568,12 +568,12 @@ impl<D: BlockDecryptor, R: Read + Seek> AesReader<D, R> {
         let block_offset = offset % self.block_size as u64;
         // reset CbcDecryptor
         self.reader.seek(SeekFrom::Start((block_num - 1) * self.block_size as u64))?;
-        let mut iv = vec![0u8; self.block_size];
+        let mut iv = vec![0_u8; self.block_size];
         self.reader.read_exact(&mut iv)?;
         self.dec.reset(&iv);
         self.buffer = Vec::new();
         self.eof = false;
-        let mut skip = vec![0u8; block_offset as usize];
+        let mut skip = vec![0_u8; block_offset as usize];
         self.read_exact(&mut skip)?;
         // subtract IV
         Ok(offset - 16)

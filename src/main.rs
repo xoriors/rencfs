@@ -279,12 +279,11 @@ async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Ci
     info!("Mounting FUSE filesystem");
     match EncryptedFsFuse3::new(&data_dir, &password, cipher, derive_key_hash_rounds, direct_io, suid_support) {
         Err(FsError::InvalidPassword) => {
+            error!("Cannot decrypt data, maybe the password is wrong");
             println!("Cannot decrypt data, maybe the password is wrong");
-            process::exit(1);
         }
         Err(err) => {
             error!("{err}");
-            process::exit(1);
         }
         Ok(fs) =>
             Session::new(mount_options)

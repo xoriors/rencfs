@@ -24,7 +24,7 @@ fn main() {
     let mut decryptor =
         read::Decryptor::new(src.as_slice(), Cipher::aes_128_cbc(), &key, &iv).unwrap();
 
-    let mut decrypted = [0u8; 1024]; // a buffer to decrypt into
+    let mut decrypted = [0_u8; 1024]; // a buffer to decrypt into
     let mut bytes_decrypted = 0;
 
     loop {
@@ -56,7 +56,7 @@ fn main() {
     let mut decryptor =
         read::Decryptor::new(file, Cipher::aes_128_cbc(), &key, &iv).unwrap();
 
-    let mut decrypted = [0u8; 1024]; // a buffer to decrypt into
+    let mut decrypted = [0_u8; 1024]; // a buffer to decrypt into
     let mut bytes_decrypted = 0;
     loop {
         // Just read from the `Decryptor` as if it were any other `Read` impl,

@@ -5,17 +5,20 @@ use std::fmt::Debug;
 use std::fs::{File, OpenOptions, ReadDir};
 use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
-use std::path::{PathBuf};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 
 use cryptostream::{read, write};
+use cryptostream::read::Decryptor;
 use openssl::error::ErrorStack;
 use rand::{OsRng, Rng};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
-use tracing::error;
+use tracing::{error, instrument};
+use weak_table::WeakValueHashMap;
 
 #[cfg(test)]
 mod encryptedfs_test;
@@ -224,16 +227,17 @@ pub struct DirectoryEntryPlusIterator(ReadDir, PathBuf, Cipher, Vec<u8>);
 impl Iterator for DirectoryEntryPlusIterator {
     type Item = FsResult<DirectoryEntryPlus>;
 
+    #[instrument(name = "DirectoryEntryPlusIterator::next", skip(self))]
     fn next(&mut self) -> Option<Self::Item> {
         let entry = self.0.next()?;
         if let Err(e) = entry {
-            error!("error reading directory entry: {e}");
+            error!(err = %e, "reading directory entry");
             return Some(Err(e.into()));
         }
         let entry = entry.unwrap();
         let file = File::open(entry.path());
         if let Err(e) = file {
-            error!("error opening file: {e}");
+            error!(err = %e, "opening file");
             return Some(Err(e.into()));
         }
         let file = file.unwrap();
@@ -247,20 +251,20 @@ impl Iterator for DirectoryEntryPlusIterator {
         }
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.2, &self.3));
         if let Err(e) = res {
-            error!("error deserializing directory entry: {e}");
+            error!(err = %e, "deserializing directory entry");
             return Some(Err(e.into()));
         }
         let (ino, kind): (u64, FileType) = res.unwrap();
 
         let file = File::open(&self.1.join(ino.to_string()));
         if let Err(e) = file {
-            error!("error opening file: {e}");
+            error!(err = %e, "opening file");
             return Some(Err(e.into()));
         }
         let file = file.unwrap();
         let attr = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.2, &self.3));
         if let Err(e) = attr {
-            error!("error deserializing file attr: {e}");
+            error!(err = %e, "deserializing file attr");
             return Some(Err(e.into()));
         }
         let attr = attr.unwrap();
@@ -276,12 +280,13 @@ impl Iterator for DirectoryEntryPlusIterator {
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
 pub struct EncryptedFs {
     pub(crate) data_dir: PathBuf,
-    write_handles: HashMap<u64, (TimeAndSizeFileAttr, PathBuf, u64, write::Encryptor<File>)>,
-    read_handles: HashMap<u64, (TimeAndSizeFileAttr, u64, read::Decryptor<File>)>,
+    write_handles: HashMap<u64, (TimeAndSizeFileAttr, PathBuf, u64, write::Encryptor<File>, Arc<RwLock<u8>>)>,
+    read_handles: HashMap<u64, (TimeAndSizeFileAttr, u64, read::Decryptor<File>, Arc<RwLock<u8>>)>,
     current_handle: AtomicU64,
     cipher: Cipher,
     key: Vec<u8>,
     opened_files_for_write: HashMap<u64, u64>,
+    inode_lock: Mutex<WeakValueHashMap<u64, Weak<RwLock<u8>>>>,
 }
 
 impl EncryptedFs {
@@ -298,6 +303,7 @@ impl EncryptedFs {
             cipher: cipher.clone(),
             key: read_or_create_key(path.join(SECURITY_DIR).join(KEY_ENC_FILENAME), password, &cipher, derive_key_hash_rounds)?,
             opened_files_for_write: HashMap::new(),
+            inode_lock: Mutex::new(WeakValueHashMap::new()),
         };
         let _ = fs.ensure_root_exists();
         fs.check_password()?;
@@ -522,8 +528,8 @@ impl EncryptedFs {
             let mut attr: FileAttr = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.cipher, &self.key))?;
             if self.opened_files_for_write.contains_key(&ino) {
                 // merge time info and size with any open write handles
-                if let Some((attr_handle, _, _, _)) = self.write_handles.get(&self.opened_files_for_write.get(&ino).unwrap()) {
-                    merge_attr_time_and_time_obj(&mut attr, &attr_handle);
+                if let Some((attr_handle, _, _, _, _)) = self.write_handles.get(&self.opened_files_for_write.get(&ino).unwrap()) {
+                    merge_attr_time_and_set_size_obj(&mut attr, &attr_handle);
                 } else {
                     self.opened_files_for_write.remove(&ino);
                 }
@@ -559,7 +565,7 @@ impl EncryptedFs {
         if !self.read_handles.contains_key(&handle) {
             return Err(FsError::InvalidFileHandle);
         }
-        let (attr, position, _) = self.read_handles.get(&handle).unwrap();
+        let (attr, position, _, lock) = self.read_handles.get(&handle).unwrap();
         if attr.ino != ino {
             return Err(FsError::InvalidFileHandle);
         }
@@ -575,15 +581,19 @@ impl EncryptedFs {
             return Ok(0);
         }
 
+        // lock for reading
+        let global_lock = self.inode_lock.lock().unwrap().get(&ino).unwrap();
+        let _guard = global_lock.read().unwrap();
+
         if *position != offset {
             // in order to seek we need to read the bytes from current position until the offset
             if *position > offset {
                 // if we need an offset before the current position, we can't seek back, we need
                 // to read from the beginning until the desired offset
-                self.create_read_handle(ino, handle)?;
+                self.create_read_handle(ino, handle, lock.clone())?;
             }
             if offset > 0 {
-                let (_, position, decryptor) =
+                let (_, position, decryptor, _) =
                     self.read_handles.get_mut(&handle).unwrap();
                 let mut buffer: [u8; 4096] = [0; 4096];
                 loop {
@@ -602,7 +612,7 @@ impl EncryptedFs {
                 }
             }
         }
-        let (attr, position, decryptor) =
+        let (attr, position, decryptor, _) =
             self.read_handles.get_mut(&handle).unwrap();
         if offset + buf.len() as u64 > attr.size {
             buf = &mut buf[..(attr.size - offset) as usize];
@@ -610,7 +620,7 @@ impl EncryptedFs {
         decryptor.read_exact(&mut buf)?;
         *position += buf.len() as u64;
 
-        attr.atime = std::time::SystemTime::now();
+        attr.atime = SystemTime::now();
 
         Ok(buf.len())
     }
@@ -621,20 +631,20 @@ impl EncryptedFs {
             return Ok(());
         }
         let mut valid_fh = false;
-        if let Some((attr, _, decryptor)) = self.read_handles.remove(&handle) {
+        if let Some((attr, _, decryptor, _)) = self.read_handles.remove(&handle) {
             // write attr only here to avoid serializing it multiple times while reading
             // merge time fields with existing data because it might got change while we kept the handle
             let mut attr_0 = self.get_inode(attr.ino)?;
-            merge_attr_time_and_time_obj(&mut attr_0, &attr);
+            merge_attr_time_and_set_size_obj(&mut attr_0, &attr);
             self.write_inode(&attr_0)?;
             decryptor.finish();
             valid_fh = true;
         }
-        if let Some((attr, path, _, encryptor)) = self.write_handles.remove(&handle) {
+        if let Some((attr, path, _, encryptor, _)) = self.write_handles.remove(&handle) {
             // write attr only here to avoid serializing it multiple times while writing
             // merge time fields with existing data because it might got change while we kept the handle
             let mut attr_0 = self.get_inode(attr.ino)?;
-            merge_attr_time_and_time_obj(&mut attr_0, &attr);
+            merge_attr_time_and_set_size_obj(&mut attr_0, &attr);
             self.write_inode(&attr_0)?;
             self.write_inode(&attr_0)?;
             encryptor.finish()?;
@@ -684,7 +694,7 @@ impl EncryptedFs {
         if self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
-        let (attr, _, position, _) =
+        let (attr, _, position, _, _) =
             self.write_handles.get_mut(&handle).unwrap();
         if attr.ino != ino {
             return Err(FsError::InvalidFileHandle);
@@ -694,13 +704,19 @@ impl EncryptedFs {
             return Ok(());
         }
 
+        // write lock to avoid writing from multiple threads
+        let global_lock = self.inode_lock.lock().unwrap().get(&ino).unwrap();
+        let _guard = global_lock.write().unwrap();
+
+        let mut decryptor: Option<Decryptor<File>> = None;
+
         if *position != offset {
             // in order to seek we need to recreate all stream from the beginning until the desired position of file size
             // for that we create a new encryptor into a tmp file reading from original file and writing to tmp one
             // when we release the handle we will move this tmp file to the actual file
 
             // remove handle data because we will replace it with the tmp one
-            let (attr, path, _, encryptor) =
+            let (attr, path, _, encryptor, lock) =
                 self.write_handles.remove(&handle).unwrap();
 
             // finish the current writer so we flush all data to the file
@@ -718,7 +734,7 @@ impl EncryptedFs {
             let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
             let tmp_file = OpenOptions::new().read(true).write(true).create(true).open(tmp_path.clone())?;
 
-            let mut decryptor = crypto_util::create_decryptor(in_file, &self.cipher, &self.key);
+            let mut decryptor2 = crypto_util::create_decryptor(in_file, &self.cipher, &self.key);
             let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
 
             let mut buffer: [u8; 4096] = [0; 4096];
@@ -732,8 +748,10 @@ impl EncryptedFs {
                     } else {
                         buffer.len()
                     };
-                    if read_len > 0 {
-                        decryptor.read_exact(&mut buffer[..read_len])?;
+                    if read_len == 0 {
+                        break;
+                    } else if read_len > 0 {
+                        decryptor2.read_exact(&mut buffer[..read_len])?;
                         encryptor.write_all(&buffer[..read_len])?;
                         pos_read += read_len as u64;
                         position += read_len as u64;
@@ -743,9 +761,11 @@ impl EncryptedFs {
                     }
                 }
             }
-            self.replace_handle_data(handle, attr, tmp_path, position, encryptor);
+            self.replace_handle_data(handle, attr, tmp_path, position, encryptor, lock.clone());
+
+            decryptor = Some(decryptor2);
         }
-        let (attr, _, position, encryptor) =
+        let (attr, _, position, encryptor, _) =
             self.write_handles.get_mut(&handle).unwrap();
 
         // if offset is after current position (max file size) we fill up with zeros until offset
@@ -765,22 +785,37 @@ impl EncryptedFs {
         encryptor.write_all(buf)?;
         *position += buf.len() as u64;
 
+        // todo: maybe move this to when we release the handle so if we get several writes on block after another before file end
+        // todo: we don't keep recreating the writer
+        // todo: but we need to be careful because we need to update the size of the file only when we release the handle
         // if position is before file end we copy the rest of the file from position to the end
         if *position < attr.size {
-            let mut buffer: [u8; 4096] = [0; 4096];
-            let mut decryptor = crypto_util::create_decryptor(OpenOptions::new().read(true).open(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()))?,
-                                                              &self.cipher, &self.key);
-            // move read position to the desired position
-            loop {
-                let mut read_pos = 0u64;
-                let len = min(4096, *position - read_pos) as usize;
-                decryptor.read_exact(&mut buffer[..len])?;
-                read_pos += len as u64;
-                if read_pos == *position {
-                    break;
+            let mut decryptor = if let Some(mut decryptor) = decryptor {
+                // reuse the existing decryptor
+                // skip written bytes
+                decryptor.read_exact(vec![0_u8; buf.len()].as_mut_slice())?;
+                decryptor
+            } else {
+                // create a new decryptor by reading from the beginning of the file
+                let mut decryptor = crypto_util::create_decryptor(OpenOptions::new().read(true).open(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()))?,
+                                                                  &self.cipher, &self.key);
+                // move read position to the desired position
+                let mut buffer: [u8; 4096] = [0; 4096];
+                loop {
+                    let mut read_pos = 0u64;
+                    let len = min(4096, *position - read_pos) as usize;
+                    decryptor.read_exact(&mut buffer[..len])?;
+                    read_pos += len as u64;
+                    if read_pos == *position {
+                        break;
+                    }
                 }
-            }
+
+                decryptor
+            };
+
             // copy the rest of the file
+            let mut buffer: [u8; 4096] = [0; 4096];
             loop {
                 let len = min(4096, attr.size - *position) as usize;
                 decryptor.read_exact(&mut buffer[..len])?;
@@ -795,8 +830,8 @@ impl EncryptedFs {
 
         let size = *position;
         attr.size = size;
-        attr.mtime = std::time::SystemTime::now();
-        attr.ctime = std::time::SystemTime::now();
+        attr.mtime = SystemTime::now();
+        attr.ctime = SystemTime::now();
 
         Ok(())
     }
@@ -810,7 +845,7 @@ impl EncryptedFs {
         if !self.write_handles.contains_key(&handle) {
             return Err(FsError::InvalidFileHandle);
         }
-        if let Some((_, _, _, encryptor)) = self.write_handles.get_mut(&handle) {
+        if let Some((_, _, _, encryptor, _)) = self.write_handles.get_mut(&handle) {
             encryptor.flush()?;
         }
         Ok(())
@@ -838,17 +873,22 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
 
-        let mut handle = 0u64;
+        let lock;
+        {
+            let mut map_guard = self.inode_lock.lock().unwrap();
+            lock = map_guard.entry(ino).or_insert_with(|| Arc::new(RwLock::new(0)));
+        }
+        let mut handle = 0_u64;
         if read {
             handle = self.allocate_next_handle();
-            self.create_read_handle(ino, handle)?;
+            self.create_read_handle(ino, handle, lock.clone())?;
         }
         if write {
             if self.opened_files_for_write.contains_key(&ino) {
                 return Err(FsError::AlreadyOpenForWrite);
             }
             handle = self.allocate_next_handle();
-            self.create_write_handle(ino, handle)?;
+            self.create_write_handle(ino, handle, lock)?;
         }
         Ok(handle)
     }
@@ -1025,8 +1065,8 @@ impl EncryptedFs {
     fn recreate_read_handles(&mut self) {
         let keys: Vec<u64> = self.read_handles.keys().cloned().collect();
         for key in keys {
-            let (attr, _, _) = self.read_handles.remove(&key).unwrap();
-            self.create_read_handle(attr.ino, key).unwrap();
+            let (attr, _, _, lock) = self.read_handles.remove(&key).unwrap();
+            self.create_read_handle(attr.ino, key, lock).unwrap();
         }
     }
 
@@ -1038,31 +1078,31 @@ impl EncryptedFs {
         }
     }
 
-    fn create_read_handle(&mut self, ino: u64, handle: u64) -> FsResult<u64> {
+    fn create_read_handle(&mut self, ino: u64, handle: u64, lock: Arc<RwLock<u8>>) -> FsResult<u64> {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path)?;
 
         let decryptor = crypto_util::create_decryptor(file, &self.cipher, &self.key);
         let attr = self.get_inode(ino)?;
         // save attr also to avoid loading it multiple times while reading
-        self.read_handles.insert(handle, (TimeAndSizeFileAttr::from_file_attr(&attr), 0, decryptor));
+        self.read_handles.insert(handle, (TimeAndSizeFileAttr::from_file_attr(&attr), 0, decryptor, lock));
         Ok(handle)
     }
 
-    fn create_write_handle(&mut self, ino: u64, handle: u64) -> FsResult<u64> {
+    fn create_write_handle(&mut self, ino: u64, handle: u64, lock: Arc<RwLock<u8>>) -> FsResult<u64> {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path.clone())?;
 
         let encryptor = crypto_util::create_encryptor(file, &self.cipher, &self.key);
         // save attr also to avoid loading it multiple times while writing
         let attr = self.get_inode(ino)?;
-        self.write_handles.insert(handle, (TimeAndSizeFileAttr::from_file_attr(&attr), path, 0, encryptor));
+        self.write_handles.insert(handle, (TimeAndSizeFileAttr::from_file_attr(&attr), path, 0, encryptor, lock));
         self.opened_files_for_write.insert(ino, handle);
         Ok(handle)
     }
 
-    fn replace_handle_data(&mut self, handle: u64, attr: TimeAndSizeFileAttr, new_path: PathBuf, position: u64, new_encryptor: write::Encryptor<File>) {
-        self.write_handles.insert(handle, (attr, new_path, position, new_encryptor));
+    fn replace_handle_data(&mut self, handle: u64, attr: TimeAndSizeFileAttr, new_path: PathBuf, position: u64, new_encryptor: write::Encryptor<File>, lock: Arc<RwLock<u8>>) {
+        self.write_handles.insert(handle, (attr, new_path, position, new_encryptor, lock));
     }
 
     fn ensure_root_exists(&mut self) -> FsResult<()> {
@@ -1167,28 +1207,26 @@ fn ensure_structure_created(data_dir: &PathBuf) -> FsResult<()> {
 
 fn merge_attr(attr: &mut FileAttr, perm: u16, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, uid: u32, gid: u32, size: u64, nlink: u32, flags: u32) {
     attr.perm = perm;
-    merge_attr_time_and_time(attr, atime, mtime, ctime, crtime, size);
+    merge_attr_times_and_set_size(attr, atime, mtime, ctime, crtime, size);
     attr.uid = uid;
     attr.gid = gid;
     attr.nlink = nlink;
     attr.flags = flags;
 }
 
-fn merge_attr_time_and_time(attr: &mut FileAttr, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, size: u64) {
+fn merge_attr_times_and_set_size(attr: &mut FileAttr, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, size: u64) {
     attr.atime = max(attr.atime, atime);
     attr.mtime = max(attr.mtime, mtime);
     attr.ctime = max(attr.ctime, ctime);
-    attr.crtime = max(attr.ctime, crtime);
-    attr.crtime = max(attr.ctime, crtime);
+    attr.crtime = max(attr.crtime, crtime);
     attr.size = size;
 }
 
-fn merge_attr_time_and_time_obj(attr: &mut FileAttr, from: &TimeAndSizeFileAttr) {
+fn merge_attr_time_and_set_size_obj(attr: &mut FileAttr, from: &TimeAndSizeFileAttr) {
     attr.atime = max(attr.atime, from.atime);
     attr.mtime = max(attr.mtime, from.mtime);
     attr.ctime = max(attr.ctime, from.ctime);
-    attr.crtime = max(attr.ctime, from.crtime);
-    attr.crtime = max(attr.ctime, from.crtime);
+    attr.crtime = max(attr.crtime, from.crtime);
     attr.size = from.size;
 }
 
