@@ -6,7 +6,7 @@ use std::str::FromStr;
 use clap::{Arg, ArgAction, Command, crate_version};
 use fuser::MountOption;
 use strum::IntoEnumIterator;
-use encryptedfs::encryptedfs::Cipher;
+use rencfs::encryptedfs::Cipher;
 use crate::encryptedfs_fuse::EncryptedFsFuse;
 
 mod encryptedfs_fuse;

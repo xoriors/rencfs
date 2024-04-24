@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/encryptedfs.iml" filepath="$PROJECT_DIR$/.idea/encryptedfs.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/rencfs.iml" filepath="$PROJECT_DIR$/.idea/rencfs.iml" />
     </modules>
   </component>
 </project>

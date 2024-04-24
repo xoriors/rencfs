@@ -21,8 +21,8 @@
 //! use std::ffi::OsStr;
 //! use fuse3::MountOptions;
 //! use fuse3::raw::Session;
-//! use encryptedfs::encryptedfs::Cipher;
-//! use encryptedfs::encryptedfs_fuse3::EncryptedFsFuse3;
+//! use rencfs::encryptedfs::Cipher;
+//! use rencfs::encryptedfs_fuse3::EncryptedFsFuse3;
 //!
 //! async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
 //!                   allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) {
@@ -66,7 +66,7 @@
 //! # Example
 //!
 //! ```
-//! use encryptedfs::encryptedfs::{EncryptedFs, FileAttr, FileType};
+//! use rencfs::encryptedfs::{EncryptedFs, FileAttr, FileType};
 //! const ROOT_INODE: u64 = 1;
 //! let data_dir = "/tmp/encryptedfs";
 //! let password = "password";
