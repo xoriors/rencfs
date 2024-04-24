@@ -77,6 +77,7 @@ You can check the available ciphers with `rencfs --help`.
 Default values are `ChaCha20` and `600_000` respectively.
 
 ### Log level
+
 You can specify the log level adding the `--log-level` argument to the command line. Possible values: `TRACE`, `DEBUG`, `INFO` (default), `WARN`, `ERROR`.
 
 ```bash
@@ -84,6 +85,8 @@ You can specify the log level adding the `--log-level` argument to the command l
 ```
 
 ## Start it in docker
+
+Get the image
 ```bash
 docker pull xorio42/rencfs
 ```
