@@ -1,3 +1,4 @@
+use tracing::Level;
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
@@ -16,7 +17,7 @@ use futures_util::stream::Iter;
 use libc::{EACCES, EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use parking_lot::{const_reentrant_mutex, RawMutex, RawThreadId, ReentrantMutex};
 use parking_lot::lock_api::ReentrantMutexGuard;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, instrument, trace, warn};
 
 use crate::encryptedfs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult};
 
@@ -151,7 +152,7 @@ impl EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
     fn create_nod(&self, parent: u64, mut mode: u32, req: &Request, name: &OsStr, read: bool, write: bool) -> std::result::Result<(u64, FileAttr), c_int> {
         let parent_attr = match self.get_fs().borrow_mut().get_inode(parent) {
             Err(err) => {
@@ -230,7 +231,7 @@ fn from_attr(from: FileAttr) -> fuse3::raw::prelude::FileAttr {
 }
 
 impl Filesystem for EncryptedFsFuse3 {
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
         #[cfg(feature = "abi-7-26")]
         config.add_capabilities(FUSE_HANDLE_KILLPRIV).unwrap();
@@ -243,15 +244,18 @@ impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self))]
     async fn destroy(&self, _req: Request) {}
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()))]
     async fn lookup(&self, req: Request, parent: u64, name: &OsStr) -> Result<ReplyEntry> {
+        trace!("");
+
         if name.len() > MAX_NAME_LENGTH as usize {
+            warn!(name = %name.to_str().unwrap(), "name too long");
             return Err(libc::ENAMETOOLONG.into());
         }
 
         match self.get_fs().borrow_mut().get_inode(parent) {
             Err(err) => {
-                error!(parent, name = name.to_str().unwrap(), err = %err, "not found");
+                error!(parent, err = %err, "not found");
                 return Err(ENOENT.into());
             }
             Ok(parent_attr) => {
@@ -275,7 +279,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 return Err(ENOENT.into());
             }
             _ => {
-                debug!(parent, name = name.to_str().unwrap(), "not found");
+                debug!(name = name.to_str().unwrap(), "not found");
                 return Err(ENOENT.into());
             }
         };
@@ -295,10 +299,10 @@ impl Filesystem for EncryptedFsFuse3 {
 
     #[instrument(skip(self))]
     async fn forget(&self, req: Request, inode: Inode, nlookup: u64) {
-        debug!("forget() {inode}");
+        trace!("");
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn getattr(
         &self,
         _req: Request,
@@ -325,7 +329,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn setattr(
         &self,
         req: Request,
@@ -334,7 +338,7 @@ impl Filesystem for EncryptedFsFuse3 {
         set_attr: SetAttr,
     ) -> Result<ReplyAttr>
     {
-        debug!(inode, "setattr() {set_attr:#?}");
+        debug!("{set_attr:#?}");
 
         let mut attr = if let Ok(attr) = self.get_fs().borrow_mut().get_inode(inode) { attr } else {
             error!(inode, "not found");
@@ -342,7 +346,7 @@ impl Filesystem for EncryptedFsFuse3 {
         };
 
         if let Some(mode) = set_attr.mode {
-            debug!(inode, "chmod() mode {mode:o}");
+            debug!("chmod mode={mode:o}");
             if req.uid != 0 && req.uid != attr.uid {
                 return Err(libc::EPERM.into());
             }
@@ -368,7 +372,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         if set_attr.uid.is_some() || set_attr.gid.is_some() {
-            debug!(inode, ?set_attr.uid, ?set_attr.gid, "chown()");
+            debug!(?set_attr.uid, ?set_attr.gid, "chown");
 
             if let Some(gid) = set_attr.gid {
                 // Non-root users can only change gid to a group they're in
@@ -417,7 +421,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         if let Some(size) = set_attr.size {
-            debug!(inode, size, "truncate()");
+            debug!(size, "truncate");
 
             if let Err(err) = self.get_fs().borrow_mut().truncate(inode, size) {
                 error!(err = %err);
@@ -430,7 +434,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         if let Some(atime) = set_attr.atime {
-            debug!(inode, ?atime, "utimens()");
+            debug!(?atime, "utimens");
 
             if attr.uid != req.uid
                 && !check_access(
@@ -449,7 +453,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         if let Some(mtime) = set_attr.mtime {
-            debug!(inode, ?mtime, "utimens()");
+            debug!(?mtime, "utimens");
 
             if attr.uid != req.uid
                 && !check_access(
@@ -478,7 +482,7 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
     async fn mknod(
         &self,
         req: Request,
@@ -487,7 +491,7 @@ impl Filesystem for EncryptedFsFuse3 {
         mode: u32,
         rdev: u32,
     ) -> Result<ReplyEntry> {
-        debug!(parent, name = name.to_str().unwrap(), "mode {mode:o}");
+        debug!("mode={mode:o}");
 
         let file_type = mode & libc::S_IFMT as u32;
 
@@ -496,7 +500,7 @@ impl Filesystem for EncryptedFsFuse3 {
             && file_type != libc::S_IFDIR as u32
         {
             // TODO
-            warn!("mknod() implementation is incomplete. Only supports regular files and directories. Got {mode:o}");
+            warn!("implementation is incomplete. Only supports regular files and directories. Got mode={mode:o}");
             return Err(libc::ENOSYS.into());
         }
 
@@ -516,7 +520,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
     async fn mkdir(
         &self,
         req: Request,
@@ -525,7 +529,7 @@ impl Filesystem for EncryptedFsFuse3 {
         mode: u32,
         umask: u32,
     ) -> Result<ReplyEntry> {
-        debug!(parent, name = name.to_str().unwrap(), "mode {mode:o}");
+        debug!("mode={mode:o}");
 
         let parent_attr = match self.get_fs().borrow_mut().get_inode(parent) {
             Err(err) => {
@@ -579,9 +583,9 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
     async fn unlink(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
-        debug!(parent, name = name.to_str().unwrap());
+        trace!("");
 
         let parent_attr = match self.get_fs().borrow_mut().get_inode(parent) {
             Err(err) => {
@@ -630,12 +634,12 @@ impl Filesystem for EncryptedFsFuse3 {
     }
 
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
     async fn rmdir(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
-        debug!(parent, name = name.to_str().unwrap());
+        trace!("");
 
         let parent_attr = if let Ok(attr) = self.get_fs().borrow_mut().get_inode(parent) { attr } else {
-            error!(parent, name = name.to_str().unwrap(), "not found");
+            error!(parent, "not found");
             return Err(ENOENT.into());
         };
 
@@ -680,7 +684,7 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(())
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self, name, new_name), fields(name = name.to_str().unwrap(), new_name = new_name.to_str().unwrap()), err(level = Level::DEBUG))]
     async fn rename(
         &self,
         req: Request,
@@ -772,9 +776,9 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn open(&self, req: Request, inode: Inode, flags: u32) -> Result<ReplyOpen> {
-        debug!(inode, "open()");
+        trace!("");
 
         let (access_mask, read, write) = match flags as i32 & libc::O_ACCMODE {
             libc::O_RDONLY => {
@@ -822,7 +826,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn read(
         &self,
         _req: Request,
@@ -831,7 +835,7 @@ impl Filesystem for EncryptedFsFuse3 {
         offset: u64,
         size: u32,
     ) -> Result<ReplyData> {
-        debug!("read {inode} {fh} {offset} {size}");
+        trace!("");
 
         let mut buf = vec![0; size as usize];
         match self.get_fs().borrow_mut().read(inode, offset, &mut buf, fh) {
@@ -859,7 +863,7 @@ impl Filesystem for EncryptedFsFuse3 {
         _flags: u32,
     ) -> Result<ReplyWrite>
     {
-        debug!(inode, offset, size = data.len());
+        debug!(size = data.len());
 
         if let Err(err) = self.get_fs().borrow_mut().write_all(inode, offset, data, fh) {
             error!(err = %err);
@@ -871,14 +875,14 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn statfs(&self, _req: Request, inode: u64) -> Result<ReplyStatFs> {
-        debug!(inode, "statfs()");
-        warn!("statfs() implementation is a stub");
+        trace!("");
+        warn!("implementation is a stub");
         Ok(STATFS)
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn release(
         &self,
         req: Request,
@@ -888,7 +892,7 @@ impl Filesystem for EncryptedFsFuse3 {
         lock_owner: u64,
         flush: bool,
     ) -> Result<()> {
-        debug!(inode, fh, lock_owner);
+        trace!("");
 
         if flush {
             if let Err(err) = self.get_fs().borrow_mut().flush(fh) {
@@ -918,21 +922,21 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(())
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn flush(&self, req: Request, inode: Inode, fh: u64, lock_owner: u64) -> Result<()> {
-        debug!(inode, fh, lock_owner, "flush()");
+        trace!("");
 
         if let Err(err) = self.get_fs().borrow_mut().flush(fh) {
-            error!(err = %err);
+            error!(err = %err, fh);
             return Err(EIO.into());
         }
 
         Ok(())
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn opendir(&self, req: Request, inode: Inode, flags: u32) -> Result<ReplyOpen> {
-        debug!(inode, "opendir()");
+        trace!("");
 
         let (access_mask, _read, _write) = match flags as i32 & libc::O_ACCMODE {
             libc::O_RDONLY => {
@@ -978,7 +982,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
     type DirEntryStream<'a> = Iter<Skip<DirectoryEntryIterator>> where Self: 'a;
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn readdir(
         &self,
         _req: Request,
@@ -986,7 +990,7 @@ impl Filesystem for EncryptedFsFuse3 {
         fh: u64,
         offset: i64,
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
-        debug!("readdir {inode} {fh} {offset}");
+        trace!("");
 
         let iter = match self.get_fs().borrow().read_dir(inode) {
             Err(err) => {
@@ -1002,16 +1006,16 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn releasedir(&self, req: Request, inode: Inode, fh: u64, flags: u32) -> Result<()> {
-        debug!(inode, fh, "releasedir()");
+        trace!("");
 
         Ok(())
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn access(&self, req: Request, inode: u64, mask: u32) -> Result<()> {
-        debug!(inode, mask, "access()");
+        trace!("");
 
         match self.get_fs().borrow_mut().get_inode(inode) {
             Ok(attr) => {
@@ -1025,7 +1029,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
     async fn create(
         &self,
         req: Request,
@@ -1034,7 +1038,7 @@ impl Filesystem for EncryptedFsFuse3 {
         mode: u32,
         flags: u32,
     ) -> Result<ReplyCreated> {
-        debug!(name = name.to_str().unwrap(), parent);
+        trace!("");
 
         let (read, write) = match flags as i32 & libc::O_ACCMODE {
             libc::O_RDONLY => (true, false),
@@ -1048,7 +1052,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         return match self.create_nod(parent, mode, &req, name, read, write) {
             Ok((handle, attr)) => {
-                debug!("created handle {handle}");
+                debug!(handle, "created handle");
                 // TODO: implement flags
                 Ok(ReplyCreated {
                     ttl: TTL,
@@ -1076,7 +1080,7 @@ impl Filesystem for EncryptedFsFuse3 {
         offset: u64,
         _lock_owner: u64,
     ) -> Result<ReplyDirectoryPlus<Self::DirEntryPlusStream<'_>>> {
-        debug!("readdirplus {parent} {offset}");
+        trace!("");
 
         let iter = match self.get_fs().borrow().read_dir_plus(parent) {
             Err(err) => {
@@ -1092,7 +1096,7 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn copy_file_range(
         &self,
         req: Request,
@@ -1105,7 +1109,7 @@ impl Filesystem for EncryptedFsFuse3 {
         length: u64,
         flags: u64,
     ) -> Result<ReplyCopyFileRange> {
-        debug!(fh_in, inode, off_in, fh_out, inode_out, off_out, length, "copy_file_range()");
+        trace!("");
 
         match self.get_fs().borrow_mut()
             .copy_file_range(inode, off_in, inode_out, off_out, length as usize, fh_in, fh_out) {

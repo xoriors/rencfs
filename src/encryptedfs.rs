@@ -12,6 +12,7 @@ use std::time::SystemTime;
 
 use cryptostream::{read, write};
 use cryptostream::read::Decryptor;
+use cryptostream::write::Encryptor;
 use openssl::error::ErrorStack;
 use rand::{OsRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -280,8 +281,8 @@ impl Iterator for DirectoryEntryPlusIterator {
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
 pub struct EncryptedFs {
     pub(crate) data_dir: PathBuf,
-    write_handles: HashMap<u64, (TimeAndSizeFileAttr, PathBuf, u64, write::Encryptor<File>, Arc<RwLock<u8>>)>,
-    read_handles: HashMap<u64, (TimeAndSizeFileAttr, u64, read::Decryptor<File>, Arc<RwLock<u8>>)>,
+    write_handles: HashMap<u64, (TimeAndSizeFileAttr, PathBuf, u64, Encryptor<File>, Arc<RwLock<u8>>)>,
+    read_handles: HashMap<u64, (TimeAndSizeFileAttr, u64, Decryptor<File>, Arc<RwLock<u8>>)>,
     current_handle: AtomicU64,
     cipher: Cipher,
     key: Vec<u8>,
@@ -842,13 +843,15 @@ impl EncryptedFs {
             // in case of directory or if the file was crated without being opened we don't use handle
             return Ok(());
         }
-        if !self.write_handles.contains_key(&handle) {
-            return Err(FsError::InvalidFileHandle);
+        if let Some((_, _, _, _)) = self.read_handles.get_mut(&handle) {
+            return Ok(());
         }
         if let Some((_, _, _, encryptor, _)) = self.write_handles.get_mut(&handle) {
             encryptor.flush()?;
+            return Ok(());
         }
-        Ok(())
+
+        Err(FsError::InvalidFileHandle)
     }
 
     /// Helpful when we want to copy just some portions of the file.
