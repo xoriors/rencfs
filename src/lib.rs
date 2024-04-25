@@ -70,7 +70,7 @@
 //! use rencfs::encryptedfs::{EncryptedFs, FileAttr, FileType};
 //! const ROOT_INODE: u64 = 1;
 //! let data_dir = "/tmp/rencfs_data_test";
-//! fs::remove_dir_all(data_dir).unwrap();
+//! fs::remove_dir_all(data_dir);
 //! let password = "password";
 //! let cipher = rencfs::encryptedfs::Cipher::ChaCha20;
 //! let derive_key_hash_rounds = 1000;
@@ -86,6 +86,7 @@
 //! fs.read(attr.ino, 0, &mut buf, fh).unwrap();
 //! fs.release_handle(fh).unwrap();
 //! assert_eq!(data, String::from_utf8(buf).unwrap());
+//! fs::remove_dir_all(data_dir).unwrap();
 //!
 //! fn create_attr(ino: u64, file_type: FileType) -> FileAttr {
 //!     FileAttr {
