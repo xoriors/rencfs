@@ -486,7 +486,7 @@ fn test_write_all() {
         let data = "test-42";
         fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         assert_eq!(data, read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
         let attr = fs.get_inode(attr.ino).unwrap();
         assert_eq!(data.len() as u64, attr.size);
@@ -496,7 +496,7 @@ fn test_write_all() {
         let fh = fs.open(attr.ino, false, true).unwrap();
         fs.write_all(attr.ino, 5, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         assert_eq!(data, &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs)[5..]);
 
         // offset after file end
@@ -504,7 +504,7 @@ fn test_write_all() {
         let fh = fs.open(attr.ino, false, true).unwrap();
         fs.write_all(attr.ino, 42, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         assert_eq!(format!("test-37{}37", "\0".repeat(35)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
 
         // offset before current position, several blocks
@@ -519,7 +519,7 @@ fn test_write_all() {
         let data2 = "02";
         fs.write_all(attr.ino, 8, data2.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         assert_eq!("test-01-02-42", &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
 
         // write before current position then write to the end, also check it preserves the content from
@@ -531,7 +531,7 @@ fn test_write_all() {
         fs.write_all(attr.ino, 5, b"37", fh).unwrap();
         fs.write_all(attr.ino, data.len() as u64, b"-42", fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         let new_content = read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs);
         assert_eq!("test-37-37-42", new_content);
 
@@ -557,7 +557,7 @@ fn test_read() {
         let mut buf = [0; 7];
         fs.write_all(attr.ino, 0, data, fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         let fh = fs.open(attr.ino, true, false).unwrap();
         let len = fs.read(attr.ino, 0, &mut buf, fh).unwrap();
         assert_eq!(len, 7);
@@ -573,7 +573,7 @@ fn test_read() {
         let fh = fs.open(attr.ino, false, true).unwrap();
         fs.write_all(attr.ino, 0, data, fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         let fh = fs.open(attr.ino, true, false).unwrap();
         fs.read(attr.ino, 5, &mut buf, fh).unwrap();
         assert_eq!(b"37", &buf);
@@ -589,14 +589,14 @@ fn test_read() {
         let data = "test-42";
         fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         let fh = fs.open(attr.ino, true, false).unwrap();
         fs.read(attr.ino, 0, &mut [0_u8; 1], fh).unwrap();
         let fh_2 = fs.open(attr.ino, false, true).unwrap();
         let new_data = "37";
         fs.write_all(attr.ino, 5, new_data.as_bytes(), fh_2).unwrap();
         fs.flush(fh_2).unwrap();
-        fs.release_handle(fh_2).unwrap();
+        fs.release(fh_2).unwrap();
         let mut buf = [0_u8; 2];
         fs.read(attr.ino, 5, &mut buf, fh).unwrap();
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
@@ -607,14 +607,14 @@ fn test_read() {
         let data = "test-42-37";
         fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         let fh = fs.open(attr.ino, true, false).unwrap();
         fs.read(attr.ino, 8, &mut [0_u8; 1], fh).unwrap();
         let fh_2 = fs.open(attr.ino, false, true).unwrap();
         let new_data = "37";
         fs.write_all(attr.ino, 5, new_data.as_bytes(), fh_2).unwrap();
         fs.flush(fh_2).unwrap();
-        fs.release_handle(fh_2).unwrap();
+        fs.release(fh_2).unwrap();
         let mut buf = [0_u8; 2];
         fs.read(attr.ino, 5, &mut buf, fh).unwrap();
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
@@ -625,14 +625,14 @@ fn test_read() {
         let data = "test-42-37";
         fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         let fh = fs.open(attr.ino, true, false).unwrap();
         fs.read(attr.ino, 7, &mut [0_u8; 1], fh).unwrap();
         let fh_2 = fs.open(attr.ino, false, true).unwrap();
         let new_data = "37";
         fs.write_all(attr.ino, 5, new_data.as_bytes(), fh_2).unwrap();
         fs.flush(fh_2).unwrap();
-        fs.release_handle(fh_2).unwrap();
+        fs.release(fh_2).unwrap();
         let mut buf = [0_u8; 2];
         fs.read(attr.ino, 8, &mut buf, fh).unwrap();
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
@@ -656,7 +656,7 @@ fn test_truncate() {
         let data = "test-42";
         fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
 
         // size increase, preserve opened writer content
         let fh = fs.open(attr.ino, false, true).unwrap();
@@ -665,7 +665,7 @@ fn test_truncate() {
         fs.truncate(attr.ino, 10).unwrap();
         assert_eq!(10, fs.get_inode(attr.ino).unwrap().size);
         assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
 
         // size doesn't change
         fs.truncate(attr.ino, 10).unwrap();
@@ -679,7 +679,7 @@ fn test_truncate() {
         fs.truncate(attr.ino, 4).unwrap();
         assert_eq!(4, fs.get_inode(attr.ino).unwrap().size);
         assert_eq!("37st", read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
 
         // size decrease to 0
         fs.truncate(attr.ino, 0).unwrap();
@@ -698,7 +698,7 @@ fn test_copy_file_range() {
         let data = "test-42";
         fs.write_all(attr_1.ino, 0, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         let fh = fs.open(attr_1.ino, true, false).unwrap();
         let test_file_2 = "test-file-2";
         let (fh2, attr_2) = fs.create_nod(ROOT_INODE, test_file_2, create_attr_from_type(FileType::RegularFile), true, true).unwrap();
@@ -706,7 +706,7 @@ fn test_copy_file_range() {
         // whole file
         let len = fs.copy_file_range(attr_1.ino, 0, attr_2.ino, 0, 7, fh, fh2).unwrap();
         fs.flush(fh2).unwrap();
-        fs.release_handle(fh2).unwrap();
+        fs.release(fh2).unwrap();
         assert_eq!(len, 7);
         let mut buf = [0; 7];
         let fh = fs.open(attr_2.ino, true, false).unwrap();
@@ -718,12 +718,12 @@ fn test_copy_file_range() {
         let fh = fs.open(attr_1.ino, false, true).unwrap();
         fs.write_all(attr_1.ino, 7, data_37.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
-        fs.release_handle(fh).unwrap();
+        fs.release(fh).unwrap();
         let fh = fs.open(attr_1.ino, true, false).unwrap();
         let fh_2 = fs.open(attr_2.ino, false, true).unwrap();
         let len = fs.copy_file_range(attr_1.ino, 7, attr_2.ino, 5, 2, fh, fh_2).unwrap();
         fs.flush(fh_2).unwrap();
-        fs.release_handle(fh_2).unwrap();
+        fs.release(fh_2).unwrap();
         assert_eq!(len, 2);
         let fh = fs.open(attr_2.ino, true, false).unwrap();
         fs.read(attr_2.ino, 0, &mut buf, fh).unwrap();

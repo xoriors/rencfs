@@ -915,7 +915,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         let is_write_handle = self.get_fs().borrow().is_write_handle(fh);
 
-        if let Err(err) = self.get_fs().borrow_mut().release_handle(fh) {
+        if let Err(err) = self.get_fs().borrow_mut().release(fh) {
             error!(err = %err, "release_handle");
             return Err(EIO.into());
         }

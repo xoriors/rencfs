@@ -627,7 +627,7 @@ impl EncryptedFs {
         Ok(buf.len())
     }
 
-    pub fn release_handle(&mut self, handle: u64) -> FsResult<()> {
+    pub fn release(&mut self, handle: u64) -> FsResult<()> {
         if handle == 0 {
             // in case of directory or if the file was crated without being opened we don't use handle
             return Ok(());

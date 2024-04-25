@@ -80,11 +80,11 @@
 //! let data = "Hello, world!";
 //! fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
 //! fs.flush(fh).unwrap();
-//! fs.release_handle(fh).unwrap();
+//! fs.release(fh).unwrap();
 //! let fh = fs.open(attr.ino, true, false).unwrap();
 //! let mut buf = vec![0; data.len()];
 //! fs.read(attr.ino, 0, &mut buf, fh).unwrap();
-//! fs.release_handle(fh).unwrap();
+//! fs.release(fh).unwrap();
 //! assert_eq!(data, String::from_utf8(buf).unwrap());
 //! fs::remove_dir_all(data_dir).unwrap();
 //!
