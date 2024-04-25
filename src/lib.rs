@@ -4,8 +4,8 @@
 //!
 //! # Usage
 //!
-//! It can be used a library to create an encrypted file system or mount it with FUSE.\
-//! \
+//! It can be used a library to create an encrypted file system or mount it with FUSE.
+//!
 //! This crate also contains [main.rs] file that can be used as an example on how to run the encrypted file system from the command line.
 //! Documentation for that can be found [here](https://crates.io/crates/encryptedfs).
 //!
@@ -17,14 +17,14 @@
 //!
 //! # Example
 //!
-//! ```
+//! ```no_run
 //! use std::ffi::OsStr;
 //! use fuse3::MountOptions;
 //! use fuse3::raw::Session;
 //! use rencfs::encryptedfs::Cipher;
 //! use rencfs::encryptedfs_fuse3::EncryptedFsFuse3;
 //!
-//! async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
+//! async fn run_fuse(mountpoint: &str, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
 //!                   allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) {
 //!     let uid = unsafe { libc::getuid() };
 //!     let gid = unsafe { libc::getgid() };
@@ -35,7 +35,7 @@
 //!         .allow_root(allow_root)
 //!         .allow_other(allow_other)
 //!         .clone();
-//!     let mount_path = OsStr::new(mountpoint.as_str());
+//!     let mount_path = OsStr::new(mountpoint);
 //!
 //!     Session::new(mount_options)
 //!         .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, cipher, derive_key_hash_rounds, direct_io, suid_support).unwrap(), mount_path)
@@ -66,11 +66,13 @@
 //! # Example
 //!
 //! ```
+//! use std::fs;
 //! use rencfs::encryptedfs::{EncryptedFs, FileAttr, FileType};
 //! const ROOT_INODE: u64 = 1;
-//! let data_dir = "/tmp/encryptedfs";
+//! let data_dir = "/tmp/rencfs_data_test";
+//! fs::remove_dir_all(data_dir).unwrap();
 //! let password = "password";
-//! let cipher = encryptedfs::encryptedfs::Cipher::ChaCha20;
+//! let cipher = rencfs::encryptedfs::Cipher::ChaCha20;
 //! let derive_key_hash_rounds = 1000;
 //! let mut fs = EncryptedFs::new(data_dir, password, cipher, derive_key_hash_rounds).unwrap();
 //!
@@ -78,10 +80,11 @@
 //! let data = "Hello, world!";
 //! fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
 //! fs.flush(fh).unwrap();
-//! fs.release(fh).unwrap();
-//! let fh = fs.open(ROOT_INODE, true, false).unwrap();
+//! fs.release_handle(fh).unwrap();
+//! let fh = fs.open(attr.ino, true, false).unwrap();
 //! let mut buf = vec![0; data.len()];
-//! fs.read(ROOT_INODE, 0, &mut buf, fh).unwrap();
+//! fs.read(attr.ino, 0, &mut buf, fh).unwrap();
+//! fs.release_handle(fh).unwrap();
 //! assert_eq!(data, String::from_utf8(buf).unwrap());
 //!
 //! fn create_attr(ino: u64, file_type: FileType) -> FileAttr {

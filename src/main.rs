@@ -264,13 +264,13 @@ async fn run_normal(matches: ArgMatches, data_dir: &String, cipher: Cipher, deri
         }).unwrap();
     }
 
-    run_fuse(mountpoint, &data_dir, &password, cipher, derive_key_hash_rounds,
+    run_fuse(&mountpoint, &data_dir, &password, cipher, derive_key_hash_rounds,
              matches.get_flag("allow-root"), matches.get_flag("allow-other"),
              matches.get_flag("direct-io"), matches.get_flag("suid")).await;
 }
 
 #[instrument]
-async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
+async fn run_fuse(mountpoint: &str, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
                   allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) {
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
@@ -282,10 +282,10 @@ async fn run_fuse(mountpoint: String, data_dir: &str, password: &str, cipher: Ci
         allow_root(allow_root).
         allow_other(allow_other)
         .clone();
-    let mount_path = OsStr::new(mountpoint.as_str());
+    let mount_path = OsStr::new(mountpoint);
 
     info!("Mounting FUSE filesystem");
-    match EncryptedFsFuse3::new(&data_dir, &password, cipher, derive_key_hash_rounds, direct_io, suid_support) {
+    match EncryptedFsFuse3::new(data_dir, password, cipher, derive_key_hash_rounds, direct_io, suid_support) {
         Err(FsError::InvalidPassword) => {
             error!("Cannot decrypt data, maybe the password is wrong");
             println!("Cannot decrypt data, maybe the password is wrong");
