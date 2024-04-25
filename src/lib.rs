@@ -108,5 +108,31 @@
 //!     create_attr(0, file_type)
 //! }
 //! ```
+use tracing::Level;
+use tracing_appender::non_blocking::WorkerGuard;
+
 pub mod encryptedfs;
 pub mod encryptedfs_fuse3;
+
+pub fn is_debug() -> bool {
+    #[cfg(debug_assertions)] {
+        return true;
+    }
+    return false;
+}
+
+pub fn log_init(level: Level) -> WorkerGuard {
+    let (writer, guard) = tracing_appender::non_blocking(std::io::stdout());
+    let builder = tracing_subscriber::fmt()
+        .with_writer(writer)
+        .with_max_level(level);
+    if is_debug() {
+        builder
+            .pretty()
+            .init()
+    } else {
+        builder.init();
+    }
+
+    guard
+}

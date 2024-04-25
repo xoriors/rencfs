@@ -233,6 +233,8 @@ fn from_attr(from: FileAttr) -> fuse3::raw::prelude::FileAttr {
 impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
+        trace!("");
+
         #[cfg(feature = "abi-7-26")]
         config.add_capabilities(FUSE_HANDLE_KILLPRIV).unwrap();
 
@@ -242,7 +244,9 @@ impl Filesystem for EncryptedFsFuse3 {
     }
 
     #[instrument(skip(self))]
-    async fn destroy(&self, _req: Request) {}
+    async fn destroy(&self, _req: Request) {
+        trace!("");
+    }
 
     #[instrument(skip(self, name), fields(name = name.to_str().unwrap()))]
     async fn lookup(&self, req: Request, parent: u64, name: &OsStr) -> Result<ReplyEntry> {
@@ -310,6 +314,8 @@ impl Filesystem for EncryptedFsFuse3 {
         _fh: Option<u64>,
         _flags: u32,
     ) -> Result<ReplyAttr> {
+        trace!("");
+
         match self.get_fs().borrow_mut().get_inode(inode) {
             Err(err) => {
                 error!(err = %err);
@@ -338,6 +344,7 @@ impl Filesystem for EncryptedFsFuse3 {
         set_attr: SetAttr,
     ) -> Result<ReplyAttr>
     {
+        trace!("");
         debug!("{set_attr:#?}");
 
         let mut attr = if let Ok(attr) = self.get_fs().borrow_mut().get_inode(inode) { attr } else {
@@ -491,6 +498,7 @@ impl Filesystem for EncryptedFsFuse3 {
         mode: u32,
         rdev: u32,
     ) -> Result<ReplyEntry> {
+        trace!("");
         debug!("mode={mode:o}");
 
         let file_type = mode & libc::S_IFMT as u32;
@@ -529,6 +537,7 @@ impl Filesystem for EncryptedFsFuse3 {
         mode: u32,
         umask: u32,
     ) -> Result<ReplyEntry> {
+        trace!("");
         debug!("mode={mode:o}");
 
         let parent_attr = match self.get_fs().borrow_mut().get_inode(parent) {
@@ -693,6 +702,8 @@ impl Filesystem for EncryptedFsFuse3 {
         new_parent: Inode,
         new_name: &OsStr,
     ) -> Result<()> {
+        trace!("");
+
         let attr = if let Ok(Some(attr)) = self.get_fs().borrow_mut().find_by_name(parent, name.to_str().unwrap()) {
             attr
         } else {
@@ -863,6 +874,7 @@ impl Filesystem for EncryptedFsFuse3 {
         _flags: u32,
     ) -> Result<ReplyWrite>
     {
+        trace!("");
         debug!(size = data.len());
 
         if let Err(err) = self.get_fs().borrow_mut().write_all(inode, offset, data, fh) {

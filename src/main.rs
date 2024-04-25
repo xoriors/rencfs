@@ -16,6 +16,7 @@ use tracing::{error, info, instrument, Level};
 
 use rencfs::encryptedfs::{Cipher, EncryptedFs, FsError};
 use rencfs::encryptedfs_fuse3::EncryptedFsFuse3;
+use rencfs::{is_debug, log_init};
 
 #[tokio::main]
 async fn main() {
@@ -143,12 +144,19 @@ fn async_main() {
             )
             .get_matches();
 
-        let log_level = matches.get_one::<String>("log-level").unwrap().as_str();
-        if Level::from_str(log_level).is_err() {
-            println!("Invalid log level");
-            return;
-        }
-        log_init(log_level);
+        let log_level = if is_debug() {
+            Level::TRACE
+        } else {
+            let log_level_str = matches.get_one::<String>("log-level").unwrap().as_str();
+            let log_level = Level::from_str(log_level_str);
+            if log_level.is_err() {
+                println!("Invalid log level");
+                return;
+            }
+
+            log_level.unwrap()
+        };
+        let _guard = log_init(log_level);
 
         let data_dir: String = matches
             .get_one::<String>("data-dir")
@@ -304,11 +312,4 @@ fn umount(mountpoint: &str, print_fail_status: bool) {
     if print_fail_status && !output.status.success() {
         println!("Cannot umount, maybe it was not mounted");
     }
-}
-
-fn log_init(level: &str) {
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(Level::from_str(level).unwrap())
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).unwrap();
 }
