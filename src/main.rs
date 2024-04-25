@@ -269,7 +269,7 @@ async fn run_normal(matches: ArgMatches, data_dir: &String, cipher: Cipher, deri
              matches.get_flag("direct-io"), matches.get_flag("suid")).await;
 }
 
-#[instrument]
+#[instrument(skip(password))]
 async fn run_fuse(mountpoint: &str, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
                   allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) {
     let uid = unsafe { libc::getuid() };

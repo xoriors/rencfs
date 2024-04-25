@@ -811,7 +811,7 @@ dependencies = [
 
 [[package]]
 name = "rencfs"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "base64",
  "bincode",
