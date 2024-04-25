@@ -114,6 +114,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 pub mod encryptedfs;
 pub mod encryptedfs_fuse3;
 
+#[allow(unreachable_code)]
 pub fn is_debug() -> bool {
     #[cfg(debug_assertions)] {
         return true;
