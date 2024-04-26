@@ -5,6 +5,7 @@ use rand::Rng;
 use std::io::{Read, Write};
 use base64::decode;
 use std::io;
+use openssl::sha::sha256;
 use crate::encryptedfs::Cipher;
 
 pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &Vec<u8>) -> write::Encryptor<File> {
@@ -85,6 +86,10 @@ pub fn normalize_end_encrypt_file_name(name: &str, cipher: &Cipher, key: &Vec<u8
         normalized_name = normalized_name.replace("/", "|");
     }
     normalized_name
+}
+
+pub fn hash(data: &[u8]) -> [u8; 32] {
+    sha256(data)
 }
 
 fn get_cipher(cipher: &Cipher) -> openssl::symm::Cipher {

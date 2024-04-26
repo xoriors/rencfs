@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 
-use cryptostream::{read, write};
+use cryptostream::read;
 use cryptostream::read::Decryptor;
 use cryptostream::write::Encryptor;
 use openssl::error::ErrorStack;
@@ -126,9 +126,12 @@ pub enum FsError {
 
     #[error("invalid password")]
     InvalidPassword,
+
+    #[error("invalid structure of data directory")]
+    InvalidDataDirStructure,
 }
 
-#[derive(Debug, Clone, EnumIter, EnumString, Display)]
+#[derive(Debug, Clone, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
 pub enum Cipher {
     ChaCha20,
     Aes256Gcm,
@@ -276,6 +279,12 @@ impl Iterator for DirectoryEntryPlusIterator {
             attr,
         }))
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct KeyStore {
+    key: Vec<u8>,
+    hash: [u8; 32],
 }
 
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
@@ -1073,12 +1082,12 @@ impl EncryptedFs {
         })?;
 
         let mut parent_attr = self.get_inode(parent)?;
-        parent_attr.mtime = std::time::SystemTime::now();
-        parent_attr.ctime = std::time::SystemTime::now();
+        parent_attr.mtime = SystemTime::now();
+        parent_attr.ctime = SystemTime::now();
 
         let mut new_parent_attr = self.get_inode(new_parent)?;
-        new_parent_attr.mtime = std::time::SystemTime::now();
-        new_parent_attr.ctime = std::time::SystemTime::now();
+        new_parent_attr.mtime = SystemTime::now();
+        new_parent_attr.ctime = SystemTime::now();
 
         attr.ctime = std::time::SystemTime::now();
 
@@ -1106,7 +1115,7 @@ impl EncryptedFs {
     }
 
     /// Create an encryptor using internal encryption info.
-    pub fn create_encryptor(&self, file: File) -> write::Encryptor<File> {
+    pub fn create_encryptor(&self, file: File) -> Encryptor<File> {
         crypto_util::create_encryptor(file, &self.cipher, &self.key)
     }
 
@@ -1133,21 +1142,24 @@ impl EncryptedFs {
     pub fn change_password(data_dir: &str, old_password: &str, new_password: &str, cipher: Cipher, derive_key_hash_rounds: u32) -> FsResult<()> {
         let data_dir = PathBuf::from(data_dir);
 
+        check_structure(&data_dir, false)?;
+
         // decrypt key
         let initial_key = crypto_util::derive_key(old_password, &cipher, derive_key_hash_rounds, "salt-42");
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
-        let mut decryptor = crypto_util::create_decryptor(File::open(enc_file.clone())?, &cipher, &initial_key);
-        let mut key: Vec<u8> = vec![];
-        decryptor.read_to_end(&mut key)?;
-        decryptor.finish();
+        let decryptor = crypto_util::create_decryptor(File::open(enc_file.clone())?, &cipher, &initial_key);
+        let key_store: KeyStore = bincode::deserialize_from(decryptor).map_err(|_| FsError::InvalidPassword)?;
+        // check hash
+        if key_store.hash != crypto_util::hash(key_store.key.as_slice()) {
+            return Err(FsError::InvalidPassword);
+        }
 
         // encrypt it with new key derived from new password
         let new_key = crypto_util::derive_key(new_password, &cipher, derive_key_hash_rounds, "salt-42");
         fs::remove_file(enc_file.clone())?;
         let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
                                                           &cipher, &new_key);
-        encryptor.write_all(&key)?;
-        encryptor.finish()?;
+        bincode::serialize_into(&mut encryptor, &key_store)?;
 
         Ok(())
     }
@@ -1190,11 +1202,12 @@ impl EncryptedFs {
     }
 
     fn check_password(&mut self) -> FsResult<()> {
-        match self.get_inode(ROOT_INODE) {
-            Ok(_) => Ok(()),
-            Err(FsError::SerializeError(_)) => Err(FsError::InvalidPassword),
-            Err(err) => Err(err),
-        }
+        self.get_inode(ROOT_INODE).map_err(|err| match err {
+            FsError::SerializeError(_) => FsError::InvalidPassword,
+            _ => err
+        })?;
+
+        Ok(())
     }
 
     fn create_read_handle(&mut self, ino: u64, attr: Option<TimeAndSizeFileAttr>, handle: u64, lock: Arc<RwLock<u8>>) -> FsResult<u64> {
@@ -1308,7 +1321,9 @@ impl EncryptedFs {
 }
 
 fn ensure_structure_created(data_dir: &PathBuf) -> FsResult<()> {
-    if !data_dir.exists() {
+    if data_dir.exists() {
+        check_structure(data_dir, true)?;
+    } else {
         fs::create_dir_all(&data_dir)?;
     }
 
@@ -1319,6 +1334,29 @@ fn ensure_structure_created(data_dir: &PathBuf) -> FsResult<()> {
         if !path.exists() {
             fs::create_dir_all(path)?;
         }
+    }
+
+    Ok(())
+}
+
+fn check_structure(data_dir: &PathBuf, ignore_empty: bool) -> FsResult<()> {
+    if !data_dir.exists() || !data_dir.is_dir() {
+        return Err(FsError::InvalidDataDirStructure);
+    }
+    let mut vec1 = fs::read_dir(data_dir)?.into_iter().map(|dir| dir.unwrap().file_name().to_string_lossy().to_string()).collect::<Vec<String>>();
+    if vec1.len() == 0 && ignore_empty {
+        return Ok(());
+    }
+    if vec1.len() != 3 {
+        return Err(FsError::InvalidDataDirStructure);
+    }
+    // make sure existing structure is ok
+    vec1.sort();
+    let mut vec2 = vec![INODES_DIR, CONTENTS_DIR, SECURITY_DIR];
+    vec2.sort();
+    if vec1 != vec2 ||
+        !data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME).is_file() {
+        return Err(FsError::InvalidDataDirStructure);
     }
 
     Ok(())
@@ -1351,8 +1389,19 @@ fn merge_attr_time_and_set_size_obj(attr: &mut FileAttr, from: &TimeAndSizeFileA
 
 fn read_or_create_key(path: PathBuf, password: &str, cipher: &Cipher, rounds: u32) -> FsResult<Vec<u8>> {
     let derived_key = crypto_util::derive_key(password, cipher, rounds, "salt-42");
-    if !path.exists() {
+    if path.exists() {
+        // read key
+
+        let decryptor = crypto_util::create_decryptor(File::open(path)?, cipher, &derived_key);
+        let key_store: KeyStore = bincode::deserialize_from(decryptor).map_err(|_| FsError::InvalidPassword)?;
+        // check hash
+        if key_store.hash != crypto_util::hash(key_store.key.as_slice()) {
+            return Err(FsError::InvalidPassword);
+        }
+        Ok(key_store.key)
+    } else {
         // first time, create a random key and encrypt it with the derived key from password
+
         let mut key: Vec<u8> = vec![];
         let key_len = match cipher {
             Cipher::ChaCha20 => 32,
@@ -1360,16 +1409,13 @@ fn read_or_create_key(path: PathBuf, password: &str, cipher: &Cipher, rounds: u3
         };
         key.resize(key_len, 0);
         OsRng::new()?.fill_bytes(&mut key);
+        let key_store = KeyStore {
+            key: key.clone(),
+            hash: crypto_util::hash(key.as_slice()),
+        };
         let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path.clone())?,
                                                           cipher, &derived_key);
-        encryptor.write_all(&key)?;
-        encryptor.finish()?;
-
-        return Ok(key);
+        bincode::serialize_into(&mut encryptor, &key_store)?;
+        Ok(key)
     }
-    let mut decryptor = crypto_util::create_decryptor(File::open(path)?, cipher, &derived_key);
-    let mut key: Vec<u8> = vec![];
-    decryptor.read_to_end(&mut key)?;
-    decryptor.finish();
-    Ok(key)
 }
