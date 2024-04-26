@@ -13,8 +13,10 @@ use std::time::SystemTime;
 use cryptostream::read;
 use cryptostream::read::Decryptor;
 use cryptostream::write::Encryptor;
+use keyring::Entry;
 use openssl::error::ErrorStack;
 use rand::{OsRng, Rng};
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
@@ -129,6 +131,12 @@ pub enum FsError {
 
     #[error("invalid structure of data directory")]
     InvalidDataDirStructure,
+
+    #[error("crypto error: {0}")]
+    Crypto(#[from] crypto_util::CryptoError),
+
+    #[error("keyring error: {0}")]
+    Keyring(#[from] keyring::Error),
 }
 
 #[derive(Debug, Clone, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
@@ -294,13 +302,12 @@ pub struct EncryptedFs {
     read_handles: HashMap<u64, (TimeAndSizeFileAttr, u64, Decryptor<File>, Arc<RwLock<u8>>)>,
     current_handle: AtomicU64,
     cipher: Cipher,
-    key: Vec<u8>,
     opened_files_for_write: HashMap<u64, u64>,
     inode_lock: Mutex<WeakValueHashMap<u64, Weak<RwLock<u8>>>>,
 }
 
 impl EncryptedFs {
-    pub fn new(data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32) -> FsResult<Self> {
+    pub fn new(data_dir: &str, password: SecretString, cipher: Cipher) -> FsResult<Self> {
         let path = PathBuf::from(&data_dir);
 
         ensure_structure_created(&path)?;
@@ -311,7 +318,6 @@ impl EncryptedFs {
             read_handles: HashMap::new(),
             current_handle: AtomicU64::new(1),
             cipher: cipher.clone(),
-            key: read_or_create_key(path.join(SECURITY_DIR).join(KEY_ENC_FILENAME), password, &cipher, derive_key_hash_rounds)?,
             opened_files_for_write: HashMap::new(),
             inode_lock: Mutex::new(WeakValueHashMap::new()),
         };
@@ -812,8 +818,8 @@ impl EncryptedFs {
                                                                   &self.cipher, &self.key);
                 // move read position to the desired position
                 let mut buffer: [u8; 4096] = [0; 4096];
+                let mut read_pos = 0u64;
                 loop {
-                    let mut read_pos = 0u64;
                     let len = min(4096, *position - read_pos) as usize;
                     decryptor.read_exact(&mut buffer[..len])?;
                     read_pos += len as u64;
@@ -1139,13 +1145,14 @@ impl EncryptedFs {
         crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key)
     }
     /// Change the password of the filesystem used to access the encryption key.
-    pub fn change_password(data_dir: &str, old_password: &str, new_password: &str, cipher: Cipher, derive_key_hash_rounds: u32) -> FsResult<()> {
+    pub fn change_password(data_dir: &str, old_password: SecretString, new_password: SecretString, cipher: Cipher) -> FsResult<()> {
         let data_dir = PathBuf::from(data_dir);
 
         check_structure(&data_dir, false)?;
 
         // decrypt key
-        let initial_key = crypto_util::derive_key(old_password, &cipher, derive_key_hash_rounds, "salt-42");
+        let salt = crypto_util::hash(old_password.expose_secret().as_bytes()).to_vec();
+        let initial_key = crypto_util::derive_key(old_password, &cipher, salt)?;
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
         let decryptor = crypto_util::create_decryptor(File::open(enc_file.clone())?, &cipher, &initial_key);
         let key_store: KeyStore = bincode::deserialize_from(decryptor).map_err(|_| FsError::InvalidPassword)?;
@@ -1155,7 +1162,8 @@ impl EncryptedFs {
         }
 
         // encrypt it with new key derived from new password
-        let new_key = crypto_util::derive_key(new_password, &cipher, derive_key_hash_rounds, "salt-42");
+        let salt = crypto_util::hash(new_password.expose_secret().as_bytes()).to_vec();
+        let new_key = crypto_util::derive_key(new_password, &cipher, salt)?;
         fs::remove_file(enc_file.clone())?;
         let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
                                                           &cipher, &new_key);
@@ -1318,6 +1326,11 @@ impl EncryptedFs {
             return ino;
         }
     }
+
+    fn get_encryption_key(&self) -> Vec<u8> {
+
+        read_or_create_key(self.data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME), password, &self.cipher)?
+    }
 }
 
 fn ensure_structure_created(data_dir: &PathBuf) -> FsResult<()> {
@@ -1387,8 +1400,9 @@ fn merge_attr_time_and_set_size_obj(attr: &mut FileAttr, from: &TimeAndSizeFileA
     attr.size = from.size;
 }
 
-fn read_or_create_key(path: PathBuf, password: &str, cipher: &Cipher, rounds: u32) -> FsResult<Vec<u8>> {
-    let derived_key = crypto_util::derive_key(password, cipher, rounds, "salt-42");
+fn read_or_create_key(path: PathBuf, password: SecretString, cipher: &Cipher) -> FsResult<Vec<u8>> {
+    let salt = crypto_util::hash(password.expose_secret().as_bytes()).to_vec();
+    let derived_key = crypto_util::derive_key(password, cipher, salt)?;
     if path.exists() {
         // read key
 

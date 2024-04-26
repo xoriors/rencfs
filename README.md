@@ -66,12 +66,12 @@ It will prompt you to enter the old password and then the new password.
 
 ### Encryption info
 
-You can specify the encryption algorithm and derive key hash rounds adding these arguments to the command line
+You can specify the encryption algorithm adding this argument to the command line
 
 ```bash
---cipher CIPHER --derive-key-hash-rounds ROUNDS
+--cipher CIPHER
 ```
-Where `CIPHER` is the encryption algorithm and `ROUNDS` is the number of rounds to derive the key hash.\
+Where `CIPHER` is the encryption algorithm.\
 You can check the available ciphers with `rencfs --help`.
 
 Default values are `ChaCha20` and `600_000` respectively.

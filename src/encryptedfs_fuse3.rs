@@ -17,6 +17,7 @@ use futures_util::stream::Iter;
 use libc::{EACCES, EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use parking_lot::{const_reentrant_mutex, RawMutex, RawThreadId, ReentrantMutex};
 use parking_lot::lock_api::ReentrantMutexGuard;
+use secrecy::SecretString;
 use tracing::{debug, error, instrument, trace, warn};
 
 use crate::encryptedfs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult};
@@ -122,18 +123,18 @@ pub struct EncryptedFsFuse3 {
 }
 
 impl EncryptedFsFuse3 {
-    pub fn new(data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
+    pub fn new(data_dir: &str, password: SecretString, cipher: Cipher,
                direct_io: bool, _suid_support: bool) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")] {
             Ok(Self {
-                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password, cipher, derive_key_hash_rounds)?)),
+                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password, cipher)?)),
                 direct_io,
                 suid_support: _suid_support,
             })
         }
         #[cfg(not(feature = "abi-7-26"))] {
             Ok(Self {
-                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password, cipher, derive_key_hash_rounds)?)),
+                fs: const_reentrant_mutex(RefCell::new(EncryptedFs::new(data_dir, password, cipher)?)),
                 direct_io,
                 suid_support: false,
             })
@@ -248,7 +249,7 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
     async fn lookup(&self, req: Request, parent: u64, name: &OsStr) -> Result<ReplyEntry> {
         trace!("");
 
@@ -862,7 +863,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self, data))]
+    #[instrument(skip(self, data), fields(datas.size = data.len()), err(level = Level::DEBUG))]
     async fn write(
         &self,
         _req: Request,

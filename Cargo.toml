@@ -33,7 +33,6 @@ tracing-subscriber = "0.3"
 tracing-appender = "0.2.3"
 ctrlc = { version = "3.1.9" , features = ["termination"]}
 parking_lot = "0.12.1"
-pbkdf2 = "0.13.0-pre.0"
 sha2 = "0.11.0-pre.3"
 strum = "0.26.2"
 strum_macros = "0.26.2"
@@ -41,6 +40,9 @@ rpassword = "7.3.1"
 cryptostream = "0.3.2"
 weak-table = "0.3.2"
 anyhow = "1.0.82"
+argon2 = "0.5.3"
+keyring = "2.3.2"
+secrecy = "0.8.0"
 
 [package.metadata.aur]
 depends = ["fuse3"]

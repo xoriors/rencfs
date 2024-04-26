@@ -5,9 +5,18 @@ use rand::Rng;
 use std::io::{Read, Write};
 use base64::decode;
 use std::io;
+use argon2::Argon2;
 use openssl::sha::sha256;
+use secrecy::{ExposeSecret, SecretString};
+use thiserror::Error;
+use tracing::instrument;
 use crate::encryptedfs::Cipher;
 
+#[derive(Debug, Error)]
+pub enum CryptoError {
+    #[error("crypto error: {0}")]
+    Generic(String),
+}
 pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &Vec<u8>) -> write::Encryptor<File> {
     let mut iv: Vec<u8> = vec![0; 16];
     if file.metadata().unwrap().size() == 0 {
@@ -68,15 +77,17 @@ pub fn decrypt_and_unnormalize_end_file_name(name: &str, cipher: &Cipher, key: &
     name.to_string()
 }
 
-pub fn derive_key(password: &str, cipher: &Cipher, rounds: u32, salt: &str) -> Vec<u8> {
+#[instrument(skip(password, salt))]
+pub fn derive_key(password: SecretString, cipher: &Cipher, salt: Vec<u8>) -> Result<Vec<u8>, CryptoError> {
     let mut dk = vec![];
     let key_len =match cipher {
         Cipher::ChaCha20 => 32,
         Cipher::Aes256Gcm => 32,
     };
     dk.resize(key_len, 0);
-    pbkdf2::pbkdf2_hmac::<sha2::Sha256>(password.as_bytes(), salt.as_bytes(), rounds, &mut dk);
-    dk
+    Argon2::default().hash_password_into(password.expose_secret().as_bytes(), salt.as_slice(), &mut dk)
+        .map_err(|err| CryptoError::Generic(err.to_string()))?;
+    Ok(dk)
 }
 
 pub fn normalize_end_encrypt_file_name(name: &str, cipher: &Cipher, key: &Vec<u8>) -> String {

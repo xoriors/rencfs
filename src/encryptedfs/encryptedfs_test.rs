@@ -27,7 +27,7 @@ fn setup(setup: TestSetup) -> SetupResult {
         fs::remove_dir_all(path).unwrap();
     }
     fs::create_dir_all(path).unwrap();
-    let fs = EncryptedFs::new(path, "pass-42", Cipher::ChaCha20, 0).unwrap();
+    let fs = EncryptedFs::new(path, "pass-42", Cipher::ChaCha20).unwrap();
 
     SetupResult {
         fs: Some(fs),

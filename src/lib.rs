@@ -21,7 +21,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     run_fuse("/tmp/rencfs", "/tmp/rencfs_data", "password", Cipher::ChaCha20, 1000, false, false, false, false).await.unwrap();
+//!     run_fuse("/tmp/rencfs", "/tmp/rencfs_data", "password", Cipher::ChaCha20, false, false, false, false).await.unwrap();
 //! }
 //! ```
 //!
@@ -33,11 +33,11 @@
 //! use std::ffi::OsStr;
 //! use fuse3::MountOptions;
 //! use fuse3::raw::Session;
+//! use secrecy::SecretString;
 //! use rencfs::encryptedfs::Cipher;
 //! use rencfs::encryptedfs_fuse3::EncryptedFsFuse3;
 //!
-//! async fn run_fuse(mountpoint: &str, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
-//!                   allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) {
+//! async fn run_fuse(mountpoint: &str, data_dir: &str, password: SecretString, cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) {
 //!     let uid = unsafe { libc::getuid() };
 //!     let gid = unsafe { libc::getgid() };
 //!
@@ -50,7 +50,7 @@
 //!     let mount_path = OsStr::new(mountpoint);
 //!
 //!     Session::new(mount_options)
-//!         .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, &password, cipher, derive_key_hash_rounds, direct_io, suid_support).unwrap(), mount_path)
+//!         .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, password, cipher, direct_io, suid_support).unwrap(), mount_path)
 //!         .await
 //!         .unwrap()
 //!         .await
@@ -61,7 +61,6 @@
 //! - `data_dir`: The directory where the file system will be mounted.
 //! - `password`: The password to encrypt/decrypt the data.
 //! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](Cipher).
-//! - `derive_key_hash_rounds`: The number of rounds to derive the key hash.
 //! - `allow_root`: Allow root to access the file system.
 //! - `allow_other`: Allow other users to access the file system.
 //! - `direct_io`: Use direct I/O.
@@ -73,7 +72,6 @@
 //! - `data_dir`: The directory where the file system will be mounted.
 //! - `password`: The password to encrypt/decrypt the data.
 //! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](Cipher).
-//! - `derive_key_hash_rounds`: The number of rounds to derive the key hash.
 //!
 //! ### Example
 //!
@@ -85,8 +83,7 @@
 //! let  _ = fs::remove_dir_all(data_dir);
 //! let password = "password";
 //! let cipher = rencfs::encryptedfs::Cipher::ChaCha20;
-//! let derive_key_hash_rounds = 1000;
-//! let mut fs = EncryptedFs::new(data_dir, password, cipher, derive_key_hash_rounds).unwrap();
+//! let mut fs = EncryptedFs::new(data_dir, password, cipher ).unwrap();
 //!
 //! let (fh, attr) = fs.create_nod(ROOT_INODE, "file1", create_attr(FileType::RegularFile), false, true).unwrap();
 //! let data = "Hello, world!";
@@ -127,7 +124,7 @@
 //! use rencfs::encryptedfs::{EncryptedFs, FsError, FsResult};
 //! use rencfs::encryptedfs::Cipher;
 //!
-//! match EncryptedFs::change_password("/tmp/rencfs_data", "old-pass", "new-pass", Cipher::ChaCha20, 1000) {
+//! match EncryptedFs::change_password("/tmp/rencfs_data", "old-pass", "new-pass", Cipher::ChaCha20 ) {
 //!     Ok(_) => println!("Password changed successfully"),
 //!     Err(FsError::InvalidPassword) => println!("Invalid old password"),
 //!     Err(FsError::InvalidDataDirStructure) => println!("Invalid structure of data directory"),
@@ -159,7 +156,7 @@
 //!     return;
 //! }
 //! println!("Changing password...");
-//! match EncryptedFs::change_password("/tmp/rencfs_data", "old-pass", "new-pass", Cipher::ChaCha20, 1000) {
+//! match EncryptedFs::change_password("/tmp/rencfs_data", "old-pass", "new-pass", Cipher::ChaCha20 ) {
 //!     Ok(_) => println!("Password changed successfully"),
 //!     Err(FsError::InvalidPassword) => println!("Invalid old password"),
 //!     Err(FsError::InvalidDataDirStructure) => println!("Invalid structure of data directory"),
@@ -172,6 +169,8 @@ use tracing_appender::non_blocking::WorkerGuard;
 use fuse3::MountOptions;
 use std::ffi::OsStr;
 use fuse3::raw::Session;
+use keyring::Entry;
+use secrecy::{ExposeSecret, SecretString};
 use crate::encryptedfs::Cipher;
 use crate::encryptedfs_fuse3::EncryptedFsFuse3;
 
@@ -203,8 +202,7 @@ pub fn log_init(level: Level) -> WorkerGuard {
 }
 
 #[instrument(skip(password))]
-pub async fn run_fuse(mountpoint: &str, data_dir: &str, password: &str, cipher: Cipher, derive_key_hash_rounds: u32,
-                      allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
+pub async fn run_fuse(mountpoint: &str, data_dir: &str, password: SecretString, cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
 
@@ -219,9 +217,19 @@ pub async fn run_fuse(mountpoint: &str, data_dir: &str, password: &str, cipher: 
 
     info!("Checking password and mounting FUSE filesystem");
     Session::new(mount_options)
-        .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, password, cipher, derive_key_hash_rounds, direct_io, suid_support)?, mount_path)
+        .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, password, cipher, direct_io, suid_support)?, mount_path)
         .await?
         .await?;
 
     Ok(())
+}
+
+pub(crate) fn save_password_to_keyring(password: SecretString) {
+    let entry = Entry::new("rencfs", "encrypted_fs_pass")?;
+    entry.set_password(password.expose_secret())?;
+}
+
+pub(crate) fn delete_password_from_keyring() -> Result<(), keyring::Error> {
+    let entry = Entry::new("rencfs", "encrypted_fs_pass")?;
+    entry.delete_password()
 }
