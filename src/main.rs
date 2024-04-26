@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
             if let Some(ExitStatusError::Failure(code)) = err2 {
                 process::exit(*code);
             }
-            error!(err = %err);
+            error!("{err}");
             drop(guard);
             Err(err)
         }
