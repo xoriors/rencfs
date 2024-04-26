@@ -172,7 +172,6 @@ use tracing_appender::non_blocking::WorkerGuard;
 use fuse3::MountOptions;
 use std::ffi::OsStr;
 use fuse3::raw::Session;
-use encryptedfs::EncryptedFs;
 use crate::encryptedfs::Cipher;
 use crate::encryptedfs_fuse3::EncryptedFsFuse3;
 

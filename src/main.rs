@@ -1,22 +1,18 @@
 use std::{env, io, panic, process};
-use std::ffi::OsStr;
 use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::{Arg, ArgAction, ArgMatches, Command, crate_version};
 use ctrlc::set_handler;
-use fuse3::MountOptions;
-use fuse3::raw::prelude::*;
 use rpassword::read_password;
 use strum::IntoEnumIterator;
 use tokio::{fs, task};
-use tracing::{error, info, instrument, Level, warn};
+use tracing::{error, info, Level, warn};
 use anyhow::Result;
 use thiserror::Error;
 
 use rencfs::encryptedfs::{Cipher, EncryptedFs, FsError};
-use rencfs::encryptedfs_fuse3::EncryptedFsFuse3;
 use rencfs::{is_debug, log_init};
 
 #[derive(Debug, Error)]
@@ -27,6 +23,22 @@ enum ExitStatusError {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let matches = get_cli_args();
+
+    let log_level = if is_debug() {
+        Level::TRACE
+    } else {
+        let log_level_str = matches.get_one::<String>("log-level").unwrap().as_str();
+        let log_level = Level::from_str(log_level_str);
+        if log_level.is_err() {
+            error!("Invalid log level");
+            return Ok(());
+        }
+
+        log_level.unwrap()
+    };
+    let guard = log_init(log_level);
+
     let res = task::spawn_blocking(|| {
         panic::catch_unwind(|| {
             let handle = tokio::runtime::Handle::current();
@@ -42,20 +54,24 @@ async fn main() -> Result<()> {
             if let Some(ExitStatusError::Failure(code)) = err2 {
                 process::exit(*code);
             }
+            error!(err = %err);
+            drop(guard);
             Err(err)
         }
         Ok(Err(err)) => {
-            eprintln!("{err:#?}");
+            error!("{err:#?}");
+            drop(guard);
             panic!("{err:#?}");
         }
         Err(err) => {
-            eprintln!("{err}");
+            error!("{err}");
+            drop(guard);
             panic!("{err}");
         }
     }
 }
 
-async fn async_main() -> Result<()> {
+fn get_cli_args() -> ArgMatches {
     let matches = Command::new("RencFs")
         .version(crate_version!())
         .author("Radu Marias")
@@ -155,20 +171,11 @@ async fn async_main() -> Result<()> {
                 .help("Log level, possible values: TRACE, DEBUG, INFO, WARN, ERROR"),
         )
         .get_matches();
+    matches
+}
 
-    let log_level = if is_debug() {
-        Level::TRACE
-    } else {
-        let log_level_str = matches.get_one::<String>("log-level").unwrap().as_str();
-        let log_level = Level::from_str(log_level_str);
-        if log_level.is_err() {
-            error!("Invalid log level");
-            return Ok(());
-        }
-
-        log_level.unwrap()
-    };
-    let _guard = log_init(log_level);
+async fn async_main() -> Result<()> {
+    let matches = get_cli_args();
 
     let data_dir: String = matches
         .get_one::<String>("data-dir")
