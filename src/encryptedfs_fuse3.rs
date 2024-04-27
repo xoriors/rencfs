@@ -811,28 +811,31 @@ impl Filesystem for EncryptedFsFuse3 {
             }
         };
 
-        let attr = match self.get_fs().borrow_mut().get_inode(inode) {
-            Ok(attr) => attr,
-            Err(err) => {
-                error!(err = %err);
-                return Err(EBADF.into());
-            }
-        };
+        let create = flags & libc::O_CREAT as u32 != 0;
+        let truncate = flags & libc::O_TRUNC as u32 != 0;
+        let append = flags & libc::O_APPEND as u32 != 0;
+
+        let attr = self.get_fs().borrow_mut().get_inode(inode).map_err(|err| {
+            error!(err = %err);
+            EBADF
+        })?;
 
         if check_access(attr.uid, attr.gid, attr.perm, req.uid, req.gid, access_mask) {
-            let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
-            match self.get_fs().borrow_mut().open(inode, read, write) {
-                Err(err) => {
+            if truncate {
+                self.get_fs().borrow_mut().truncate(attr.ino, 0).map_err(|err| {
                     error!(err = %err);
-                    return Err(EBADF.into());
-                }
-                Ok(fh) => {
-                    debug!(fh, "opened handle");
-                    Ok(ReplyOpen { fh, flags: open_flags })
-                }
+                    EIO
+                })?;
             }
+            let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
+            let fh = self.get_fs().borrow_mut().open(inode, read, write).map_err(|err| {
+                error!(err = %err);
+                EBADF
+            })?;
+            debug!(fh, "opened handle");
+            Ok(ReplyOpen { fh, flags: open_flags })
         } else {
-            return Err(EACCES.into());
+            Err(EACCES.into())
         }
     }
 
