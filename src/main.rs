@@ -146,14 +146,14 @@ fn get_cli_args() -> ArgMatches {
                 .short('i')
                 .action(ArgAction::SetTrue)
                 .requires("mount-point")
-                .help("Mount FUSE with direct IO"),
+                .help("Use direct I/O (bypass page cache for an open file)"),
         )
         .arg(
             Arg::new("suid")
                 .long("suid")
                 .short('s')
                 .action(ArgAction::SetTrue)
-                .help("Enable setuid support when run as root"),
+                .help("If it should allow setting SUID and SGID when files are created. Default is false and it will unset those flags when creating files"),
         )
         .arg(
             Arg::new("change-password")

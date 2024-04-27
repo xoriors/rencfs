@@ -65,8 +65,8 @@
 //! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](Cipher).
 //! - `allow_root`: Allow root to access the file system.
 //! - `allow_other`: Allow other users to access the file system.
-//! - `direct_io`: Use direct I/O.
-//! - `suid_support`: Enable suid support.
+//! - `direct_io`: Use direct I/O (bypass page cache for open files).
+//! - `suid_support`: If it should allow setting `SUID` and `SGID` when files are created. On `false` it will unset those flags when creating files.
 //!
 //! ## Or directly work with [EncryptedFs](EncryptedFs)
 //!
