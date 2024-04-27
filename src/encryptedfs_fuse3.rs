@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::iter::Skip;
 use std::num::NonZeroU32;
 use std::os::raw::c_int;
+use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
@@ -17,7 +18,7 @@ use futures_util::stream::Iter;
 use libc::{EACCES, EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use parking_lot::{const_reentrant_mutex, RawMutex, RawThreadId, ReentrantMutex};
 use parking_lot::lock_api::ReentrantMutexGuard;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, error, instrument, trace, warn};
 
 use crate::encryptedfs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult};
@@ -61,7 +62,7 @@ impl Iterator for DirectoryEntryIterator {
                 Some(Ok(DirectoryEntry {
                     inode: entry.ino,
                     kind,
-                    name: OsString::from(entry.name),
+                    name: OsString::from(entry.name.expose_secret()),
                     offset: self.1 as i64,
                 }))
             }
@@ -96,7 +97,7 @@ impl Iterator for DirectoryEntryPlusIterator {
                     inode: entry.ino,
                     generation: 0,
                     kind,
-                    name: OsString::from(entry.name),
+                    name: OsString::from(entry.name.expose_secret()),
                     offset: self.1 as i64,
                     attr: from_attr(entry.attr),
                     entry_ttl: TTL,
@@ -188,7 +189,7 @@ impl EncryptedFsFuse3 {
         attr.uid = req.uid;
         attr.gid = creation_gid(&parent_attr, req.gid);
 
-        match self.get_fs().borrow_mut().create_nod(parent, name.to_str().unwrap(), attr, read, write) {
+        match self.get_fs().borrow_mut().create_nod(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap(), attr, read, write) {
             Ok((fh, attr)) => Ok((fh, attr)),
             Err(err) => {
                 error!(err = %err);
@@ -274,7 +275,7 @@ impl Filesystem for EncryptedFsFuse3 {
             }
         }
 
-        let attr = match self.get_fs().borrow_mut().find_by_name(parent, name.to_str().unwrap()) {
+        let attr = match self.get_fs().borrow_mut().find_by_name(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap()) {
             Ok(Some(attr)) => attr,
             Err(err) => {
                 error!(err = %err);
@@ -575,7 +576,7 @@ impl Filesystem for EncryptedFsFuse3 {
         attr.uid = req.uid;
         attr.gid = creation_gid(&parent_attr, req.gid);
 
-        match self.get_fs().borrow_mut().create_nod(parent, name.to_str().unwrap(), attr, false, false) {
+        match self.get_fs().borrow_mut().create_nod(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap(), attr, false, false) {
             Err(err) => {
                 error!(err = %err);
                 return Err(ENOENT.into());
@@ -613,7 +614,7 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(EACCES.into());
         }
 
-        let attr = match self.get_fs().borrow_mut().find_by_name(parent, name.to_str().unwrap()) {
+        let attr = match self.get_fs().borrow_mut().find_by_name(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap()) {
             Ok(Some(attr)) => attr,
             Err(err) => {
                 error!(err = %err);
@@ -632,7 +633,7 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(EACCES.into());
         }
 
-        if let Err(err) = self.get_fs().borrow_mut().remove_file(parent, name.to_str().unwrap()) {
+        if let Err(err) = self.get_fs().borrow_mut().remove_file(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap()) {
             error!(err = %err);
             return Err(ENOENT.into());
         }
@@ -661,7 +662,7 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(EACCES.into());
         }
 
-        let attr = match self.get_fs().borrow_mut().find_by_name(parent, name.to_str().unwrap()) {
+        let attr = match self.get_fs().borrow_mut().find_by_name(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap()) {
             Ok(Some(attr)) => attr,
             _ => {
                 error!(parent, name = name.to_str().unwrap());
@@ -683,7 +684,7 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(EACCES.into());
         }
 
-        if let Err(err) = self.get_fs().borrow_mut().remove_dir(parent, name.to_str().unwrap()) {
+        if let Err(err) = self.get_fs().borrow_mut().remove_dir(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap()) {
             error!(err = %err);
             return Err(EBADF.into());
         }
@@ -702,7 +703,7 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<()> {
         trace!("");
 
-        let attr = if let Ok(Some(attr)) = self.get_fs().borrow_mut().find_by_name(parent, name.to_str().unwrap()) {
+        let attr = if let Ok(Some(attr)) = self.get_fs().borrow_mut().find_by_name(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap()) {
             attr
         } else {
             error!(parent, name = name.to_str().unwrap(), new_name = new_name.to_str().unwrap());
@@ -749,7 +750,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         // "Sticky bit" handling in new_parent
         if new_parent_attr.perm & libc::S_ISVTX as u16 != 0 {
-            if let Ok(Some(new_attrs)) = self.get_fs().borrow_mut().find_by_name(new_parent, new_name.to_str().unwrap()) {
+            if let Ok(Some(new_attrs)) = self.get_fs().borrow_mut().find_by_name(new_parent, &SecretString::from_str(new_name.to_str().unwrap()).unwrap()) {
                 if req.uid != 0
                     && req.uid != new_parent_attr.uid
                     && req.uid != new_attrs.uid
@@ -774,7 +775,7 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(EACCES.into());
         }
 
-        match self.get_fs().borrow_mut().rename(parent, name.to_str().unwrap(), new_parent, new_name.to_str().unwrap()) {
+        match self.get_fs().borrow_mut().rename(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap(), new_parent, &SecretString::from_str(new_name.to_str().unwrap()).unwrap()) {
             Ok(_) => Ok(()),
             Err(FsError::NotEmpty) => {
                 Err(ENOTEMPTY.into())

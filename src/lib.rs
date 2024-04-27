@@ -22,7 +22,8 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     run_fuse("/tmp/rencfs", "/tmp/rencfs_data", SecretString::new("password".to_string()), Cipher::ChaCha20, false, false, false, false).await.unwrap();
+//!     use std::str::FromStr;
+//! run_fuse("/tmp/rencfs", "/tmp/rencfs_data", SecretString::from_str("password").unwrap(), Cipher::ChaCha20, false, false, false, false).await.unwrap();
 //! }
 //! ```
 //!
@@ -89,7 +90,8 @@
 //! let cipher = rencfs::encryptedfs::Cipher::ChaCha20;
 //! let mut fs = EncryptedFs::new(data_dir, password, cipher ).unwrap();
 //!
-//! let (fh, attr) = fs.create_nod(ROOT_INODE, "file1", create_attr(FileType::RegularFile), false, true).unwrap();
+//! let  file1 = SecretString::from_str("file1").unwrap();
+//! let (fh, attr) = fs.create_nod(ROOT_INODE, &file1, create_attr(FileType::RegularFile), false, true).unwrap();
 //! let data = "Hello, world!";
 //! fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
 //! fs.flush(fh).unwrap();

@@ -43,20 +43,20 @@ pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) ->
     read::Decryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 }
 
-pub fn encrypt_string(s: &str, cipher: &Cipher, key: &SecretVec<u8>) -> String {
+pub fn encrypt_string(s: &SecretString, cipher: &Cipher, key: &SecretVec<u8>) -> String {
     // use the same IV so the same string will be encrypted to the same value
     let iv: Vec<_> = decode("dB0Ej+7zWZWTS5JUCldWMg==").unwrap();
 
     let mut cursor = io::Cursor::new(vec![]);
 
     let mut encryptor = write::Encryptor::new(cursor, get_cipher(cipher), key.expose_secret(), &iv).unwrap();
-    encryptor.write_all(s.as_bytes()).unwrap();
+    encryptor.write_all(s.expose_secret().as_bytes()).unwrap();
     cursor = encryptor.finish().unwrap();
     base64::encode(&cursor.into_inner())
 }
 
-pub fn decrypt_string(s: &str, cipher: &Cipher, key: &SecretVec<u8>) -> String {
-    // use the same IV so the same string will be encrypted to the same value
+pub fn decrypt_string(s: &str, cipher: &Cipher, key: &SecretVec<u8>) -> SecretString {
+    // use the same IV so the same string will be encrypted to the same value&SecretString::from_str(
     let iv: Vec<_> = decode("dB0Ej+7zWZWTS5JUCldWMg==").unwrap();
 
     let vec = decode(s).unwrap();
@@ -65,16 +65,12 @@ pub fn decrypt_string(s: &str, cipher: &Cipher, key: &SecretVec<u8>) -> String {
     let mut decryptor = read::Decryptor::new(cursor, get_cipher(cipher), &key.expose_secret(), &iv).unwrap();
     let mut decrypted = String::new();
     decryptor.read_to_string(&mut decrypted).unwrap();
-    decrypted
+    SecretString::new(decrypted)
 }
 
-pub fn decrypt_and_unnormalize_end_file_name(name: &str, cipher: &Cipher, key: &SecretVec<u8>) -> String {
-    let mut name = String::from(name);
-    if name != "$." && name != "$.." {
-        name = name.replace("|", "/");
-        name = decrypt_string(&name, cipher, key);
-    }
-    name.to_string()
+pub fn decrypt_and_unnormalize_end_file_name(name: &str, cipher: &Cipher, key: &SecretVec<u8>) -> SecretString {
+    let name = String::from(name).replace("|", "/");
+    decrypt_string(&name, cipher, key)
 }
 
 #[instrument(skip(password, salt))]
@@ -90,13 +86,14 @@ pub fn derive_key(password: &SecretString, cipher: &Cipher, salt: SecretVec<u8>)
     Ok(SecretVec::new(dk))
 }
 
-pub fn normalize_end_encrypt_file_name(name: &str, cipher: &Cipher, key: &SecretVec<u8>) -> String {
-    let mut normalized_name = name.replace("/", " ").replace("\\", " ");
-    if normalized_name != "$." && normalized_name != "$.." {
-        normalized_name = encrypt_string(&normalized_name, cipher, key);
-        normalized_name = normalized_name.replace("/", "|");
+pub fn normalize_end_encrypt_file_name(name: &SecretString, cipher: &Cipher, key: &SecretVec<u8>) -> String {
+    if name.expose_secret() != "$." && name.expose_secret() != "$.." {
+        let normalized_name = SecretString::new(name.expose_secret().replace("/", " ").replace("\\", " "));
+        let mut encrypted = encrypt_string(&normalized_name, cipher, key);
+        encrypted = encrypted.replace("/", "|");
+        return encrypted
     }
-    normalized_name
+    name.expose_secret().to_owned()
 }
 
 pub fn hash(data: &[u8]) -> [u8; 32] {

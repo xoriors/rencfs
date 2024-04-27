@@ -6,6 +6,7 @@ use std::fs::{File, OpenOptions, ReadDir};
 use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
@@ -143,6 +144,7 @@ pub enum Cipher {
     Aes256Gcm,
 }
 
+#[derive(Debug)]
 struct TimeAndSizeFileAttr {
     ino: u64,
     atime: SystemTime,
@@ -177,20 +179,33 @@ impl TimeAndSizeFileAttr {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct DirectoryEntry {
     pub ino: u64,
-    pub name: String,
+    pub name: SecretString,
     pub kind: FileType,
 }
 
+impl PartialEq for DirectoryEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.ino == other.ino && self.name.expose_secret() == other.name.expose_secret() && self.kind == other.kind
+    }
+
+}
+
 /// Like [`DirectoryEntry`] but with ['FileAttr'].
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct DirectoryEntryPlus {
     pub ino: u64,
-    pub name: String,
+    pub name: SecretString,
     pub kind: FileType,
     pub attr: FileAttr,
+}
+
+impl PartialEq for DirectoryEntryPlus {
+    fn eq(&self, other: &Self) -> bool {
+        self.ino == other.ino && self.name.expose_secret() == other.name.expose_secret() && self.kind == other.kind && self.attr == other.attr
+    }
 }
 
 pub type FsResult<T> = Result<T, FsError>;
@@ -211,14 +226,16 @@ impl Iterator for DirectoryEntryIterator {
             return Some(Err(e.into()));
         }
         let file = file.unwrap();
-        let mut name = entry.file_name().to_string_lossy().to_string();
-        if name == "$." {
-            name = ".".to_string();
-        } else if name == "$.." {
-            name = "..".to_string();
-        } else {
-            name = crypto_util::decrypt_and_unnormalize_end_file_name(&name, &self.1, &self.2);
-        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let name = {
+            if name == "$." {
+                SecretString::from_str(".").unwrap()
+            } else if name == "$.." {
+                SecretString::from_str("..").unwrap()
+            } else {
+                crypto_util::decrypt_and_unnormalize_end_file_name(&name, &self.1, &self.2)
+            }
+        };
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.1, &self.2));
         if let Err(e) = res {
             return Some(Err(e.into()));
@@ -251,14 +268,16 @@ impl Iterator for DirectoryEntryPlusIterator {
             return Some(Err(e.into()));
         }
         let file = file.unwrap();
-        let mut name = entry.file_name().to_string_lossy().to_string();
-        if name == "$." {
-            name = ".".to_string();
-        } else if name == "$.." {
-            name = "..".to_string();
-        } else {
-            name = crypto_util::decrypt_and_unnormalize_end_file_name(&name, &self.2, &self.3);
-        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let name = {
+            if name == "$." {
+                SecretString::from_str(".").unwrap()
+            } else if name == "$.." {
+                SecretString::from_str("..").unwrap()
+            } else {
+                crypto_util::decrypt_and_unnormalize_end_file_name(&name, &self.2, &self.3)
+            }
+        };
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.2, &self.3));
         if let Err(e) = res {
             error!(err = %e, "deserializing directory entry");
@@ -347,7 +366,6 @@ impl EncryptedFs {
             key: Self::read_or_create_key(path.join(SECURITY_DIR).join(KEY_ENC_FILENAME), password, &cipher)?,
         };
         let _ = fs.ensure_root_exists();
-        fs.check_password()?;
 
         Ok(fs)
     }
@@ -369,7 +387,10 @@ impl EncryptedFs {
 
     /// Create a new node in the filesystem
     /// You don't need to provide `attr.ino`, it will be auto-generated anyway.
-    pub fn create_nod(&mut self, parent: u64, name: &str, mut attr: FileAttr, read: bool, write: bool) -> FsResult<(u64, FileAttr)> {
+    pub fn create_nod(&mut self, parent: u64, name: &SecretString, mut attr: FileAttr, read: bool, write: bool) -> FsResult<(u64, FileAttr)> {
+        if name.expose_secret() == "." || name.expose_secret() == ".." {
+            return Err(FsError::InvalidInput("name cannot be '.' or '..'".to_string()));
+        }
         if !self.node_exists(parent) {
             return Err(FsError::InodeNotFound);
         }
@@ -400,12 +421,12 @@ impl EncryptedFs {
                 // add "." and ".." entries
                 self.insert_directory_entry(attr.ino, DirectoryEntry {
                     ino: attr.ino,
-                    name: "$.".to_string(),
+                    name: SecretString::from_str("$.").unwrap(),
                     kind: FileType::Directory,
                 })?;
                 self.insert_directory_entry(attr.ino, DirectoryEntry {
                     ino: parent,
-                    name: "$..".to_string(),
+                    name: SecretString::from_str("$..").unwrap(),
                     kind: FileType::Directory,
                 })?;
             }
@@ -414,7 +435,7 @@ impl EncryptedFs {
         // edd entry in parent directory, used for listing
         self.insert_directory_entry(parent, DirectoryEntry {
             ino: attr.ino,
-            name: name.to_string(),
+            name: SecretString::new(name.expose_secret().to_owned()),
             kind: attr.kind,
         })?;
 
@@ -438,7 +459,7 @@ impl EncryptedFs {
         Ok((handle, attr))
     }
 
-    pub fn find_by_name(&mut self, parent: u64, mut name: &str) -> FsResult<Option<FileAttr>> {
+    pub fn find_by_name(&mut self, parent: u64, name: &SecretString) -> FsResult<Option<FileAttr>> {
         if !self.node_exists(parent) {
             return Err(FsError::InodeNotFound);
         }
@@ -448,12 +469,16 @@ impl EncryptedFs {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
-        if name == "." {
-            name = "$.";
-        } else if name == ".." {
-            name = "$..";
-        }
-        let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
+        let name = {
+            if name.expose_secret() == "." {
+                SecretString::from_str("$.").unwrap()
+            } else if name.expose_secret() == ".." {
+                SecretString::from_str("$..").unwrap()
+            } else {
+                SecretString::new(name.expose_secret().to_owned())
+            }
+        };
+        let name = crypto_util::normalize_end_encrypt_file_name(&name, &self.cipher, &self.key);
         let file = File::open(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
         let (inode, _): (u64, FileType) = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.cipher, &self.key))?;
         Ok(Some(self.get_inode(inode)?))
@@ -465,7 +490,7 @@ impl EncryptedFs {
         Ok(iter.into_iter().count())
     }
 
-    pub fn remove_dir(&mut self, parent: u64, name: &str) -> FsResult<()> {
+    pub fn remove_dir(&mut self, parent: u64, name: &SecretString) -> FsResult<()> {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
@@ -502,7 +527,7 @@ impl EncryptedFs {
         Ok(())
     }
 
-    pub fn remove_file(&mut self, parent: u64, name: &str) -> FsResult<()> {
+    pub fn remove_file(&mut self, parent: u64, name: &SecretString) -> FsResult<()> {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
@@ -525,20 +550,24 @@ impl EncryptedFs {
         fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
 
         let mut parent_attr = self.get_inode(parent)?;
-        parent_attr.mtime = std::time::SystemTime::now();
-        parent_attr.ctime = std::time::SystemTime::now();
+        parent_attr.mtime = SystemTime::now();
+        parent_attr.ctime = SystemTime::now();
         self.write_inode(&parent_attr)?;
 
         Ok(())
     }
 
-    pub fn exists_by_name(&self, parent: u64, mut name: &str) -> bool {
-        if name == "." {
-            name = "$.";
-        } else if name == ".." {
-            name = "$..";
-        }
-        let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
+    pub fn exists_by_name(&self, parent: u64, name: &SecretString) -> bool {
+        let name = {
+            if name.expose_secret() == "." {
+                SecretString::from_str("$.").unwrap()
+            } else if name.expose_secret() == ".." {
+                SecretString::from_str("$..").unwrap()
+            } else {
+                SecretString::new(name.expose_secret().to_owned())
+            }
+        };
+        let name = crypto_util::normalize_end_encrypt_file_name(&name, &self.cipher, &self.key);
         self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name).exists()
     }
 
@@ -1072,7 +1101,7 @@ impl EncryptedFs {
         map_guard.entry(ino).or_insert_with(|| Arc::new(RwLock::new(false)))
     }
 
-    pub fn rename(&mut self, parent: u64, name: &str, new_parent: u64, new_name: &str) -> FsResult<()> {
+    pub fn rename(&mut self, parent: u64, name: &SecretString, new_parent: u64, new_name: &SecretString) -> FsResult<()> {
         if !self.node_exists(parent) {
             return Err(FsError::InodeNotFound);
         }
@@ -1089,7 +1118,7 @@ impl EncryptedFs {
             return Err(FsError::NotFound("name not found".to_string()));
         }
 
-        if parent == new_parent && name == new_name {
+        if parent == new_parent && name.expose_secret() == new_name.expose_secret() {
             // no-op
             return Ok(());
         }
@@ -1108,7 +1137,7 @@ impl EncryptedFs {
         // add to new parent contents
         self.insert_directory_entry(new_parent, DirectoryEntry {
             ino: attr.ino,
-            name: new_name.to_string(),
+            name: SecretString::new(new_name.expose_secret().to_owned()),
             kind: attr.kind,
         })?;
 
@@ -1120,13 +1149,13 @@ impl EncryptedFs {
         new_parent_attr.mtime = SystemTime::now();
         new_parent_attr.ctime = SystemTime::now();
 
-        attr.ctime = std::time::SystemTime::now();
+        attr.ctime = SystemTime::now();
 
         if attr.kind == FileType::Directory {
             // add parent link to new directory
             self.insert_directory_entry(attr.ino, DirectoryEntry {
                 ino: new_parent,
-                name: "$..".to_string(),
+                name: SecretString::from_str("$..").unwrap(),
                 kind: FileType::Directory,
             })?;
         }
@@ -1156,17 +1185,17 @@ impl EncryptedFs {
     }
 
     /// Encrypts a string using internal encryption info.
-    pub fn encrypt_string(&self, s: &str) -> String {
+    pub fn encrypt_string(&self, s: &SecretString) -> String {
         crypto_util::encrypt_string(s, &self.cipher, &self.key)
     }
 
     /// Decrypts a string using internal encryption info.
-    pub fn decrypt_string(&self, s: &str) -> String {
+    pub fn decrypt_string(&self, s: &str) -> SecretString {
         crypto_util::decrypt_string(s, &self.cipher, &self.key)
     }
 
     /// Normalize and encrypt a file name.
-    pub fn normalize_end_encrypt_file_name(&self, name: &str) -> String {
+    pub fn normalize_end_encrypt_file_name(&self, name: &SecretString) -> String {
         crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key)
     }
     /// Change the password of the filesystem used to access the encryption key.
@@ -1234,15 +1263,6 @@ impl EncryptedFs {
         }
     }
 
-    fn check_password(&mut self) -> FsResult<()> {
-        self.get_inode(ROOT_INODE).map_err(|err| match err {
-            FsError::SerializeError(_) => FsError::InvalidPassword,
-            _ => err
-        })?;
-
-        Ok(())
-    }
-
     fn create_read_handle(&mut self, ino: u64, attr: Option<TimeAndSizeFileAttr>, handle: u64, lock: Arc<RwLock<bool>>) -> FsResult<u64> {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path)?;
@@ -1304,7 +1324,7 @@ impl EncryptedFs {
             // add "." entry
             self.insert_directory_entry(attr.ino, DirectoryEntry {
                 ino: attr.ino,
-                name: "$.".to_string(),
+                name: SecretString::from_str("$.").unwrap(),
                 kind: FileType::Directory,
             })?;
         }
@@ -1329,7 +1349,7 @@ impl EncryptedFs {
         Ok(())
     }
 
-    fn remove_directory_entry(&self, parent: u64, name: &str) -> FsResult<()> {
+    fn remove_directory_entry(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         let parent_path = self.data_dir.join(CONTENTS_DIR).join(parent.to_string());
         let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &self.key);
         fs::remove_file(parent_path.join(name))?;
