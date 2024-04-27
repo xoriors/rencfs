@@ -219,9 +219,9 @@ pub async fn run_fuse(mountpoint: &str, data_dir: &str, password: SecretString, 
     let mount_options = MountOptions::default()
         .uid(uid)
         .gid(gid)
-        .read_only(false).
-        allow_root(allow_root).
-        allow_other(allow_other)
+        .read_only(false)
+        .allow_root(allow_root)
+        .allow_other(allow_other)
         .clone();
     let mount_path = OsStr::new(mountpoint);
 

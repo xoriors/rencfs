@@ -811,9 +811,9 @@ impl Filesystem for EncryptedFsFuse3 {
             }
         };
 
-        let create = flags & libc::O_CREAT as u32 != 0;
+        let _create = flags & libc::O_CREAT as u32 != 0;
         let truncate = flags & libc::O_TRUNC as u32 != 0;
-        let append = flags & libc::O_APPEND as u32 != 0;
+        let _append = flags & libc::O_APPEND as u32 != 0;
 
         let attr = self.get_fs().borrow_mut().get_inode(inode).map_err(|err| {
             error!(err = %err);

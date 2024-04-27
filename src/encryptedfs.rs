@@ -348,6 +348,11 @@ pub struct EncryptedFs {
     key: SecretVec<u8>,
 }
 
+#[cfg(test)]
+const BUF_SIZE: usize = 256 * 1024; // 256 KB buffer, smaller for tests because they all run in parallel
+#[cfg(not(test))]
+const BUF_SIZE: usize = 1024 * 1024; // 1 MB buffer
+
 impl EncryptedFs {
     pub fn new(data_dir: &str, password: SecretString, cipher: Cipher) -> FsResult<Self> {
         let path = PathBuf::from(&data_dir);
@@ -665,7 +670,7 @@ impl EncryptedFs {
             if offset > 0 {
                 let (_, position, decryptor, _) =
                     self.read_handles.get_mut(&handle).unwrap();
-                let mut buffer: [u8; 4096] = [0; 4096];
+                let mut buffer: [u8; BUF_SIZE] = [0; BUF_SIZE]; // 1MB buffer
                 loop {
                     let read_len = if *position + buffer.len() as u64 > offset {
                         (offset - *position) as usize
@@ -818,7 +823,7 @@ impl EncryptedFs {
             let mut decryptor2 = crypto_util::create_decryptor(in_file, &self.cipher, &self.key);
             let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
 
-            let mut buffer: [u8; 4096] = [0; 4096];
+            let mut buffer: [u8; BUF_SIZE] = [0; BUF_SIZE]; // 1MB buffer
             let mut pos_read = 0;
             let mut position = 0;
             if offset > 0 {
@@ -849,9 +854,9 @@ impl EncryptedFs {
 
         // if offset is after current position (max file size) we fill up with zeros until offset
         if offset > *position {
-            let buffer: [u8; 4096] = [0; 4096];
+            let buffer: [u8; BUF_SIZE] = [0; BUF_SIZE]; // 1MB buffer
             loop {
-                let len = min(4096, offset - *position) as usize;
+                let len = min(buffer.len(), (offset - *position) as usize);
                 encryptor.write_all(&buffer[..len])?;
                 *position += len as u64;
                 if *position == offset {
@@ -879,10 +884,10 @@ impl EncryptedFs {
         // create a new decryptor by reading from the beginning of the file
         let mut decryptor = crypto_util::create_decryptor(OpenOptions::new().read(true).open(file)?, cipher, key);
         // move read position to the desired position
-        let mut buffer: [u8; 4096] = [0; 4096];
+        let mut buffer: [u8; BUF_SIZE] = [0; BUF_SIZE]; // 1MB buffer
         let mut read_pos = 0u64;
         loop {
-            let len = min(4096, *position - read_pos) as usize;
+            let len = min(buffer.len(), (*position - read_pos) as usize);
             decryptor.read_exact(&mut buffer[..len])?;
             read_pos += len as u64;
             if read_pos == *position {
@@ -891,9 +896,9 @@ impl EncryptedFs {
         }
 
         // copy the rest of the file
-        let mut buffer: [u8; 4096] = [0; 4096];
+        let mut buffer: [u8; BUF_SIZE] = [0; BUF_SIZE]; // 1MB buffer
         loop {
-            let len = min(4096, attr.size - *position) as usize;
+            let len = min(buffer.len(), (attr.size - *position) as usize);
             decryptor.read_exact(&mut buffer[..len])?;
             encryptor.write_all(&buffer[..len])?;
             *position += len as u64;
@@ -993,10 +998,10 @@ impl EncryptedFs {
             let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
 
             // copy existing data until new size
-            let mut buf: [u8; 4096] = [0; 4096];
+            let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE]; // 1MB buffer
             let mut pos = 0_u64;
             loop {
-                let len = min(4096, size - pos) as usize;
+                let len = min(buf.len(), (size - pos) as usize);
                 decryptor.read_exact(&mut buf[..len])?;
                 encryptor.write_all(&buf[..len])?;
                 pos += len as u64;
@@ -1024,10 +1029,10 @@ impl EncryptedFs {
             let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
 
             // copy existing data
-            let mut buf: [u8; 4096] = [0; 4096];
+            let mut buf: [u8; BUF_SIZE] = [0; BUF_SIZE]; // 1MB buffer
             let mut pos = 0_u64;
             loop {
-                let len = min(4096, attr.size - pos) as usize;
+                let len = min(buf.len(), (attr.size - pos) as usize);
                 decryptor.read_exact(&mut buf[..len])?;
                 encryptor.write_all(&buf[..len])?;
                 pos += len as u64;
@@ -1037,9 +1042,9 @@ impl EncryptedFs {
             }
 
             // now fill up with zeros until new size
-            let buf: [u8; 4096] = [0; 4096];
+            let buf: [u8; BUF_SIZE] = [0; BUF_SIZE]; // 1MB buffer
             loop {
-                let len = min(4096, size - attr.size) as usize;
+                let len = min(buf.len(), (size - attr.size) as usize);
                 encryptor.write_all(&buf[..len])?;
                 attr.size += len as u64;
                 if attr.size == size {
