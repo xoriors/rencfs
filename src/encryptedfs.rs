@@ -19,7 +19,7 @@ use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
-use tracing::{error, instrument};
+use tracing::{error, instrument, warn};
 use weak_table::WeakValueHashMap;
 
 #[cfg(test)]
@@ -190,7 +190,6 @@ impl PartialEq for DirectoryEntry {
     fn eq(&self, other: &Self) -> bool {
         self.ino == other.ino && self.name.expose_secret() == other.name.expose_secret() && self.kind == other.kind
     }
-
 }
 
 /// Like [`DirectoryEntry`] but with ['FileAttr'].
@@ -711,12 +710,17 @@ impl EncryptedFs {
             decryptor.finish();
             valid_fh = true;
         }
-        if let Some((attr, path, _, encryptor, _)) = self.write_handles.remove(&handle) {
+        if let Some((attr, path, mut position, mut encryptor, _)) = self.write_handles.remove(&handle) {
             // write attr only here to avoid serializing it multiple times while writing
             // merge time fields with existing data because it might got change while we kept the handle
             let mut attr_0 = self.get_inode(attr.ino)?;
             merge_attr_time_and_set_size_obj(&mut attr_0, &attr);
             self.write_inode(&attr_0)?;
+            // if position is before file end we copy the rest of the file from position to the end
+            if position < attr.size {
+                let ino_str = attr.ino.to_string();
+                Self::copy_remaining_of_file(&attr, &mut position, &mut encryptor, &self.cipher, &self.key, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+            }
             encryptor.finish()?;
             // if we are in tmp file move it to actual file
             if path.to_str().unwrap().ends_with(".tmp") {
@@ -776,17 +780,23 @@ impl EncryptedFs {
         let binding = self.get_inode_lock(ino);
         let _guard = binding.write().unwrap();
 
-        let mut decryptor: Option<Decryptor<File>> = None;
-
-        let (_, _, position, _, _) = self.write_handles.get_mut(&handle).unwrap();
+        let (attr, _, position, _, _) = self.write_handles.get_mut(&handle).unwrap();
         if *position != offset {
             // in order to seek we need to recreate all stream from the beginning until the desired position of file size
             // for that we create a new encryptor into a tmp file reading from original file and writing to tmp one
             // when we release the handle we will move this tmp file to the actual file
 
+            let mut pos = *position;
+            let ino_str = attr.ino.to_string();
+
             // remove handle data because we will replace it with the tmp one
-            let (attr, path, _, encryptor, lock) =
+            let (attr, path, _, mut encryptor, lock) =
                 self.write_handles.remove(&handle).unwrap();
+
+            // if position is before file end we copy the rest of the file from position to the end
+            if pos < attr.size {
+                Self::copy_remaining_of_file(&attr, &mut pos, &mut encryptor, &self.cipher, &self.key, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+            }
 
             // finish the current writer so we flush all data to the file
             encryptor.finish()?;
@@ -833,8 +843,6 @@ impl EncryptedFs {
                 }
             }
             self.replace_handle_data(handle, attr, tmp_path, position, encryptor, lock.clone());
-
-            decryptor = Some(decryptor2);
         }
         let (attr, _, position, encryptor, _) =
             self.write_handles.get_mut(&handle).unwrap();
@@ -856,54 +864,44 @@ impl EncryptedFs {
         encryptor.write_all(buf)?;
         *position += buf.len() as u64;
 
-        // todo: move this to when we release the handle so if we get several writes on block after another before file end
-        // todo: we don't keep recreating the writer
-        // todo: but we need to be careful because we need to update the size of the file only when we release the handle
-        // if position is before file end we copy the rest of the file from position to the end
-        if *position < attr.size {
-            let mut decryptor = if let Some(mut decryptor) = decryptor {
-                // reuse the existing decryptor
-                // skip written bytes
-                decryptor.read_exact(vec![0_u8; buf.len()].as_mut_slice())?;
-                decryptor
-            } else {
-                // create a new decryptor by reading from the beginning of the file
-                let mut decryptor = crypto_util::create_decryptor(OpenOptions::new().read(true).open(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()))?,
-                                                                  &self.cipher, &self.key);
-                // move read position to the desired position
-                let mut buffer: [u8; 4096] = [0; 4096];
-                let mut read_pos = 0u64;
-                loop {
-                    let len = min(4096, *position - read_pos) as usize;
-                    decryptor.read_exact(&mut buffer[..len])?;
-                    read_pos += len as u64;
-                    if read_pos == *position {
-                        break;
-                    }
-                }
-
-                decryptor
-            };
-
-            // copy the rest of the file
-            let mut buffer: [u8; 4096] = [0; 4096];
-            loop {
-                let len = min(4096, attr.size - *position) as usize;
-                decryptor.read_exact(&mut buffer[..len])?;
-                encryptor.write_all(&buffer[..len])?;
-                *position += len as u64;
-                if *position == attr.size {
-                    break;
-                }
-            }
-            decryptor.finish();
+        if *position > attr.size {
+            // if we write pass file size set the new size
+            attr.size = *position;
         }
-
-        let size = *position;
-        attr.size = size;
         attr.mtime = SystemTime::now();
         attr.ctime = SystemTime::now();
 
+        Ok(())
+    }
+
+    fn copy_remaining_of_file(attr: &TimeAndSizeFileAttr, position: &mut u64, encryptor: &mut Encryptor<File>, cipher: &Cipher, key: &SecretVec<u8>, file: PathBuf) -> Result<(), FsError> {
+        warn!("copy_remaining_of_file");
+        // create a new decryptor by reading from the beginning of the file
+        let mut decryptor = crypto_util::create_decryptor(OpenOptions::new().read(true).open(file)?, cipher, key);
+        // move read position to the desired position
+        let mut buffer: [u8; 4096] = [0; 4096];
+        let mut read_pos = 0u64;
+        loop {
+            let len = min(4096, *position - read_pos) as usize;
+            decryptor.read_exact(&mut buffer[..len])?;
+            read_pos += len as u64;
+            if read_pos == *position {
+                break;
+            }
+        }
+
+        // copy the rest of the file
+        let mut buffer: [u8; 4096] = [0; 4096];
+        loop {
+            let len = min(4096, attr.size - *position) as usize;
+            decryptor.read_exact(&mut buffer[..len])?;
+            encryptor.write_all(&buffer[..len])?;
+            *position += len as u64;
+            if *position == attr.size {
+                break;
+            }
+        }
+        decryptor.finish();
         Ok(())
     }
 
@@ -1076,7 +1074,12 @@ impl EncryptedFs {
                     continue;
                 }
             }
-            if let Some((attr, path, _, encryptor, _)) = self.write_handles.remove(&key) {
+            if let Some((attr, path, mut position, mut encryptor, _)) = self.write_handles.remove(&key) {
+                // if position is before file end we copy the rest of the file from position to the end
+                if position < attr.size {
+                    let ino_str = attr.ino.to_string();
+                    Self::copy_remaining_of_file(&attr, &mut position, &mut encryptor, &self.cipher, &self.key, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                }
                 encryptor.finish()?;
                 // if we are in tmp file move it to actual file
                 if path.to_str().unwrap().ends_with(".tmp") {

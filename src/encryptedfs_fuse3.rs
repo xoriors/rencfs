@@ -154,7 +154,7 @@ impl EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     fn create_nod(&self, parent: u64, mut mode: u32, req: &Request, name: &OsStr, read: bool, write: bool) -> std::result::Result<(u64, FileAttr), c_int> {
         let parent_attr = match self.get_fs().borrow_mut().get_inode(parent) {
             Err(err) => {
@@ -233,7 +233,7 @@ fn from_attr(from: FileAttr) -> fuse3::raw::prelude::FileAttr {
 }
 
 impl Filesystem for EncryptedFsFuse3 {
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
         trace!("");
 
@@ -247,7 +247,7 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn lookup(&self, req: Request, parent: u64, name: &OsStr) -> Result<ReplyEntry> {
         trace!("");
 
@@ -305,7 +305,7 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
     }
 
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn getattr(
         &self,
         _req: Request,
@@ -334,7 +334,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn setattr(
         &self,
         req: Request,
@@ -488,7 +488,7 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn mknod(
         &self,
         req: Request,
@@ -527,7 +527,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn mkdir(
         &self,
         req: Request,
@@ -591,7 +591,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn unlink(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         trace!("");
 
@@ -642,7 +642,7 @@ impl Filesystem for EncryptedFsFuse3 {
     }
 
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn rmdir(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         trace!("");
 
@@ -692,7 +692,7 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(())
     }
 
-    #[instrument(skip(self, name, new_name), fields(name = name.to_str().unwrap(), new_name = new_name.to_str().unwrap()), err(level = Level::DEBUG))]
+    #[instrument(skip(self, name, new_name), fields(name = name.to_str().unwrap(), new_name = new_name.to_str().unwrap()), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn rename(
         &self,
         req: Request,
@@ -786,7 +786,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn open(&self, req: Request, inode: Inode, flags: u32) -> Result<ReplyOpen> {
         trace!("");
 
@@ -861,7 +861,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self, data), err(level = Level::DEBUG))]
+    #[instrument(skip(self, data), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn write(
         &self,
         _req: Request,
@@ -876,24 +876,24 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
         debug!(size = data.len());
 
-        if let Err(err) = self.get_fs().borrow_mut().write_all(inode, offset, data, fh) {
+        self.get_fs().borrow_mut().write_all(inode, offset, data, fh).map_err(|err| {
             error!(err = %err);
-            return Err(EIO.into());
-        }
+            EIO
+        })?;
 
         Ok(ReplyWrite {
             written: data.len() as u32,
         })
     }
 
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn statfs(&self, _req: Request, inode: u64) -> Result<ReplyStatFs> {
         trace!("");
         warn!("implementation is a stub");
         Ok(STATFS)
     }
 
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn release(
         &self,
         req: Request,
@@ -933,7 +933,7 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(())
     }
 
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn flush(&self, req: Request, inode: Inode, fh: u64, lock_owner: u64) -> Result<()> {
         trace!("");
 
@@ -945,7 +945,7 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(())
     }
 
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn opendir(&self, req: Request, inode: Inode, flags: u32) -> Result<ReplyOpen> {
         trace!("");
 
@@ -1017,14 +1017,14 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn releasedir(&self, req: Request, inode: Inode, fh: u64, flags: u32) -> Result<()> {
         trace!("");
 
         Ok(())
     }
 
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn access(&self, req: Request, inode: u64, mask: u32) -> Result<()> {
         trace!("");
 
@@ -1040,7 +1040,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn create(
         &self,
         req: Request,
@@ -1083,6 +1083,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
     type DirEntryPlusStream<'a> = Iter<Skip<DirectoryEntryPlusIterator>> where Self: 'a;
 
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn readdirplus(
         &self,
         _req: Request,
@@ -1107,7 +1108,7 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self), err(level = Level::DEBUG))]
+    #[instrument(skip(self), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn copy_file_range(
         &self,
         req: Request,
