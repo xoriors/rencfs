@@ -1,5 +1,6 @@
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::future::Future;
 use std::iter::Skip;
 use std::num::NonZeroU32;
 use std::time::{Duration, SystemTime};
@@ -7,13 +8,11 @@ use std::vec::IntoIter;
 
 use bytes::Bytes;
 use fuse3::raw::prelude::*;
-use fuse3::{MountOptions, Result};
+use fuse3::{Inode, MountOptions, Result};
 use futures_util::stream;
 use futures_util::stream::Iter;
-use tracing::Level;
+use tracing::{info, instrument, Level};
 
-mod aes_stream_with_writer_seek;
-pub mod encryptedfs_fuse;
 
 const CONTENT: &str = "hello world\n";
 
@@ -39,13 +38,16 @@ struct HelloWorld;
 impl Filesystem for HelloWorld {
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
         Ok(ReplyInit {
-            max_write: NonZeroU32::new(16 * 1024).unwrap(),
+            max_write: NonZeroU32::new(1024 * 1024).unwrap(),
         })
     }
 
     async fn destroy(&self, _req: Request) {}
 
+    #[instrument(skip(self))]
     async fn lookup(&self, _req: Request, parent: u64, name: &OsStr) -> Result<ReplyEntry> {
+        info!("");
+
         if parent != PARENT_INODE {
             return Err(libc::ENOENT.into());
         }
@@ -75,6 +77,7 @@ impl Filesystem for HelloWorld {
         })
     }
 
+    #[instrument(skip(self))]
     async fn getattr(
         &self,
         _req: Request,
@@ -82,6 +85,8 @@ impl Filesystem for HelloWorld {
         _fh: Option<u64>,
         _flags: u32,
     ) -> Result<ReplyAttr> {
+        info!("");
+
         if inode == PARENT_INODE {
             Ok(ReplyAttr {
                 ttl: TTL,
@@ -125,14 +130,18 @@ impl Filesystem for HelloWorld {
         }
     }
 
+    #[instrument(skip(self))]
     async fn open(&self, _req: Request, inode: u64, flags: u32) -> Result<ReplyOpen> {
+        info!("");
+
         if inode != PARENT_INODE && inode != FILE_INODE {
             return Err(libc::ENOENT.into());
         }
 
-        Ok(ReplyOpen { fh: 0, flags })
+        Ok(ReplyOpen { fh: 1, flags })
     }
 
+    #[instrument(skip(self))]
     async fn read(
         &self,
         _req: Request,
@@ -141,6 +150,8 @@ impl Filesystem for HelloWorld {
         offset: u64,
         size: u32,
     ) -> Result<ReplyData> {
+        info!("");
+
         if inode != FILE_INODE {
             return Err(libc::ENOENT.into());
         }
@@ -162,6 +173,7 @@ impl Filesystem for HelloWorld {
 
     type DirEntryStream<'a> = Iter<Skip<IntoIter<Result<DirectoryEntry>>>> where Self: 'a;
 
+    #[instrument(skip(self))]
     async fn readdir(
         &self,
         _req: Request,
@@ -169,6 +181,8 @@ impl Filesystem for HelloWorld {
         _fh: u64,
         offset: i64,
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
+        info!("");
+
         if inode == FILE_INODE {
             return Err(libc::ENOTDIR.into());
         }
@@ -203,7 +217,10 @@ impl Filesystem for HelloWorld {
         })
     }
 
+    #[instrument(skip(self))]
     async fn access(&self, _req: Request, inode: u64, _mask: u32) -> Result<()> {
+        info!("");
+
         if inode != PARENT_INODE && inode != FILE_INODE {
             return Err(libc::ENOENT.into());
         }
@@ -213,6 +230,7 @@ impl Filesystem for HelloWorld {
 
     type DirEntryPlusStream<'a> = Iter<Skip<IntoIter<Result<DirectoryEntryPlus>>>> where Self: 'a;
 
+    #[instrument(skip(self))]
     async fn readdirplus(
         &self,
         _req: Request,
@@ -221,6 +239,8 @@ impl Filesystem for HelloWorld {
         offset: u64,
         _lock_owner: u64,
     ) -> Result<ReplyDirectoryPlus<Self::DirEntryPlusStream<'_>>> {
+        info!("");
+
         if parent == FILE_INODE {
             return Err(libc::ENOTDIR.into());
         }
@@ -312,6 +332,76 @@ impl Filesystem for HelloWorld {
     async fn statfs(&self, _req: Request, _inode: u64) -> Result<ReplyStatFs> {
         Ok(STATFS)
     }
+
+    #[instrument(skip(self))]
+    async fn flush(&self, req: Request, inode: Inode, fh: u64, lock_owner: u64) -> Result<()> {
+        info!("");
+
+        Ok(())
+    }
+
+    #[instrument(skip(self, data))]
+    async fn write(
+        &self,
+        req: Request,
+        inode: Inode,
+        fh: u64,
+        offset: u64,
+        data: &[u8],
+        write_flags: u32,
+        flags: u32,
+    ) -> Result<ReplyWrite> {
+        // info!("");
+
+        Ok(ReplyWrite {
+            written: data.len() as u32,
+        })
+    }
+
+    #[instrument(skip(self))]
+    async fn release(
+        &self,
+        req: Request,
+        inode: Inode,
+        fh: u64,
+        flags: u32,
+        lock_owner: u64,
+        flush: bool,
+    ) -> Result<()> {
+        info!("");
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn setattr(
+        &self,
+        req: Request,
+        inode: Inode,
+        fh: Option<u64>,
+        set_attr: SetAttr,
+    ) -> Result<ReplyAttr> {
+        info!("");
+
+        Ok(ReplyAttr {
+            ttl: TTL,
+            attr: FileAttr {
+                ino: inode,
+                size: 0,
+                blocks: 0,
+                atime: SystemTime::now().into(),
+                mtime: SystemTime::now().into(),
+                ctime: SystemTime::now().into(),
+                kind: FileType::RegularFile,
+                perm: FILE_MODE,
+                nlink: 0,
+                uid: 0,
+                gid: 0,
+                rdev: 0,
+                blksize: 0,
+            },
+        })
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -326,7 +416,7 @@ async fn main() {
     let gid = unsafe { libc::getgid() };
 
     let mut mount_options = MountOptions::default();
-    mount_options.uid(uid).gid(gid).read_only(true);
+    mount_options.uid(uid).gid(gid).read_only(false);
 
     let mount_path = mount_path.expect("no mount point specified");
     Session::new(mount_options)
@@ -339,7 +429,7 @@ async fn main() {
 
 fn log_init() {
     let subscriber = tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
+        .with_max_level(Level::INFO)
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
 }

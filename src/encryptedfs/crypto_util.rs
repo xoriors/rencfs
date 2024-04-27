@@ -7,7 +7,7 @@ use base64::decode;
 use std::io;
 use argon2::Argon2;
 use openssl::sha::sha256;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::{ExposeSecret, SecretString, SecretVec};
 use thiserror::Error;
 use tracing::instrument;
 use crate::encryptedfs::Cipher;
@@ -17,7 +17,7 @@ pub enum CryptoError {
     #[error("crypto error: {0}")]
     Generic(String),
 }
-pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &Vec<u8>) -> write::Encryptor<File> {
+pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> write::Encryptor<File> {
     let mut iv: Vec<u8> = vec![0; 16];
     if file.metadata().unwrap().size() == 0 {
         // generate random IV
@@ -27,10 +27,10 @@ pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &Vec<u8>) -> write
         // read IV from file
         file.read_exact(&mut iv).unwrap();
     }
-    write::Encryptor::new(file, get_cipher(cipher), &key, &iv).unwrap()
+    write::Encryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 }
 
-pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &Vec<u8>) -> read::Decryptor<File> {
+pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> read::Decryptor<File> {
     let mut iv: Vec<u8> = vec![0; 16];
     if file.metadata().unwrap().size() == 0 {
         // generate random IV
@@ -40,35 +40,35 @@ pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &Vec<u8>) -> read:
         // read IV from file
         file.read_exact(&mut iv).unwrap();
     }
-    read::Decryptor::new(file, get_cipher(cipher), &key, &iv).unwrap()
+    read::Decryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 }
 
-pub fn encrypt_string(s: &str, cipher: &Cipher, key: &Vec<u8>) -> String {
+pub fn encrypt_string(s: &str, cipher: &Cipher, key: &SecretVec<u8>) -> String {
     // use the same IV so the same string will be encrypted to the same value
     let iv: Vec<_> = decode("dB0Ej+7zWZWTS5JUCldWMg==").unwrap();
 
     let mut cursor = io::Cursor::new(vec![]);
 
-    let mut encryptor = write::Encryptor::new(cursor, get_cipher(cipher), &key, &iv).unwrap();
+    let mut encryptor = write::Encryptor::new(cursor, get_cipher(cipher), key.expose_secret(), &iv).unwrap();
     encryptor.write_all(s.as_bytes()).unwrap();
     cursor = encryptor.finish().unwrap();
     base64::encode(&cursor.into_inner())
 }
 
-pub fn decrypt_string(s: &str, cipher: &Cipher, key: &Vec<u8>) -> String {
+pub fn decrypt_string(s: &str, cipher: &Cipher, key: &SecretVec<u8>) -> String {
     // use the same IV so the same string will be encrypted to the same value
     let iv: Vec<_> = decode("dB0Ej+7zWZWTS5JUCldWMg==").unwrap();
 
     let vec = decode(s).unwrap();
     let cursor = io::Cursor::new(vec);
 
-    let mut decryptor = read::Decryptor::new(cursor, get_cipher(cipher), &key, &iv).unwrap();
+    let mut decryptor = read::Decryptor::new(cursor, get_cipher(cipher), &key.expose_secret(), &iv).unwrap();
     let mut decrypted = String::new();
     decryptor.read_to_string(&mut decrypted).unwrap();
     decrypted
 }
 
-pub fn decrypt_and_unnormalize_end_file_name(name: &str, cipher: &Cipher, key: &Vec<u8>) -> String {
+pub fn decrypt_and_unnormalize_end_file_name(name: &str, cipher: &Cipher, key: &SecretVec<u8>) -> String {
     let mut name = String::from(name);
     if name != "$." && name != "$.." {
         name = name.replace("|", "/");
@@ -78,19 +78,19 @@ pub fn decrypt_and_unnormalize_end_file_name(name: &str, cipher: &Cipher, key: &
 }
 
 #[instrument(skip(password, salt))]
-pub fn derive_key(password: SecretString, cipher: &Cipher, salt: Vec<u8>) -> Result<Vec<u8>, CryptoError> {
+pub fn derive_key(password: &SecretString, cipher: &Cipher, salt: SecretVec<u8>) -> Result<SecretVec<u8>, CryptoError> {
     let mut dk = vec![];
     let key_len =match cipher {
         Cipher::ChaCha20 => 32,
         Cipher::Aes256Gcm => 32,
     };
     dk.resize(key_len, 0);
-    Argon2::default().hash_password_into(password.expose_secret().as_bytes(), salt.as_slice(), &mut dk)
+    Argon2::default().hash_password_into(password.expose_secret().as_bytes(), salt.expose_secret(), &mut dk)
         .map_err(|err| CryptoError::Generic(err.to_string()))?;
-    Ok(dk)
+    Ok(SecretVec::new(dk))
 }
 
-pub fn normalize_end_encrypt_file_name(name: &str, cipher: &Cipher, key: &Vec<u8>) -> String {
+pub fn normalize_end_encrypt_file_name(name: &str, cipher: &Cipher, key: &SecretVec<u8>) -> String {
     let mut normalized_name = name.replace("/", " ").replace("\\", " ");
     if normalized_name != "$." && normalized_name != "$.." {
         normalized_name = encrypt_string(&normalized_name, cipher, key);
@@ -101,6 +101,9 @@ pub fn normalize_end_encrypt_file_name(name: &str, cipher: &Cipher, key: &Vec<u8
 
 pub fn hash(data: &[u8]) -> [u8; 32] {
     sha256(data)
+}
+pub fn hash_secret(data: &SecretString) -> SecretVec<u8> {
+    SecretVec::new(sha256(data.expose_secret().as_bytes()).to_vec())
 }
 
 fn get_cipher(cipher: &Cipher) -> openssl::symm::Cipher {

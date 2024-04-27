@@ -236,11 +236,8 @@ impl Filesystem for EncryptedFsFuse3 {
     async fn init(&self, _req: Request) -> Result<ReplyInit> {
         trace!("");
 
-        #[cfg(feature = "abi-7-26")]
-        config.add_capabilities(FUSE_HANDLE_KILLPRIV).unwrap();
-
         Ok(ReplyInit {
-            max_write: NonZeroU32::new(16 * 1024).unwrap(),
+            max_write: NonZeroU32::new(1024 * 1024).unwrap(),
         })
     }
 
@@ -863,7 +860,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self, data), fields(datas.size = data.len()), err(level = Level::DEBUG))]
+    #[instrument(skip(self, data), err(level = Level::DEBUG))]
     async fn write(
         &self,
         _req: Request,
@@ -1005,7 +1002,7 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
         trace!("");
 
-        let iter = match self.get_fs().borrow().read_dir(inode) {
+        let iter = match self.get_fs().borrow_mut().read_dir(inode) {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());
@@ -1095,7 +1092,7 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyDirectoryPlus<Self::DirEntryPlusStream<'_>>> {
         trace!("");
 
-        let iter = match self.get_fs().borrow().read_dir_plus(parent) {
+        let iter = match self.get_fs().borrow_mut().read_dir_plus(parent) {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());

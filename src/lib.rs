@@ -18,10 +18,11 @@
 //! ```no_run
 //! use rencfs::run_fuse;
 //! use rencfs::encryptedfs::Cipher;
+//! use secrecy::SecretString;
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     run_fuse("/tmp/rencfs", "/tmp/rencfs_data", "password", Cipher::ChaCha20, false, false, false, false).await.unwrap();
+//!     run_fuse("/tmp/rencfs", "/tmp/rencfs_data", SecretString::new("password".to_string()), Cipher::ChaCha20, false, false, false, false).await.unwrap();
 //! }
 //! ```
 //!
@@ -77,11 +78,14 @@
 //!
 //! ```
 //! use std::fs;
+//! use std::str::FromStr;
+//! use secrecy::SecretString;
 //! use rencfs::encryptedfs::{EncryptedFs, FileAttr, FileType};
+//!
 //! const ROOT_INODE: u64 = 1;
 //! let data_dir = "/tmp/rencfs_data_test";
 //! let  _ = fs::remove_dir_all(data_dir);
-//! let password = "password";
+//! let password = SecretString::from_str("password").unwrap();
 //! let cipher = rencfs::encryptedfs::Cipher::ChaCha20;
 //! let mut fs = EncryptedFs::new(data_dir, password, cipher ).unwrap();
 //!
@@ -121,10 +125,12 @@
 //!
 //! ### Example
 //! ```no_run
+//! use std::str::FromStr;
+//! use secrecy::SecretString;
 //! use rencfs::encryptedfs::{EncryptedFs, FsError, FsResult};
 //! use rencfs::encryptedfs::Cipher;
 //!
-//! match EncryptedFs::change_password("/tmp/rencfs_data", "old-pass", "new-pass", Cipher::ChaCha20 ) {
+//! match EncryptedFs::change_password("/tmp/rencfs_data", SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20 ) {
 //!     Ok(_) => println!("Password changed successfully"),
 //!     Err(FsError::InvalidPassword) => println!("Invalid old password"),
 //!     Err(FsError::InvalidDataDirStructure) => println!("Invalid structure of data directory"),
@@ -138,25 +144,27 @@
 //! ```no_run
 //! use std::io;
 //! use std::io::Write;
+//! use std::str::FromStr;
 //! use rpassword::read_password;
+//! use secrecy::{ExposeSecret, Secret, SecretString};
 //! use rencfs::encryptedfs::{Cipher, EncryptedFs, FsError};
 //!
 //! // read password from stdin
 //! print!("Enter old password: ");
 //! io::stdout().flush().unwrap();
-//! let password = read_password().unwrap();
+//! let password = SecretString::new(read_password().unwrap());
 //! print!("Enter new password: ");
 //! io::stdout().flush().unwrap();
-//! let new_password = read_password().unwrap();
+//! let new_password = SecretString::new(read_password().unwrap());
 //! print!("Confirm new password: ");
 //! io::stdout().flush().unwrap();
-//! let new_password2 = read_password().unwrap();
-//! if new_password != new_password2 {
+//! let new_password2 = SecretString::new(read_password().unwrap());
+//! if new_password.expose_secret() != new_password2.expose_secret() {
 //!     println!("Passwords do not match");
 //!     return;
 //! }
 //! println!("Changing password...");
-//! match EncryptedFs::change_password("/tmp/rencfs_data", "old-pass", "new-pass", Cipher::ChaCha20 ) {
+//! match EncryptedFs::change_password("/tmp/rencfs_data", SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20 ) {
 //!     Ok(_) => println!("Password changed successfully"),
 //!     Err(FsError::InvalidPassword) => println!("Invalid old password"),
 //!     Err(FsError::InvalidDataDirStructure) => println!("Invalid structure of data directory"),
@@ -224,12 +232,20 @@ pub async fn run_fuse(mountpoint: &str, data_dir: &str, password: SecretString, 
     Ok(())
 }
 
-pub(crate) fn save_password_to_keyring(password: SecretString) {
-    let entry = Entry::new("rencfs", "encrypted_fs_pass")?;
-    entry.set_password(password.expose_secret())?;
+const KEYRING_SERVICE: &'static str = "rencfs";
+const KEYRING_USER: &'static str = "encrypted_fs";
+
+pub(crate) fn save_to_keyring(password: SecretString, suffix: &str) -> Result<(), keyring::Error> {
+    let entry = Entry::new(KEYRING_SERVICE, &format!("{KEYRING_USER}.{suffix}"))?;
+    entry.set_password(password.expose_secret())
 }
 
-pub(crate) fn delete_password_from_keyring() -> Result<(), keyring::Error> {
-    let entry = Entry::new("rencfs", "encrypted_fs_pass")?;
+pub(crate) fn delete_from_keyring(suffix: &str) -> Result<(), keyring::Error> {
+    let entry = Entry::new(KEYRING_SERVICE, &format!("{KEYRING_USER}.{suffix}"))?;
     entry.delete_password()
+}
+
+pub(crate) fn get_from_keyring(suffix: &str) -> Result<SecretString, keyring::Error> {
+    let entry = Entry::new(KEYRING_SERVICE, &format!("{KEYRING_USER}.{suffix}"))?;
+    Ok(SecretString::new(entry.get_password()?))
 }

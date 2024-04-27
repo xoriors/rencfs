@@ -2,7 +2,9 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::string::String;
+use secrecy::SecretString;
 
 use crate::encryptedfs::{CONTENTS_DIR, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult, INODES_DIR, ROOT_INODE, SECURITY_DIR};
 
@@ -27,7 +29,7 @@ fn setup(setup: TestSetup) -> SetupResult {
         fs::remove_dir_all(path).unwrap();
     }
     fs::create_dir_all(path).unwrap();
-    let fs = EncryptedFs::new(path, "pass-42", Cipher::ChaCha20).unwrap();
+    let fs = EncryptedFs::new(path, SecretString::from_str("pass-42").unwrap(), Cipher::ChaCha20).unwrap();
 
     SetupResult {
         fs: Some(fs),
@@ -89,21 +91,21 @@ fn test_write_and_get_inode() {
     });
 }
 
-fn deserialize_from<T>(file: File, fs: &EncryptedFs) -> T
+fn deserialize_from<T>(file: File, fs: &mut EncryptedFs) -> T
     where
         T: serde::de::DeserializeOwned,
 {
     bincode::deserialize_from(fs.create_decryptor(file)).unwrap()
 }
 
-fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
+fn read_to_string(path: PathBuf, fs: &mut EncryptedFs) -> String {
     let mut buf: Vec<u8> = vec![];
     fs.create_decryptor(OpenOptions::new().read(true).write(true).open(path).unwrap()).read_to_end(&mut buf).unwrap();
     String::from_utf8(buf).unwrap()
 }
 
 #[allow(dead_code)]
-fn write(path: PathBuf, data: &[u8], fs: &EncryptedFs) {
+fn write(path: PathBuf, data: &[u8], fs: &mut EncryptedFs) {
     let mut enc = fs.create_encryptor(OpenOptions::new().read(true).write(true).open(&path).unwrap());
     enc.write_all(data).unwrap();
     enc.finish().unwrap();
@@ -129,7 +131,7 @@ fn test_create_structure_and_root() {
 #[test]
 fn test_create_nod() {
     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_create_nod") }, |setup| {
-        let fs = setup.fs.as_mut().unwrap();
+        let mut fs = setup.fs.as_mut().unwrap();
 
         // file in root
         let test_file = "test-file";
@@ -142,7 +144,7 @@ fn test_create_nod() {
         assert!(fs.node_exists(attr.ino));
         assert_eq!(attr, fs.get_inode(attr.ino).unwrap());
 
-        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.normalize_end_encrypt_file_name(test_file))).unwrap(), &fs);
+        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.normalize_end_encrypt_file_name(test_file))).unwrap(), &mut fs);
         assert_eq!(entry_in_parent, (attr.ino, FileType::RegularFile));
 
         // directory in root
@@ -155,11 +157,11 @@ fn test_create_nod() {
         assert!(fs.node_exists(attr.ino));
         assert_eq!(attr, fs.get_inode(attr.ino).unwrap());
         assert!(fs.is_dir(attr.ino));
-        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.normalize_end_encrypt_file_name(test_dir))).unwrap(), &fs);
+        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).join(fs.normalize_end_encrypt_file_name(test_dir))).unwrap(), &mut fs);
         assert_eq!(entry_in_parent, (attr.ino, FileType::Directory));
-        let dot_entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).join("$.")).unwrap(), &fs);
+        let dot_entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).join("$.")).unwrap(), &mut fs);
         assert_eq!(dot_entry_in_parent, (attr.ino, FileType::Directory));
-        let dot_dot_entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).join("$..")).unwrap(), &fs);
+        let dot_dot_entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).join("$..")).unwrap(), &mut fs);
         assert_eq!(dot_dot_entry_in_parent, (ROOT_INODE, FileType::Directory));
 
         // directory in another directory
@@ -172,11 +174,11 @@ fn test_create_nod() {
         assert!(fs.node_exists(attr.ino));
         assert_eq!(attr, fs.get_inode(attr.ino).unwrap());
         assert!(fs.is_dir(attr.ino));
-        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(fs.normalize_end_encrypt_file_name(test_dir_2))).unwrap(), &fs);
+        let entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(fs.normalize_end_encrypt_file_name(test_dir_2))).unwrap(), &mut fs);
         assert_eq!(entry_in_parent, (attr.ino, FileType::Directory));
-        let dot_entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).join("$.")).unwrap(), &fs);
+        let dot_entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).join("$.")).unwrap(), &mut fs);
         assert_eq!(dot_entry_in_parent, (attr.ino, FileType::Directory));
-        let dot_dot_entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).join("$..")).unwrap(), &fs);
+        let dot_dot_entry_in_parent: (u64, FileType) = deserialize_from(File::open(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).join("$..")).unwrap(), &mut fs);
         assert_eq!(dot_dot_entry_in_parent, (parent, FileType::Directory));
 
         // existing file
@@ -479,7 +481,7 @@ fn test_remove_file() {
 #[test]
 fn test_write_all() {
     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_write_all") }, |setup| {
-        let fs = setup.fs.as_mut().unwrap();
+        let mut fs = setup.fs.as_mut().unwrap();
 
         let test_file = "test-file";
         let (fh, attr) = fs.create_nod(ROOT_INODE, test_file, create_attr_from_type(FileType::RegularFile), false, true).unwrap();
@@ -487,7 +489,7 @@ fn test_write_all() {
         fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
         fs.release(fh).unwrap();
-        assert_eq!(data, read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+        assert_eq!(data, read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &mut fs));
         let attr = fs.get_inode(attr.ino).unwrap();
         assert_eq!(data.len() as u64, attr.size);
 
@@ -497,7 +499,7 @@ fn test_write_all() {
         fs.write_all(attr.ino, 5, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
         fs.release(fh).unwrap();
-        assert_eq!(data, &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs)[5..]);
+        assert_eq!(data, &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &mut fs)[5..]);
 
         // offset after file end
         let data = "37";
@@ -505,7 +507,7 @@ fn test_write_all() {
         fs.write_all(attr.ino, 42, data.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
         fs.release(fh).unwrap();
-        assert_eq!(format!("test-37{}37", "\0".repeat(35)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+        assert_eq!(format!("test-37{}37", "\0".repeat(35)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &mut fs));
 
         // offset before current position, several blocks
         // first write no bytes to the end to move the position
@@ -520,7 +522,7 @@ fn test_write_all() {
         fs.write_all(attr.ino, 8, data2.as_bytes(), fh).unwrap();
         fs.flush(fh).unwrap();
         fs.release(fh).unwrap();
-        assert_eq!("test-01-02-42", &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+        assert_eq!("test-01-02-42", &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &mut fs));
 
         // write before current position then write to the end, also check it preserves the content from
         // the first write to offset to end of the file
@@ -532,7 +534,7 @@ fn test_write_all() {
         fs.write_all(attr.ino, data.len() as u64, b"-42", fh).unwrap();
         fs.flush(fh).unwrap();
         fs.release(fh).unwrap();
-        let new_content = read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs);
+        let new_content = read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &mut fs);
         assert_eq!("test-37-37-42", new_content);
 
         let buf = [0; 0];
@@ -650,7 +652,7 @@ fn test_read() {
 #[test]
 fn test_truncate() {
     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_truncate") }, |setup| {
-        let fs = setup.fs.as_mut().unwrap();
+        let mut fs = setup.fs.as_mut().unwrap();
 
         let (fh, attr) = fs.create_nod(ROOT_INODE, "test-file", create_attr_from_type(FileType::RegularFile), false, true).unwrap();
         let data = "test-42";
@@ -664,13 +666,13 @@ fn test_truncate() {
         fs.write_all(attr.ino, 5, data.as_bytes(), fh).unwrap();
         fs.truncate(attr.ino, 10).unwrap();
         assert_eq!(10, fs.get_inode(attr.ino).unwrap().size);
-        assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+        assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &mut fs));
         fs.release(fh).unwrap();
 
         // size doesn't change
         fs.truncate(attr.ino, 10).unwrap();
         assert_eq!(10, fs.get_inode(attr.ino).unwrap().size);
-        assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+        assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &mut fs));
 
         // size decrease, preserve opened writer content
         let fh = fs.open(attr.ino, false, true).unwrap();
@@ -678,13 +680,13 @@ fn test_truncate() {
         fs.write_all(attr.ino, 0, data.as_bytes(), fh).unwrap();
         fs.truncate(attr.ino, 4).unwrap();
         assert_eq!(4, fs.get_inode(attr.ino).unwrap().size);
-        assert_eq!("37st", read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+        assert_eq!("37st", read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &mut fs));
         fs.release(fh).unwrap();
 
         // size decrease to 0
         fs.truncate(attr.ino, 0).unwrap();
         assert_eq!(0, fs.get_inode(attr.ino).unwrap().size);
-        assert_eq!("".to_string(), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs));
+        assert_eq!("".to_string(), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &mut fs));
     });
 }
 

@@ -10,14 +10,12 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 
-use cryptostream::read;
 use cryptostream::read::Decryptor;
 use cryptostream::write::Encryptor;
-use keyring::Entry;
 use openssl::error::ErrorStack;
 use rand::{OsRng, Rng};
-use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize};
+use secrecy::{ExposeSecret, SecretString, SecretVec};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tracing::{error, instrument};
@@ -197,7 +195,7 @@ pub struct DirectoryEntryPlus {
 
 pub type FsResult<T> = Result<T, FsError>;
 
-pub struct DirectoryEntryIterator(ReadDir, Cipher, Vec<u8>);
+pub struct DirectoryEntryIterator(ReadDir, Cipher, SecretVec<u8>);
 
 impl Iterator for DirectoryEntryIterator {
     type Item = FsResult<DirectoryEntry>;
@@ -234,7 +232,7 @@ impl Iterator for DirectoryEntryIterator {
     }
 }
 
-pub struct DirectoryEntryPlusIterator(ReadDir, PathBuf, Cipher, Vec<u8>);
+pub struct DirectoryEntryPlusIterator(ReadDir, PathBuf, Cipher, SecretVec<u8>);
 
 impl Iterator for DirectoryEntryPlusIterator {
     type Item = FsResult<DirectoryEntryPlus>;
@@ -289,28 +287,54 @@ impl Iterator for DirectoryEntryPlusIterator {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+fn key_serialize<S>(key: &SecretVec<u8>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+{
+    s.collect_seq(key.expose_secret())
+}
+
+fn key_unserialize<'de, D>(deserializer: D) -> Result<SecretVec<u8>, D::Error>
+    where D: Deserializer<'de> {
+    let vec = Vec::deserialize(deserializer)?;
+    Ok(SecretVec::new(vec))
+}
+
+#[derive(Serialize, Deserialize)]
 struct KeyStore {
-    key: Vec<u8>,
+    #[serde(serialize_with = "key_serialize")]
+    #[serde(deserialize_with = "key_unserialize")]
+    key: SecretVec<u8>,
     hash: [u8; 32],
+}
+
+impl KeyStore {
+    fn new(key: SecretVec<u8>) -> Self {
+        let hash = crypto_util::hash(key.expose_secret());
+        Self {
+            key,
+            hash,
+        }
+    }
 }
 
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
 pub struct EncryptedFs {
     pub(crate) data_dir: PathBuf,
-    write_handles: HashMap<u64, (TimeAndSizeFileAttr, PathBuf, u64, Encryptor<File>, Arc<RwLock<u8>>)>,
-    read_handles: HashMap<u64, (TimeAndSizeFileAttr, u64, Decryptor<File>, Arc<RwLock<u8>>)>,
+    write_handles: HashMap<u64, (TimeAndSizeFileAttr, PathBuf, u64, Encryptor<File>, Arc<RwLock<bool>>)>,
+    read_handles: HashMap<u64, (TimeAndSizeFileAttr, u64, Decryptor<File>, Arc<RwLock<bool>>)>,
     current_handle: AtomicU64,
     cipher: Cipher,
     opened_files_for_write: HashMap<u64, u64>,
-    inode_lock: Mutex<WeakValueHashMap<u64, Weak<RwLock<u8>>>>,
+    inode_lock: Mutex<WeakValueHashMap<u64, Weak<RwLock<bool>>>>,
+    key: SecretVec<u8>,
 }
 
 impl EncryptedFs {
     pub fn new(data_dir: &str, password: SecretString, cipher: Cipher) -> FsResult<Self> {
         let path = PathBuf::from(&data_dir);
 
-        ensure_structure_created(&path)?;
+        ensure_structure_created(&path.clone())?;
 
         let mut fs = EncryptedFs {
             data_dir: path.clone(),
@@ -320,6 +344,7 @@ impl EncryptedFs {
             cipher: cipher.clone(),
             opened_files_for_write: HashMap::new(),
             inode_lock: Mutex::new(WeakValueHashMap::new()),
+            key: Self::read_or_create_key(path.join(SECURITY_DIR).join(KEY_ENC_FILENAME), password, &cipher)?,
         };
         let _ = fs.ensure_root_exists();
         fs.check_password()?;
@@ -470,8 +495,8 @@ impl EncryptedFs {
         fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
 
         let mut parent_attr = self.get_inode(parent)?;
-        parent_attr.mtime = std::time::SystemTime::now();
-        parent_attr.ctime = std::time::SystemTime::now();
+        parent_attr.mtime = SystemTime::now();
+        parent_attr.ctime = SystemTime::now();
         self.write_inode(&parent_attr)?;
 
         Ok(())
@@ -524,7 +549,7 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(contents_dir)?;
-        Ok(DirectoryEntryIterator(iter.into_iter(), self.cipher.clone(), self.key.clone()))
+        Ok(DirectoryEntryIterator(iter.into_iter(), self.cipher.clone(), SecretVec::new(self.key.expose_secret().to_vec())))
     }
 
     /// Like [read_dir](EncryptedFs::read_dir) but with [FileAttr] so we don't need to query again for those.
@@ -535,7 +560,7 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(contents_dir)?;
-        Ok(DirectoryEntryPlusIterator(iter.into_iter(), self.data_dir.join(INODES_DIR), self.cipher.clone(), self.key.clone()))
+        Ok(DirectoryEntryPlusIterator(iter.into_iter(), self.data_dir.join(INODES_DIR), self.cipher.clone(), SecretVec::new(self.key.expose_secret().to_vec())))
     }
 
     pub fn get_inode(&mut self, ino: u64) -> FsResult<FileAttr> {
@@ -749,7 +774,7 @@ impl EncryptedFs {
 
             let tmp_path_str = format!("{}.{}.tmp", attr.ino.to_string(), &handle.to_string());
             let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
-            let tmp_file = OpenOptions::new().write(true).create(true).open(tmp_path.clone())?;
+            let tmp_file = OpenOptions::new().write(true).create(true).truncate(true).open(tmp_path.clone())?;
 
             let mut decryptor2 = crypto_util::create_decryptor(in_file, &self.cipher, &self.key);
             let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
@@ -802,7 +827,7 @@ impl EncryptedFs {
         encryptor.write_all(buf)?;
         *position += buf.len() as u64;
 
-        // todo: maybe move this to when we release the handle so if we get several writes on block after another before file end
+        // todo: move this to when we release the handle so if we get several writes on block after another before file end
         // todo: we don't keep recreating the writer
         // todo: but we need to be careful because we need to update the size of the file only when we release the handle
         // if position is before file end we copy the rest of the file from position to the end
@@ -937,7 +962,7 @@ impl EncryptedFs {
 
             let tmp_path_str = format!("{}.truncate.tmp", attr.ino.to_string());
             let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
-            let tmp_file = OpenOptions::new().write(true).create(true).open(tmp_path.clone())?;
+            let tmp_file = OpenOptions::new().write(true).create(true).truncate(true).open(tmp_path.clone())?;
             let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
 
             // copy existing data until new size
@@ -968,7 +993,7 @@ impl EncryptedFs {
 
             let tmp_path_str = format!("{}.truncate.tmp", attr.ino.to_string());
             let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
-            let tmp_file = OpenOptions::new().write(true).create(true).open(tmp_path.clone())?;
+            let tmp_file = OpenOptions::new().write(true).create(true).truncate(true).open(tmp_path.clone())?;
             let mut encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &self.key);
 
             // copy existing data
@@ -1042,9 +1067,9 @@ impl EncryptedFs {
         Ok(())
     }
 
-    fn get_inode_lock(&mut self, ino: u64) -> Arc<RwLock<u8>> {
+    fn get_inode_lock(&mut self, ino: u64) -> Arc<RwLock<bool>> {
         let mut map_guard = self.inode_lock.lock().unwrap();
-        map_guard.entry(ino).or_insert_with(|| Arc::new(RwLock::new(0)))
+        map_guard.entry(ino).or_insert_with(|| Arc::new(RwLock::new(false)))
     }
 
     pub fn rename(&mut self, parent: u64, name: &str, new_parent: u64, new_name: &str) -> FsResult<()> {
@@ -1126,7 +1151,7 @@ impl EncryptedFs {
     }
 
     /// Create a decryptor using internal encryption info.
-    pub fn create_decryptor(&self, file: File) -> read::Decryptor<File> {
+    pub fn create_decryptor(&self, file: File) -> Decryptor<File> {
         crypto_util::create_decryptor(file, &self.cipher, &self.key)
     }
 
@@ -1151,19 +1176,19 @@ impl EncryptedFs {
         check_structure(&data_dir, false)?;
 
         // decrypt key
-        let salt = crypto_util::hash(old_password.expose_secret().as_bytes()).to_vec();
-        let initial_key = crypto_util::derive_key(old_password, &cipher, salt)?;
+        let salt = crypto_util::hash_secret(&old_password);
+        let initial_key = crypto_util::derive_key(&old_password, &cipher, salt)?;
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
         let decryptor = crypto_util::create_decryptor(File::open(enc_file.clone())?, &cipher, &initial_key);
         let key_store: KeyStore = bincode::deserialize_from(decryptor).map_err(|_| FsError::InvalidPassword)?;
         // check hash
-        if key_store.hash != crypto_util::hash(key_store.key.as_slice()) {
+        if key_store.hash != crypto_util::hash(key_store.key.expose_secret()) {
             return Err(FsError::InvalidPassword);
         }
 
         // encrypt it with new key derived from new password
-        let salt = crypto_util::hash(new_password.expose_secret().as_bytes()).to_vec();
-        let new_key = crypto_util::derive_key(new_password, &cipher, salt)?;
+        let salt = crypto_util::hash_secret(&new_password);
+        let new_key = crypto_util::derive_key(&new_password, &cipher, salt)?;
         fs::remove_file(enc_file.clone())?;
         let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
                                                           &cipher, &new_key);
@@ -1218,7 +1243,7 @@ impl EncryptedFs {
         Ok(())
     }
 
-    fn create_read_handle(&mut self, ino: u64, attr: Option<TimeAndSizeFileAttr>, handle: u64, lock: Arc<RwLock<u8>>) -> FsResult<u64> {
+    fn create_read_handle(&mut self, ino: u64, attr: Option<TimeAndSizeFileAttr>, handle: u64, lock: Arc<RwLock<bool>>) -> FsResult<u64> {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path)?;
 
@@ -1229,7 +1254,7 @@ impl EncryptedFs {
         Ok(handle)
     }
 
-    fn create_write_handle(&mut self, ino: u64, attr: Option<TimeAndSizeFileAttr>, handle: u64, lock: Arc<RwLock<u8>>) -> FsResult<u64> {
+    fn create_write_handle(&mut self, ino: u64, attr: Option<TimeAndSizeFileAttr>, handle: u64, lock: Arc<RwLock<bool>>) -> FsResult<u64> {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path.clone())?;
 
@@ -1241,7 +1266,7 @@ impl EncryptedFs {
         Ok(handle)
     }
 
-    fn replace_handle_data(&mut self, handle: u64, attr: TimeAndSizeFileAttr, new_path: PathBuf, position: u64, new_encryptor: Encryptor<File>, lock: Arc<RwLock<u8>>) {
+    fn replace_handle_data(&mut self, handle: u64, attr: TimeAndSizeFileAttr, new_path: PathBuf, position: u64, new_encryptor: Encryptor<File>, lock: Arc<RwLock<bool>>) {
         self.write_handles.insert(handle, (attr, new_path, position, new_encryptor, lock));
     }
 
@@ -1327,9 +1352,37 @@ impl EncryptedFs {
         }
     }
 
-    fn get_encryption_key(&self) -> Vec<u8> {
+    fn read_or_create_key(path: PathBuf, password: SecretString, cipher: &Cipher) -> FsResult<SecretVec<u8>> {
+        // derive key from password
+        let salt = crypto_util::hash_secret(&password);
+        let derived_key = crypto_util::derive_key(&password, cipher, salt)?;
+        if path.exists() {
+            // read key
 
-        read_or_create_key(self.data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME), password, &self.cipher)?
+            let decryptor = crypto_util::create_decryptor(File::open(path)?, cipher, &derived_key);
+            let key_store: KeyStore = bincode::deserialize_from(decryptor).map_err(|_| FsError::InvalidPassword)?;
+            // check hash
+            if key_store.hash != crypto_util::hash(key_store.key.expose_secret()) {
+                return Err(FsError::InvalidPassword);
+            }
+            Ok(key_store.key)
+        } else {
+            // first time, create a random key and encrypt it with the derived key from password
+
+            let mut key: Vec<u8> = vec![];
+            let key_len = match cipher {
+                Cipher::ChaCha20 => 32,
+                Cipher::Aes256Gcm => 32,
+            };
+            key.resize(key_len, 0);
+            OsRng::new()?.fill_bytes(&mut key);
+            let key = SecretVec::new(key);
+            let key_store = KeyStore::new(key);
+            let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path)?,
+                                                              cipher, &derived_key);
+            bincode::serialize_into(&mut encryptor, &key_store)?;
+            Ok(key_store.key)
+        }
     }
 }
 
@@ -1398,38 +1451,4 @@ fn merge_attr_time_and_set_size_obj(attr: &mut FileAttr, from: &TimeAndSizeFileA
     attr.ctime = max(attr.ctime, from.ctime);
     attr.crtime = max(attr.crtime, from.crtime);
     attr.size = from.size;
-}
-
-fn read_or_create_key(path: PathBuf, password: SecretString, cipher: &Cipher) -> FsResult<Vec<u8>> {
-    let salt = crypto_util::hash(password.expose_secret().as_bytes()).to_vec();
-    let derived_key = crypto_util::derive_key(password, cipher, salt)?;
-    if path.exists() {
-        // read key
-
-        let decryptor = crypto_util::create_decryptor(File::open(path)?, cipher, &derived_key);
-        let key_store: KeyStore = bincode::deserialize_from(decryptor).map_err(|_| FsError::InvalidPassword)?;
-        // check hash
-        if key_store.hash != crypto_util::hash(key_store.key.as_slice()) {
-            return Err(FsError::InvalidPassword);
-        }
-        Ok(key_store.key)
-    } else {
-        // first time, create a random key and encrypt it with the derived key from password
-
-        let mut key: Vec<u8> = vec![];
-        let key_len = match cipher {
-            Cipher::ChaCha20 => 32,
-            Cipher::Aes256Gcm => 32,
-        };
-        key.resize(key_len, 0);
-        OsRng::new()?.fill_bytes(&mut key);
-        let key_store = KeyStore {
-            key: key.clone(),
-            hash: crypto_util::hash(key.as_slice()),
-        };
-        let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path.clone())?,
-                                                          cipher, &derived_key);
-        bincode::serialize_into(&mut encryptor, &key_store)?;
-        Ok(key)
-    }
 }
