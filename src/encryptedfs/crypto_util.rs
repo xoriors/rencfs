@@ -6,10 +6,12 @@ use std::io::{Read, Write};
 use base64::decode;
 use std::io;
 use argon2::Argon2;
+use cryptostream::read::Decryptor;
+use cryptostream::write::Encryptor;
 use openssl::sha::sha256;
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use thiserror::Error;
-use tracing::instrument;
+use tracing::{error, instrument};
 use crate::encryptedfs::Cipher;
 
 #[derive(Debug, Error)]
@@ -18,7 +20,11 @@ pub enum CryptoError {
     Generic(String),
 }
 pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> write::Encryptor<File> {
-    let mut iv: Vec<u8> = vec![0; 16];
+    let iv_len =match cipher {
+        Cipher::ChaCha20 => 16,
+        Cipher::Aes256Gcm => 316,
+    };
+    let mut iv: Vec<u8> = vec![0; iv_len];
     if file.metadata().unwrap().size() == 0 {
         // generate random IV
         rand::thread_rng().fill_bytes(&mut iv);
@@ -27,20 +33,25 @@ pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) ->
         // read IV from file
         file.read_exact(&mut iv).unwrap();
     }
-    write::Encryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
+    Encryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 }
 
-pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> read::Decryptor<File> {
-    let mut iv: Vec<u8> = vec![0; 16];
+#[instrument(skip(key))]
+pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> Decryptor<File> {
+    let iv_len =match cipher {
+        Cipher::ChaCha20 => 16,
+        Cipher::Aes256Gcm => 316,
+    };
+    let mut iv: Vec<u8> = vec![0; iv_len];
     if file.metadata().unwrap().size() == 0 {
         // generate random IV
         rand::thread_rng().fill_bytes(&mut iv);
-        file.write_all(&iv).unwrap();
+        file.write_all(&iv).map_err(|err| {error!("{err}")}).unwrap();
     } else {
         // read IV from file
-        file.read_exact(&mut iv).unwrap();
+        file.read_exact(&mut iv).map_err(|err| {error!("{err}")}).unwrap();
     }
-    read::Decryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
+    Decryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 }
 
 pub fn encrypt_string(s: &SecretString, cipher: &Cipher, key: &SecretVec<u8>) -> String {

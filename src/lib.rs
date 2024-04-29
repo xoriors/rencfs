@@ -1,3 +1,4 @@
+// #![feature(error_generic_member_access)]
 //! # Encrypted File System
 //!
 //! An encrypted file system that mounts with FUSE on Linux. It can be used to create encrypted directories.
@@ -181,11 +182,15 @@ use std::ffi::OsStr;
 use fuse3::raw::Session;
 use keyring::Entry;
 use secrecy::{ExposeSecret, SecretString};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::EnvFilter;
 use crate::encryptedfs::Cipher;
 use crate::encryptedfs_fuse3::EncryptedFsFuse3;
 
 pub mod encryptedfs;
 pub mod encryptedfs_fuse3;
+pub mod expire_value;
+pub mod weak_hashmap;
 
 #[allow(unreachable_code)]
 pub fn is_debug() -> bool {
@@ -196,10 +201,17 @@ pub fn is_debug() -> bool {
 }
 
 pub fn log_init(level: Level) -> WorkerGuard {
+    let directive = format!("rencfs={}", level.as_str()).parse().unwrap();
+    let filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env().unwrap()
+        .add_directive(directive);
+
     let (writer, guard) = tracing_appender::non_blocking(std::io::stdout());
     let builder = tracing_subscriber::fmt()
         .with_writer(writer)
-        .with_max_level(level);
+        .with_env_filter(filter);
+        // .with_max_level(level);
     if is_debug() {
         builder
             .pretty()
@@ -213,12 +225,15 @@ pub fn log_init(level: Level) -> WorkerGuard {
 
 #[instrument(skip(password))]
 pub async fn run_fuse(mountpoint: &str, data_dir: &str, password: SecretString, cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
-    let uid = unsafe { libc::getuid() };
-    let gid = unsafe { libc::getgid() };
-
-    let mount_options = MountOptions::default()
-        .uid(uid)
-        .gid(gid)
+    let mut mount_options = &mut MountOptions::default();
+    #[cfg(target_os = "linux")] {
+        unsafe {
+            mount_options = mount_options
+                .uid(libc::getuid())
+                .gid(libc::getgid());
+        }
+    }
+    let mount_options = mount_options
         .read_only(false)
         .allow_root(allow_root)
         .allow_other(allow_other)
@@ -227,7 +242,7 @@ pub async fn run_fuse(mountpoint: &str, data_dir: &str, password: SecretString, 
 
     info!("Checking password and mounting FUSE filesystem");
     Session::new(mount_options)
-        .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, password, cipher, direct_io, suid_support)?, mount_path)
+        .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, password, cipher, direct_io, suid_support).await?, mount_path)
         .await?
         .await?;
 

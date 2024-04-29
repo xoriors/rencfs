@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
     let matches = get_cli_args();
 
     let log_level = if is_debug() {
-        Level::TRACE
+        Level::DEBUG
     } else {
         let log_level_str = matches.get_one::<String>("log-level").unwrap().as_str();
         let log_level = Level::from_str(log_level_str);
@@ -195,7 +195,7 @@ async fn async_main() -> Result<()> {
 
     if matches.get_flag("change-password") {
         // change password
-        run_change_password(&data_dir, cipher)?;
+        run_change_password(&data_dir, cipher).await?;
     } else {
         //normal run
         run_normal(matches, &data_dir, cipher).await?;
@@ -204,7 +204,7 @@ async fn async_main() -> Result<()> {
     Ok(())
 }
 
-fn run_change_password(data_dir: &String, cipher: Cipher) -> Result<()> {
+async fn run_change_password(data_dir: &String, cipher: Cipher) -> Result<()> {
     // read password from stdin
     print!("Enter old password: ");
     io::stdout().flush().unwrap();
@@ -220,7 +220,7 @@ fn run_change_password(data_dir: &String, cipher: Cipher) -> Result<()> {
         return Err(ExitStatusError::Failure(1).into());
     }
     println!("Changing password...");
-    EncryptedFs::change_password(&data_dir, password, new_password, cipher).map_err(|err| {
+    EncryptedFs::change_password(&data_dir, password, new_password, cipher).await.map_err(|err| {
         match err {
             FsError::InvalidPassword => {
                 println!("Invalid old password");

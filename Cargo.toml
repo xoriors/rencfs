@@ -25,24 +25,25 @@ base64 = "=0.13.1"
 openssl = "=0.10.64"
 fuse3 = { version = "0.7.1", features = ["tokio-runtime", "unprivileged"] }
 tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "time", "signal", "process", "rt"] }
+tokio-stream = { version = "0.1.15", features = ["fs"] }
 futures-util = "0.3.30"
 mio = { version = "0.8.11", features = ["os-poll"] }
 bytes = "1.5"
-tracing = {version = "0.1.40", features = ["max_level_trace", "release_max_level_info"]}
-tracing-subscriber = "0.3"
+tracing = { version = "0.1.40", features = ["max_level_trace", "release_max_level_info"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2.3"
-ctrlc = { version = "3.1.9" , features = ["termination"]}
-parking_lot = "0.12.1"
+ctrlc = { version = "3.1.9", features = ["termination"] }
 sha2 = "0.11.0-pre.3"
 strum = "0.26.2"
 strum_macros = "0.26.2"
 rpassword = "7.3.1"
 cryptostream = "0.3.2"
-weak-table = "0.3.2"
 anyhow = "1.0.82"
 argon2 = "0.5.3"
 keyring = "2.3.2"
 secrecy = "0.8.0"
+retainer = "0.3.0"
+num-format = "0.4.4"
 
 [package.metadata.aur]
 depends = ["fuse3"]
