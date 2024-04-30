@@ -19,8 +19,9 @@ pub enum CryptoError {
     #[error("crypto error: {0}")]
     Generic(String),
 }
+
 pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> write::Encryptor<File> {
-    let iv_len =match cipher {
+    let iv_len = match cipher {
         Cipher::ChaCha20 => 16,
         Cipher::Aes256Gcm => 316,
     };
@@ -38,7 +39,7 @@ pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) ->
 
 #[instrument(skip(key))]
 pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> Decryptor<File> {
-    let iv_len =match cipher {
+    let iv_len = match cipher {
         Cipher::ChaCha20 => 16,
         Cipher::Aes256Gcm => 316,
     };
@@ -46,10 +47,16 @@ pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) ->
     if file.metadata().unwrap().size() == 0 {
         // generate random IV
         rand::thread_rng().fill_bytes(&mut iv);
-        file.write_all(&iv).map_err(|err| {error!("{err}")}).unwrap();
+        file.write_all(&iv).map_err(|err| {
+            error!("{err}");
+            err
+        }).unwrap();
     } else {
         // read IV from file
-        file.read_exact(&mut iv).map_err(|err| {error!("{err}")}).unwrap();
+        file.read_exact(&mut iv).map_err(|err| {
+            error!("{err}");
+            err
+        }).unwrap();
     }
     Decryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 }
@@ -87,7 +94,7 @@ pub fn decrypt_and_unnormalize_end_file_name(name: &str, cipher: &Cipher, key: &
 #[instrument(skip(password, salt))]
 pub fn derive_key(password: &SecretString, cipher: &Cipher, salt: SecretVec<u8>) -> Result<SecretVec<u8>, CryptoError> {
     let mut dk = vec![];
-    let key_len =match cipher {
+    let key_len = match cipher {
         Cipher::ChaCha20 => 32,
         Cipher::Aes256Gcm => 32,
     };
@@ -102,7 +109,7 @@ pub fn normalize_end_encrypt_file_name(name: &SecretString, cipher: &Cipher, key
         let normalized_name = SecretString::new(name.expose_secret().replace("/", " ").replace("\\", " "));
         let mut encrypted = encrypt_string(&normalized_name, cipher, key);
         encrypted = encrypted.replace("/", "|");
-        return encrypted
+        return encrypted;
     }
     name.expose_secret().to_owned()
 }
@@ -110,6 +117,7 @@ pub fn normalize_end_encrypt_file_name(name: &SecretString, cipher: &Cipher, key
 pub fn hash(data: &[u8]) -> [u8; 32] {
     sha256(data)
 }
+
 pub fn hash_secret(data: &SecretString) -> SecretVec<u8> {
     SecretVec::new(sha256(data.expose_secret().as_bytes()).to_vec())
 }

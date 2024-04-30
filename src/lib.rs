@@ -190,7 +190,7 @@ use crate::encryptedfs_fuse3::EncryptedFsFuse3;
 pub mod encryptedfs;
 pub mod encryptedfs_fuse3;
 pub mod expire_value;
-pub mod weak_hashmap;
+pub mod arc_hashmap;
 
 #[allow(unreachable_code)]
 pub fn is_debug() -> bool {

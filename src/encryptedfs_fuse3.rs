@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use fuse3::{Inode, Result, SetAttr, Timestamp};
+use fuse3::{Errno, Inode, Result, SetAttr, Timestamp};
 use fuse3::raw::prelude::{DirectoryEntry, DirectoryEntryPlus, ReplyAttr, ReplyCopyFileRange, ReplyCreated, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEntry, ReplyInit, ReplyOpen, ReplyStatFs, ReplyWrite};
 use fuse3::raw::{Filesystem, Request};
 use futures_util::stream;
@@ -19,7 +19,7 @@ use libc::{EACCES, EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, error, instrument, trace, warn};
 
-use crate::encryptedfs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult};
+use crate::encryptedfs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult, SetFileAttr, CreateFileAttr};
 
 const TTL: Duration = Duration::from_secs(1);
 const STATFS: ReplyStatFs = ReplyStatFs {
@@ -36,8 +36,6 @@ const STATFS: ReplyStatFs = ReplyStatFs {
 const FMODE_EXEC: i32 = 0x20;
 
 const MAX_NAME_LENGTH: u32 = 255;
-
-const BLOCK_SIZE: u64 = 512;
 
 // Flags returned by the open request
 const FOPEN_DIRECT_IO: u32 = 1 << 0; // bypass page cache for this open file
@@ -97,7 +95,7 @@ impl Iterator for DirectoryEntryPlusIterator {
                     kind,
                     name: OsString::from(entry.name.expose_secret()),
                     offset: self.1 as i64,
-                    attr: from_attr(entry.attr),
+                    attr: entry.attr.into(),
                     entry_ttl: TTL,
                     attr_ttl: TTL,
                 }))
@@ -181,7 +179,7 @@ impl EncryptedFsFuse3 {
         let mut attr = if kind == FileType::Directory {
             dir_attr()
         } else {
-            file_attr(0)
+            file_attr()
         };
         attr.perm = self.creation_mode(mode);
         attr.uid = req.uid;
@@ -208,25 +206,27 @@ fn creation_gid(parent: &FileAttr, gid: u32) -> u32 {
     gid
 }
 
-fn from_attr(from: FileAttr) -> fuse3::raw::prelude::FileAttr {
-    fuse3::raw::prelude::FileAttr {
-        ino: from.ino,
-        size: from.size,
-        blocks: from.blocks,
-        atime: from.atime.into(),
-        mtime: from.mtime.into(),
-        ctime: from.ctime.into(),
-        kind: if from.kind == FileType::Directory {
-            fuse3::raw::prelude::FileType::Directory
-        } else {
-            fuse3::raw::prelude::FileType::RegularFile
-        },
-        perm: from.perm,
-        nlink: from.nlink,
-        uid: from.uid,
-        gid: from.gid,
-        rdev: from.rdev,
-        blksize: from.blksize,
+impl From<FileAttr> for fuse3::raw::prelude::FileAttr {
+    fn from(from: FileAttr) -> Self {
+        fuse3::raw::prelude::FileAttr {
+            ino: from.ino,
+            size: from.size,
+            blocks: from.blocks,
+            atime: from.atime.into(),
+            mtime: from.mtime.into(),
+            ctime: from.ctime.into(),
+            kind: if from.kind == FileType::Directory {
+                fuse3::raw::prelude::FileType::Directory
+            } else {
+                fuse3::raw::prelude::FileType::RegularFile
+            },
+            perm: from.perm,
+            nlink: from.nlink,
+            uid: from.uid,
+            gid: from.gid,
+            rdev: from.rdev,
+            blksize: from.blksize,
+        }
     }
 }
 
@@ -293,7 +293,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         Ok(ReplyEntry {
             ttl: TTL,
-            attr: from_attr(attr),
+            attr: attr.into(),
             generation: 0,
         })
     }
@@ -326,7 +326,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 }
                 Ok(ReplyAttr {
                     ttl: TTL,
-                    attr: from_attr(attr),
+                    attr: attr.into(),
                 })
             }
         }
@@ -337,22 +337,25 @@ impl Filesystem for EncryptedFsFuse3 {
         &self,
         req: Request,
         inode: Inode,
-        fh: Option<u64>,
+        _fh: Option<u64>,
         set_attr: SetAttr,
     ) -> Result<ReplyAttr>
     {
         trace!("");
         debug!("{set_attr:#?}");
 
-        let mut attr = if let Ok(attr) = self.get_fs().get_inode(inode).await { attr } else {
-            error!(inode, "not found");
-            return Err(ENOENT.into());
-        };
+        let attr = self.get_fs().get_inode(inode).await.map_err(|err| {
+            error!(err = %err);
+            Errno::from(ENOENT)
+        })?;
+
+        let mut set_attr2: SetFileAttr = Default::default();
 
         if let Some(mode) = set_attr.mode {
             debug!("chmod mode={mode:o}");
+            let mut set_attr2: SetFileAttr = Default::default();
             if req.uid != 0 && req.uid != attr.uid {
-                return Err(libc::EPERM.into());
+                return Err(EPERM.into());
             }
             if req.uid != 0
                 && req.gid != attr.gid
@@ -360,31 +363,31 @@ impl Filesystem for EncryptedFsFuse3 {
             {
                 // If SGID is set and the file belongs to a group that the caller is not part of
                 // then the SGID bit is suppose to be cleared during chmod
-                attr.perm = (mode & !libc::S_ISGID as u32) as u16;
+                set_attr2 = set_attr2.with_perm((mode & !libc::S_ISGID as u32) as u16);
             } else {
-                attr.perm = mode as u16;
+                set_attr2 = set_attr2.with_perm(mode as u16);
             }
-            attr.ctime = SystemTime::now();
-            if let Err(err) = self.get_fs().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags).await {
+            set_attr2 = set_attr2.with_atime(SystemTime::now());
+            self.get_fs().update_inode(inode, set_attr2).await.map_err(|err| {
                 error!(err = %err);
-                return Err(EBADF.into());
-            }
+                Errno::from(EBADF)
+            })?;
             return Ok(ReplyAttr {
                 ttl: TTL,
-                attr: from_attr(attr),
+                attr: self.get_fs().get_inode(inode).await.map_err(|_err| Errno::from(ENOENT))?.into(),
             });
         }
 
         if set_attr.uid.is_some() || set_attr.gid.is_some() {
             debug!(?set_attr.uid, ?set_attr.gid, "chown");
-
-            if let Some(gid) = set_attr.gid {
+            let mut set_attr2: SetFileAttr = Default::default();
+            if let Some(gid) = set_attr2.gid {
                 // Non-root users can only change gid to a group they're in
                 if req.uid != 0 && !get_groups(req.pid).contains(&gid) {
-                    return Err(libc::EPERM.into());
+                    return Err(EPERM.into());
                 }
             }
-            if let Some(uid) = set_attr.uid {
+            if let Some(uid) = set_attr2.uid {
                 if req.uid != 0
                     // but no-op changes by the owner are not an error
                     && !(uid == attr.uid && req.uid == attr.uid) {
@@ -392,49 +395,52 @@ impl Filesystem for EncryptedFsFuse3 {
                 }
             }
             // Only owner may change the group
-            if set_attr.gid.is_some() && req.uid != 0 && req.uid != attr.uid {
+            if set_attr2.gid.is_some() && req.uid != 0 && req.uid != attr.uid {
                 return Err(EPERM.into());
             }
 
+            set_attr2 = set_attr2.with_perm(attr.perm);
             if attr.perm & (libc::S_IXUSR | libc::S_IXGRP | libc::S_IXOTH) as u16 != 0 {
                 // SUID & SGID are suppose to be cleared when chown'ing an executable file
-                clear_suid_sgid(&mut attr);
+                set_attr2 = set_attr2.with_perm(clear_suid_sgid(attr.perm));
             }
 
-            if let Some(uid) = set_attr.uid {
-                attr.uid = uid;
+            if let Some(uid) = set_attr2.uid {
+                set_attr2 = set_attr2.with_uid(uid);
                 // Clear SETUID on owner change
-                attr.perm &= !libc::S_ISUID as u16;
+                let perm = set_attr2.perm.as_ref().unwrap().clone();
+                set_attr2 = set_attr2.with_perm(perm & !(libc::S_ISUID as u16));
             }
-            if let Some(gid) = set_attr.gid {
-                attr.gid = gid;
+            if let Some(gid) = set_attr2.gid {
+                set_attr2 = set_attr2.with_gid(gid);
                 // Clear SETGID unless user is root
                 if req.uid != 0 {
-                    attr.perm &= !libc::S_ISGID as u16;
+                    let perm = set_attr2.perm.as_ref().unwrap().clone();
+                    set_attr2 = set_attr2.with_perm(perm & !(libc::S_ISGID as u16));
                 }
             }
-            attr.ctime = SystemTime::now();
-            if let Err(err) = self.get_fs().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags).await {
+            set_attr2 = set_attr2.with_atime(SystemTime::now());
+            self.get_fs().update_inode(inode, set_attr2).await.map_err(|err| {
                 error!(err = %err);
-                return Err(EBADF.into());
-            }
+                Errno::from(EBADF)
+            })?;
             return Ok(ReplyAttr {
                 ttl: TTL,
-                attr: from_attr(attr),
+                attr: self.get_fs().get_inode(inode).await.map_err(|_err| Errno::from(ENOENT))?.into(),
             });
         }
 
         if let Some(size) = set_attr.size {
             debug!(size, "truncate");
 
-            if let Err(err) = self.get_fs().truncate(inode, size).await {
+            self.get_fs().truncate(inode, size).await.map_err(|err| {
                 error!(err = %err);
-                return Err(EBADF.into());
-            }
-            attr.size = size;
+                Errno::from(EIO)
+            })?;
+            set_attr2 = set_attr2.with_size(size);
 
             // Clear SETUID & SETGID on truncate
-            clear_suid_sgid(&mut attr);
+            set_attr2 = set_attr2.with_perm(clear_suid_sgid(attr.perm));
         }
 
         if let Some(atime) = set_attr.atime {
@@ -452,8 +458,8 @@ impl Filesystem for EncryptedFsFuse3 {
                 return Err(EACCES.into());
             }
 
-            attr.atime = system_time_from_timestamp(atime);
-            attr.ctime = SystemTime::now();
+            set_attr2 = set_attr2.with_atime(system_time_from_timestamp(atime));
+            set_attr2 = set_attr2.with_ctime(SystemTime::now());
         }
 
         if let Some(mtime) = set_attr.mtime {
@@ -471,18 +477,18 @@ impl Filesystem for EncryptedFsFuse3 {
                 return Err(EACCES.into());
             }
 
-            attr.mtime = system_time_from_timestamp(mtime);
-            attr.ctime = SystemTime::now();
+            set_attr2 = set_attr2.with_mtime(system_time_from_timestamp(mtime));
+            set_attr2 = set_attr2.with_ctime(SystemTime::now());
         }
 
-        if let Err(err) = self.get_fs().update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags).await {
+        self.get_fs().update_inode(inode, set_attr2).await.map_err(|err| {
             error!(err = %err);
-            return Err(EBADF.into());
-        }
+            Errno::from(EBADF)
+        })?;
 
         Ok(ReplyAttr {
             ttl: TTL,
-            attr: from_attr(attr),
+            attr: self.get_fs().get_inode(inode).await.map_err(|_err| Errno::from(ENOENT))?.into(),
         })
     }
 
@@ -493,7 +499,7 @@ impl Filesystem for EncryptedFsFuse3 {
         parent: Inode,
         name: &OsStr,
         mode: u32,
-        rdev: u32,
+        _rdev: u32,
     ) -> Result<ReplyEntry> {
         trace!("");
         debug!("mode={mode:o}");
@@ -514,7 +520,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 // TODO: implement flags
                 Ok(ReplyEntry {
                     ttl: TTL,
-                    attr: from_attr(attr),
+                    attr: attr.into(),
                     generation: 0,
                 })
             }
@@ -557,10 +563,6 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         let mut attr = dir_attr();
-        attr.size = BLOCK_SIZE;
-        attr.atime = SystemTime::now();
-        attr.mtime = SystemTime::now();
-        attr.ctime = SystemTime::now();
 
         let mut mode = mode;
         if req.uid != 0 {
@@ -574,19 +576,15 @@ impl Filesystem for EncryptedFsFuse3 {
         attr.uid = req.uid;
         attr.gid = creation_gid(&parent_attr, req.gid);
 
-        match self.get_fs().create_nod(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap(), attr, false, false).await {
-            Err(err) => {
-                error!(err = %err);
-                return Err(ENOENT.into());
-            }
-            Ok((_, attr)) => {
-                Ok(ReplyEntry {
-                    ttl: TTL,
-                    attr: from_attr(attr),
-                    generation: 0,
-                })
-            }
-        }
+        let (_, attr) = self.get_fs().create_nod(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap(), attr, false, false).await.map_err(|err| {
+            error!(err = %err);
+            Errno::from(ENOENT)
+        })?;
+        Ok(ReplyEntry {
+            ttl: TTL,
+            attr: attr.into(),
+            generation: 0,
+        })
     }
 
     #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::DEBUG))]
@@ -919,19 +917,24 @@ impl Filesystem for EncryptedFsFuse3 {
         let is_write_handle = fs.is_write_handle(fh);
 
         if let Err(err) = fs.release(fh).await {
-            error!(err = %err, "release_handle");
+            error!(err = %err);
             return Err(EIO.into());
         }
 
         if is_write_handle.await {
-            let mut attr = fs.get_inode(inode).await.unwrap();
+            let attr = fs.get_inode(inode).await.map_err(|err| {
+                error!(err = %err);
+                Errno::from(ENOENT)
+            })?;
+            let mut set_attr: SetFileAttr = Default::default();
+
             // XXX: In theory we should only need to do this when WRITE_KILL_PRIV is set for 7.31+
             // However, xfstests fail in that case
-            clear_suid_sgid(&mut attr);
-            if let Err(err) = fs.update_inode(inode, attr.perm, attr.atime, attr.mtime, attr.ctime, attr.crtime, attr.uid, attr.gid, attr.size, attr.nlink, attr.flags).await {
+            set_attr = set_attr.with_perm(clear_suid_sgid(attr.perm));
+            fs.update_inode(inode, set_attr).await.map_err(|err| {
                 error!(err = %err, "replace attr");
-                return Err(EBADF.into());
-            }
+                Errno::from(EBADF)
+            })?;
         }
 
         Ok(())
@@ -1071,7 +1074,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 // TODO: implement flags
                 Ok(ReplyCreated {
                     ttl: TTL,
-                    attr: from_attr(attr),
+                    attr: attr.into(),
                     generation: 0,
                     fh: handle,
                     flags: 0,
@@ -1162,12 +1165,13 @@ fn get_groups(pid: u32) -> Vec<u32> {
     vec![]
 }
 
-fn clear_suid_sgid(attr: &mut FileAttr) {
-    attr.perm &= !libc::S_ISUID as u16;
+fn clear_suid_sgid(mut perm: u16) -> u16 {
+    perm &= !libc::S_ISUID as u16;
     // SGID is only suppose to be cleared if XGRP is set
-    if attr.perm & libc::S_IXGRP as u16 != 0 {
-        attr.perm &= !libc::S_ISGID as u16;
+    if perm & libc::S_IXGRP as u16 != 0 {
+        perm &= !libc::S_ISGID as u16;
     }
+    perm
 }
 
 fn as_file_kind(mut mode: u32) -> FileType {
@@ -1184,50 +1188,26 @@ fn as_file_kind(mut mode: u32) -> FileType {
     }
 }
 
-fn dir_attr() -> FileAttr {
-    let mut f = FileAttr {
-        ino: 0,
-        size: BLOCK_SIZE,
-        blocks: 0,
-        atime: SystemTime::now(),
-        mtime: SystemTime::now(),
-        ctime: SystemTime::now(),
-        crtime: SystemTime::now(),
+fn dir_attr() -> CreateFileAttr {
+    CreateFileAttr {
         kind: FileType::Directory,
         perm: 0o777,
-        nlink: 2,
         uid: 0,
         gid: 0,
         rdev: 0,
         flags: 0,
-        blksize: BLOCK_SIZE as u32,
-    };
-    f.blocks = (f.size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-    f
+    }
 }
 
-fn file_attr(size: u64) -> FileAttr {
-    let mut f = FileAttr {
-        ino: 0,
-        size,
-        blocks: (size + BLOCK_SIZE - 1) / BLOCK_SIZE,
-        atime: SystemTime::now(),
-        mtime: SystemTime::now(),
-        ctime: SystemTime::now(),
-        crtime: SystemTime::now(),
+fn file_attr() -> CreateFileAttr {
+    CreateFileAttr {
         kind: FileType::RegularFile,
         perm: 0o644,
-        nlink: 1,
         uid: 0,
         gid: 0,
         rdev: 0,
         flags: 0,
-        blksize: 512,
-    };
-    f.blocks = (f.size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-
-    f
+    }
 }
 
 fn check_access(

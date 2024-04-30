@@ -1,14 +1,13 @@
 use std::{fs, io};
-use std::backtrace::Backtrace;
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions, ReadDir};
 use std::io::{Read, Write};
+use std::ops::Deref;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::{Arc, Weak};
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, SystemTime};
 
@@ -22,16 +21,17 @@ use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
-use tokio::sync::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use tokio::sync::{Mutex, MutexGuard, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, instrument, warn};
+
+use crate::arc_hashmap::{ArcHashMap, Guard};
 use crate::expire_value;
 use crate::expire_value::ExpireValue;
-use crate::weak_hashmap::WeakValueHashMap;
 
+pub mod crypto_util;
 #[cfg(test)]
 mod encryptedfs_test;
-pub mod crypto_util;
 #[cfg(test)]
 mod moved_test;
 
@@ -94,6 +94,120 @@ pub enum FileType {
     // Symlink,
     // /// Unix domain socket (S_IFSOCK)
     // Socket,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SetFileAttr {
+    /// Size in bytes
+    pub size: Option<u64>,
+    /// Time of last access
+    pub atime: Option<SystemTime>,
+    /// Time of last modification
+    pub mtime: Option<SystemTime>,
+    /// Time of last change
+    pub ctime: Option<SystemTime>,
+    /// Time of creation (macOS only)
+    pub crtime: Option<SystemTime>,
+    /// Permissions
+    pub perm: Option<u16>,
+    /// User id
+    pub uid: Option<u32>,
+    /// Group id
+    pub gid: Option<u32>,
+    /// Rdev
+    pub rdev: Option<u32>,
+    /// Flags (macOS only, see chflags(2))
+    pub flags: Option<u32>,
+}
+
+impl SetFileAttr {
+    pub fn with_size(mut self, size: u64) -> Self {
+        self.size = Some(size);
+        self
+    }
+
+    pub fn with_atime(mut self, atime: SystemTime) -> Self {
+        self.atime = Some(atime);
+        self
+    }
+
+    pub fn with_mtime(mut self, mtime: SystemTime) -> Self {
+        self.mtime = Some(mtime);
+        self
+    }
+
+    pub fn with_ctime(mut self, ctime: SystemTime) -> Self {
+        self.ctime = Some(ctime);
+        self
+    }
+
+    pub fn with_crtime(mut self, crtime: SystemTime) -> Self {
+        self.crtime = Some(crtime);
+        self
+    }
+
+    pub fn with_perm(mut self, perm: u16) -> Self {
+        self.perm = Some(perm);
+        self
+    }
+
+    pub fn with_uid(mut self, uid: u32) -> Self {
+        self.uid = Some(uid);
+        self
+    }
+
+    pub fn with_gid(mut self, gid: u32) -> Self {
+        self.gid = Some(gid);
+        self
+    }
+
+    pub fn with_rdev(mut self, rdev: u32) -> Self {
+        self.rdev = Some(rdev);
+        self
+    }
+
+    pub fn with_flags(mut self, flags: u32) -> Self {
+        self.rdev = Some(flags);
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateFileAttr {
+    /// Kind of file (directory, file, pipe, etc)
+    pub kind: FileType,
+    /// Permissions
+    pub perm: u16,
+    /// User id
+    pub uid: u32,
+    /// Group id
+    pub gid: u32,
+    /// Rdev
+    pub rdev: u32,
+    /// Flags (macOS only, see chflags(2))
+    pub flags: u32,
+}
+
+impl From<CreateFileAttr> for FileAttr {
+    fn from(value: CreateFileAttr) -> Self {
+        Self {
+            ino: 0,
+            size: 0,
+            blocks: 0,
+            atime: SystemTime::now(),
+            mtime: SystemTime::now(),
+            ctime: SystemTime::now(),
+            crtime: SystemTime::now(),
+            kind: value.kind,
+            perm: value.perm,
+            nlink: if value.kind == FileType::Directory { 2 } else { 1 },
+            uid: value.uid,
+            gid: value.gid,
+            rdev: value.rdev,
+            blksize: 0,
+            flags: value.flags,
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -193,17 +307,31 @@ impl TimeAndSizeFileAttr {
             size,
         }
     }
+}
 
-    fn from_file_attr(attr: &FileAttr) -> Self {
+impl From<FileAttr> for TimeAndSizeFileAttr {
+    fn from(value: FileAttr) -> Self {
         Self {
-            atime: attr.atime,
-            mtime: attr.mtime,
-            ctime: attr.ctime,
-            crtime: attr.crtime,
-            size: attr.size,
+            atime: value.atime,
+            mtime: value.mtime,
+            ctime: value.ctime,
+            crtime: value.crtime,
+            size: value.size,
         }
     }
 }
+
+impl From<TimeAndSizeFileAttr> for SetFileAttr {
+    fn from(value: TimeAndSizeFileAttr) -> Self {
+        SetFileAttr::default()
+            .with_atime(value.atime)
+            .with_mtime(value.mtime)
+            .with_ctime(value.ctime)
+            .with_crtime(value.crtime)
+            .with_size(value.size)
+    }
+}
+
 
 #[derive(Debug)]
 pub struct DirectoryEntry {
@@ -266,11 +394,7 @@ impl Iterator for DirectoryEntryIterator {
             return Some(Err(e.into()));
         }
         let (ino, kind): (u64, FileType) = res.unwrap();
-        Some(Ok(DirectoryEntry {
-            ino,
-            name,
-            kind,
-        }))
+        Some(Ok(DirectoryEntry { ino, name, kind }))
     }
 }
 
@@ -355,10 +479,7 @@ struct KeyStore {
 impl KeyStore {
     fn new(key: SecretVec<u8>) -> Self {
         let hash = crypto_util::hash(key.expose_secret());
-        Self {
-            key,
-            hash,
-        }
+        Self { key, hash }
     }
 }
 
@@ -367,16 +488,16 @@ struct ReadHandleContext {
     attr: TimeAndSizeFileAttr,
     pos: u64,
     decryptor: Option<Decryptor<File>>,
-    _lock: Arc<RwLock<bool>>, // we don't use it but just keep a reference to keep it alive in self.inode_lock while handle is open
+    _lock: Guard<Mutex<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
 }
 
 enum ReadHandleContextOperation<'a> {
     Create {
         ino: u64,
-        lock: Arc<RwLock<bool>>,
+        lock: Guard<Mutex<bool>>,
     },
     RecreateDecryptor {
-        existing: RwLockWriteGuard<'a, ReadHandleContext>,
+        existing: MutexGuard<'a, ReadHandleContext>,
     },
 }
 
@@ -392,10 +513,10 @@ impl ReadHandleContextOperation<'_> {
 enum WriteHandleContextOperation<'a> {
     Create {
         ino: u64,
-        lock: Arc<RwLock<bool>>,
+        lock: Guard<Mutex<bool>>,
     },
     RecreateEncryptor {
-        existing: RwLockWriteGuard<'a, WriteHandleContext>,
+        existing: MutexGuard<'a, WriteHandleContext>,
         reset_size: bool,
     },
 }
@@ -415,7 +536,7 @@ struct WriteHandleContext {
     path: PathBuf,
     pos: u64,
     encryptor: Option<Encryptor<File>>,
-    _lock: Arc<RwLock<bool>>, // we don't use it but just keep a reference to keep it alive in self.inode_lock while handle is open
+    _lock: Guard<Mutex<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
 }
 
 struct KeyProvider {
@@ -433,14 +554,18 @@ impl expire_value::Provider<SecretVec<u8>, FsError> for KeyProvider {
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
 pub struct EncryptedFs {
     pub(crate) data_dir: PathBuf,
-    write_handles: RwLock<HashMap<u64, RwLock<WriteHandleContext>>>,
-    read_handles: RwLock<HashMap<u64, RwLock<ReadHandleContext>>>,
+    write_handles: RwLock<HashMap<u64, Mutex<WriteHandleContext>>>,
+    read_handles: RwLock<HashMap<u64, Mutex<ReadHandleContext>>>,
     current_handle: AtomicU64,
     cipher: Cipher,
-    opened_files_for_write: RwLock<HashMap<u64, u64>>,
     // (ino, fh)
-    read_write_inode_locks: Mutex<WeakValueHashMap<u64, RwLock<bool>>>,
-    serialize_inode_locks: Mutex<WeakValueHashMap<u64, RwLock<bool>>>,
+    opened_files_for_read: RwLock<HashMap<u64, HashSet<u64>>>,
+    opened_files_for_write: RwLock<HashMap<u64, u64>>,
+    // used for rw ops of actual serialization
+    serialize_inode_locks: Mutex<ArcHashMap<u64, Mutex<bool>>>,
+    // used for the update op
+    serialize_update_inode_locks: Mutex<ArcHashMap<u64, Mutex<bool>>>,
+    read_write_inode_locks: Mutex<ArcHashMap<u64, Mutex<bool>>>,
     key: ExpireValue<SecretVec<u8>, FsError, KeyProvider>,
 }
 
@@ -469,9 +594,11 @@ impl EncryptedFs {
             read_handles: RwLock::new(HashMap::new()),
             current_handle: AtomicU64::new(1),
             cipher,
+            opened_files_for_read: RwLock::new(HashMap::new()),
             opened_files_for_write: RwLock::new(HashMap::new()),
-            read_write_inode_locks: Mutex::new(WeakValueHashMap::new()),
-            serialize_inode_locks: Mutex::new(WeakValueHashMap::new()),
+            read_write_inode_locks: Mutex::new(ArcHashMap::new()),
+            serialize_inode_locks: Mutex::new(ArcHashMap::new()),
+            serialize_update_inode_locks: Mutex::new(ArcHashMap::new()),
             // todo: take duration from param
             key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)).await,
         };
@@ -496,8 +623,7 @@ impl EncryptedFs {
     }
 
     /// Create a new node in the filesystem
-    /// You don't need to provide `attr.ino`, it will be auto-generated anyway.
-    pub async fn create_nod(&self, parent: u64, name: &SecretString, mut attr: FileAttr, read: bool, write: bool) -> FsResult<(u64, FileAttr)> {
+    pub async fn create_nod(&self, parent: u64, name: &SecretString, create_attr: CreateFileAttr, read: bool, write: bool) -> FsResult<(u64, FileAttr)> {
         if name.expose_secret() == "." || name.expose_secret() == ".." {
             return Err(FsError::InvalidInput("name cannot be '.' or '..'".to_string()));
         }
@@ -508,6 +634,7 @@ impl EncryptedFs {
             return Err(FsError::AlreadyExists);
         }
 
+        let mut attr: FileAttr = create_attr.into();
         attr.ino = self.generate_next_inode();
 
         // write inode
@@ -548,7 +675,6 @@ impl EncryptedFs {
             name: SecretString::new(name.expose_secret().to_owned()),
             kind: attr.kind,
         }).await?;
-
         let mut parent_attr = self.get_inode(parent).await?;
         parent_attr.mtime = SystemTime::now();
         parent_attr.ctime = SystemTime::now();
@@ -703,47 +829,74 @@ impl EncryptedFs {
     }
 
     async fn get_inode_from_storage(&self, ino: u64) -> FsResult<FileAttr> {
-        let lock = {
-            let mut map_guard = self.serialize_inode_locks.lock().await;
-            map_guard.get_or_insert_with(ino, || Arc::new(RwLock::new(false)))
-        };
-        let _guard = lock.read();
+        let mut map_guard = self.serialize_inode_locks.lock().await;
+        let lock = map_guard.get_or_insert_with(ino, || Mutex::new(false));
+        let _guard = lock.lock().await;
+
         let path = self.data_dir.join(INODES_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path).map_err(|_| { FsError::InodeNotFound })?;
         Ok(bincode::deserialize_from::<Decryptor<File>, FileAttr>(crypto_util::create_decryptor(file, &self.cipher, &*self.key.get().await?))?)
     }
 
     pub async fn get_inode(&self, ino: u64) -> FsResult<FileAttr> {
+        debug!("get inode");
         let mut attr = self.get_inode_from_storage(ino).await?;
-        let contains = {
-            self.opened_files_for_write.read().await.contains_key(&ino)
-        };
-        if contains {
-            // merge time info and size with any open write handles
-            let fh = {
-                let guard = self.opened_files_for_write.read().await;
-                guard.get(&ino).map(|v| *v)
-            };
-            if let None = fh {
-                return Ok(attr);
+
+        // merge time info and size with any open read handles
+        let open_reads = { self.opened_files_for_read.read().await.contains_key(&ino) };
+        if open_reads {
+            let fhs = self.opened_files_for_read.read().await.get(&ino).map(|v| v.clone());
+            if let Some(fhs) = fhs {
+                for fh in fhs {
+                    if let Some(ctx) = self.read_handles.read().await.get(&fh) {
+                        let ctx = ctx.lock().await;
+                        merge_attr(&mut attr, ctx.attr.clone().into());
+                    }
+                }
             }
-            if let Some(ctx) = self.write_handles.read().await.get(&fh.unwrap()) {
-                let ctx = ctx.read().await;
-                merge_attr_time_and_set_size_obj(&mut attr, &ctx.attr);
-            } else {
-                self.opened_files_for_write.write().await.remove(&ino);
+        }
+
+        // merge time info and size with any open write handles
+        let open_writes = { self.opened_files_for_write.read().await.contains_key(&ino) };
+        if open_writes {
+            let fh = self.opened_files_for_write.read().await.get(&ino).map(|v| *v);
+            if let Some(fh) = fh {
+                if let Some(ctx) = self.write_handles.read().await.get(&fh) {
+                    let ctx = ctx.lock().await;
+                    merge_attr(&mut attr, ctx.attr.clone().into());
+                }
             }
         }
 
         Ok(attr)
     }
 
-    pub async fn update_inode(&self, ino: u64, perm: u16, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, uid: u32, gid: u32, size: u64, nlink: u32, flags: u32) -> FsResult<()> {
+    pub async fn update_inode(&self, ino: u64, set_attr: SetFileAttr) -> FsResult<()> {
+        let mut map_serialize_update = self.serialize_update_inode_locks.lock().await;
+        let lock_serialize_update = map_serialize_update.get_or_insert_with(ino, || Mutex::new(false));
+        let _guard_serialize_update = lock_serialize_update.lock().await;
+
         let mut attr = self.get_inode(ino).await?;
+        merge_attr(&mut attr, set_attr);
 
-        merge_attr(&mut attr, perm, atime, mtime, ctime, crtime, uid, gid, size, nlink, flags);
+        self.write_inode(&attr).await?;
+        Ok(())
+    }
 
-        self.write_inode(&attr).await
+    async fn write_inode(&self, attr: &FileAttr) -> Result<(), FsError> {
+        let mut map = self.serialize_inode_locks.lock().await;
+        let lock = map.get_or_insert_with(attr.ino, || Mutex::new(false));
+        let _guard = lock.lock().await;
+
+        let path = self.data_dir.join(INODES_DIR).join(attr.ino.to_string());
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
+        bincode::serialize_into(crypto_util::create_encryptor(file, &self.cipher, &*self.key.get().await?), &attr)?;
+        Ok(())
     }
 
     /// Read the contents from an 'offset'. If we try to read outside of file size, we return 0 bytes.
@@ -754,10 +907,13 @@ impl EncryptedFs {
     /// If the file is not opened for read, it will return an error of type ['FsError::InvalidFileHandle'].
     #[instrument(skip(self, buf))]
     pub async fn read(&self, ino: u64, offset: u64, mut buf: &mut [u8], handle: u64) -> FsResult<usize> {
-        debug!("");
+        debug!("read");
         // lock for reading
-        let binding = self.get_read_write_inode_lock(ino).await;
-        let _guard = binding.read();
+        let lock = {
+            let mut map_guard = self.read_write_inode_locks.lock().await;
+            map_guard.get_or_insert_with(ino, || Mutex::new(false))
+        };
+        let _guard = lock.lock().await;
 
         if !self.node_exists(ino) {
             return Err(FsError::InodeNotFound);
@@ -768,42 +924,37 @@ impl EncryptedFs {
         if !self.read_handles.read().await.contains_key(&handle) {
             return Err(FsError::InvalidFileHandle);
         }
-        {
-            let guard = self.read_handles.read().await;
-            let ctx = guard.get(&handle).unwrap().read().await;
-            if ctx.ino != ino {
-                return Err(FsError::InvalidFileHandle);
-            }
-            if self.is_dir(ino) {
-                return Err(FsError::InvalidInodeType);
-            }
-            if buf.len() == 0 {
-                // no-op
-                return Ok(0);
-            }
-            if offset >= ctx.attr.size {
-                // if we need an offset after file size we don't read anything
-                return Ok(0);
-            }
+
+        let guard = self.read_handles.read().await;
+        let mut ctx = guard.get(&handle).unwrap().lock().await;
+
+        if ctx.ino != ino {
+            return Err(FsError::InvalidFileHandle);
+        }
+        if self.is_dir(ino) {
+            return Err(FsError::InvalidInodeType);
+        }
+        if buf.len() == 0 {
+            // no-op
+            return Ok(0);
+        }
+        if offset >= ctx.attr.size {
+            // if we need an offset after file size we don't read anything
+            return Ok(0);
         }
 
-        let pos = {
-            let guard = self.read_handles.read().await;
-            let ctx = guard.get(&handle).unwrap().read().await;
-            ctx.pos
-        };
-        if pos != offset {
+        if ctx.pos != offset {
+            debug!("seeking to offset {} from {}", offset.to_formatted_string(&Locale::en), ctx.pos.to_formatted_string(&Locale::en));
             // in order to seek we need to read the bytes from current position until the offset
-            if pos > offset {
+            if ctx.pos > offset {
                 // if we need an offset before the current position, we can't seek back, we need
                 // to read from the beginning until the desired offset
-                let guard = self.read_handles.read().await;
-                let ctx = guard.get(&handle).unwrap().write().await;
+                debug!("seeking back, recreating decryptor");
                 self.do_with_read_handle(handle, ReadHandleContextOperation::RecreateDecryptor { existing: ctx }).await?;
+                ctx = guard.get(&handle).unwrap().lock().await;
             }
-            let guard = self.read_handles.read().await;
-            let mut ctx = guard.get(&handle).unwrap().write().await;
             if offset > 0 {
+                debug!("reading from current position to offset");
                 let mut buffer = vec![0; BUF_SIZE];
                 loop {
                     let read_len = if ctx.pos + buffer.len() as u64 > offset {
@@ -811,18 +962,20 @@ impl EncryptedFs {
                     } else {
                         buffer.len()
                     };
+                    debug!(read_len = read_len.to_formatted_string(&Locale::en), "reading");
                     if read_len > 0 {
                         ctx.decryptor.as_mut().unwrap().read_exact(&mut buffer[..read_len])?;
                         ctx.pos += read_len as u64;
                         if ctx.pos == offset {
                             break;
                         }
+                        debug!(pos = ctx.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), "read");
+                    } else {
+                        break;
                     }
                 }
             }
         }
-        let guard = self.read_handles.read().await;
-        let mut ctx = guard.get(&handle).unwrap().write().await;
         if offset + buf.len() as u64 > ctx.attr.size {
             buf = &mut buf[..(ctx.attr.size - offset) as usize];
         }
@@ -843,67 +996,69 @@ impl EncryptedFs {
         let mut valid_fh = false;
 
         // read
-        let ctx = {
-            self.read_handles.write().await.remove(&handle)
-        };
+        let ctx = { self.read_handles.write().await.remove(&handle) };
         if let Some(ctx) = ctx {
+            let mut ctx = ctx.lock().await;
+
             // write attr only here to avoid serializing it multiple times while reading
-            // merge time fields with existing data because it might got change while we kept the handle
-            {
-                let mut attr_0 = self.get_inode(ctx.read().await.ino).await?;
-                merge_attr_time_and_set_size_obj(&mut attr_0, &ctx.read().await.attr);
-                self.write_inode(&attr_0).await?;
+            // it will merge time fields with existing data because it might got change while we kept the handle
+            self.update_inode(ctx.ino, ctx.attr.clone().into()).await?;
+
+            ctx.decryptor.take().unwrap().finish();
+            let mut opened_files_for_read = self.opened_files_for_read.write().await;
+            opened_files_for_read.get_mut(&ctx.ino).and_then(|set| {
+                set.remove(&handle);
+                Some(())
+            });
+            if opened_files_for_read.get(&ctx.ino).unwrap().is_empty() {
+                opened_files_for_read.remove(&ctx.ino);
             }
-            ctx.write().await.decryptor.take().unwrap().finish();
+
             valid_fh = true;
         }
 
         // write
-        let ctx = {
-            self.write_handles.write().await.remove(&handle)
-        };
+        let ctx = { self.write_handles.write().await.remove(&handle) };
         if let Some(ctx) = ctx {
-            // write attr only here to avoid serializing it multiple times while writing
-            // merge time fields with existing data because it might got change while we kept the handle
-            {
-                let mut attr_0 = self.get_inode(ctx.read().await.ino).await?;
-                merge_attr_time_and_set_size_obj(&mut attr_0, &ctx.read().await.attr);
-                self.write_inode(&attr_0).await?;
+            let mut ctx = ctx.lock().await;
+
+            // if we have dirty content (ctx.pos > 0) and position is before file end we copy the rest of the file from position to the end
+            if ctx.pos > 0 && ctx.pos < ctx.attr.size {
+                debug!("dirty content, copying remaining of file");
+                let ino_str = ctx.ino.to_string();
+                let file_size = ctx.attr.size;
+                Self::copy_remaining_of_file(&mut ctx, file_size, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
             }
-            {
-                let mut ctx = ctx.write().await;
-                // if we have dirty content (ctx.pos > 0) and position is before file end we copy the rest of the file from position to the end
-                if ctx.pos > 0 && ctx.pos < ctx.attr.size {
-                    debug!("dirty content, copying remaining of file");
-                    let ino_str = ctx.ino.to_string();
-                    let file_size = ctx.attr.size;
-                    Self::copy_remaining_of_file(&mut ctx, file_size, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
-                }
-            }
-            {
-                debug!("finishing encryptor");
-                ctx.write().await.encryptor.take().unwrap().finish()?;
-            }
+
+            debug!("finishing encryptwarnor");
+            ctx.encryptor.take().unwrap().finish()?;
             // if we are in tmp file move it to actual file
-            let ctx = ctx.read().await;
+            let mut recreate_readers = false;
             if ctx.path.to_str().unwrap().ends_with(".tmp") {
                 debug!("renaming file");
                 tokio::fs::rename(ctx.path.clone(), self.data_dir.join(CONTENTS_DIR).join(ctx.ino.to_string())).await?;
 
-                // write meta info
-                let mut attr_0 = self.get_inode(ctx.ino).await?;
-                merge_attr_time_and_set_size_obj(&mut attr_0, &ctx.attr);
-                self.write_inode(&attr_0).await?;
-
                 // also recreate readers because the file has changed
-                self.recreate_handles(ctx.ino, None).await?;
+                recreate_readers = true;
             }
             self.opened_files_for_write.write().await.remove(&ctx.ino);
+
+            // write attr only here to avoid serializing it multiple times while writing
+            // it will merge time fields with existing data because it might got change while we kept the handle
+            self.update_inode(ctx.ino, ctx.attr.clone().into()).await?;
+
+            if recreate_readers {
+                self.recreate_handles(ctx.ino, None).await?;
+            }
+
             valid_fh = true;
         }
         if !valid_fh {
             return Err(FsError::InvalidFileHandle);
         }
+        debug!(serialize_inode_locks.size = self.serialize_inode_locks.lock().await.len());
+        debug!(read_write_inode_locks.size = self.read_write_inode_locks.lock().await.len());
+        debug!(serialize_update_inode_locks.size = self.serialize_update_inode_locks.lock().await.len());
         Ok(())
     }
 
@@ -928,8 +1083,12 @@ impl EncryptedFs {
     pub async fn write_all(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<()> {
         debug!("write_all");
         // lock for writing
-        let binding = self.get_read_write_inode_lock(ino).await;
-        let _guard = binding.write();
+        let lock = {
+            let mut map_guard = self.read_write_inode_locks.lock().await;
+            map_guard.get_or_insert_with(ino, || Mutex::new(false))
+        };
+        let _guard = lock.lock().await;
+        debug!("ptr {:p}", lock.deref());
 
         if !self.node_exists(ino) {
             return Err(FsError::InodeNotFound);
@@ -953,7 +1112,7 @@ impl EncryptedFs {
         }
         {
             let guard = self.write_handles.read().await;
-            let ctx = guard.get(&handle).unwrap().read().await;
+            let ctx = guard.get(&handle).unwrap().lock().await;
             if ctx.ino != ino {
                 return Err(FsError::InvalidFileHandle);
             }
@@ -963,22 +1122,19 @@ impl EncryptedFs {
             return Ok(());
         }
 
-        debug!("strong count {}", Arc::<RwLock<bool>>::strong_count(&binding));
-        debug!("ptr {:p}", binding.as_ref());
-
         let (path, pos, ino, size) = {
             let guard = self.write_handles.read().await;
-            let mut ctx = guard.get(&handle).unwrap().read().await;
+            let ctx = guard.get(&handle).unwrap().lock().await;
             (ctx.path.clone(), ctx.pos, ctx.ino, ctx.attr.size)
         };
         if pos != offset {
-            debug!("seeking to offset {} from pos {}", offset.to_formatted_string(&Locale::en), pos.to_formatted_string(&Locale::en));
+            debug!("seeking to offset {} from pos {}",offset.to_formatted_string(&Locale::en),pos.to_formatted_string(&Locale::en));
             if pos < offset && pos > 0 {
                 debug!("seeking forward");
                 // we can seek forward only if we have dirty writer
                 // we do that by copying the rest of the file from current position to the desired offset
                 let guard = self.write_handles.read().await;
-                let mut ctx = guard.get(&handle).unwrap().write().await;
+                let mut ctx = guard.get(&handle).unwrap().lock().await;
                 let ino_str = ino.to_string();
                 Self::copy_remaining_of_file(&mut ctx, offset, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
             } else {
@@ -993,15 +1149,15 @@ impl EncryptedFs {
                     let ino_str = ino.to_string();
                     let file_size = size;
                     let guard = self.write_handles.read().await;
-                    let mut ctx = guard.get(&handle).unwrap().write().await;
+                    let mut ctx = guard.get(&handle).unwrap().lock().await;
                     Self::copy_remaining_of_file(&mut ctx, file_size, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
                 }
                 {
                     let guard = self.write_handles.read().await;
-                    let mut ctx = guard.get( & handle).unwrap().write().await;
+                    let mut ctx = guard.get(&handle).unwrap().lock().await;
                     // finish the current writer so we flush all data to the file
                     debug!("finishing current writer");
-                    ctx.encryptor.take().unwrap().finish() ?;
+                    ctx.encryptor.take().unwrap().finish()?;
                 }
 
                 // if we are already in the tmp file first copy tmp to actual file
@@ -1009,27 +1165,28 @@ impl EncryptedFs {
                     debug!("renaming tmp file to actual file");
                     tokio::fs::rename(path.clone(), self.data_dir.join(CONTENTS_DIR).join(ino.to_string())).await?;
 
-                    {
-                        // write meta info
-                        let mut attr_0 = self.get_inode(ino).await?;
+                    // update metadata
+                    let (ino, attr) = {
                         let guard = self.write_handles.read().await;
-                        let mut ctx = guard.get(&handle).unwrap().read().await;
-                        merge_attr_time_and_set_size_obj(&mut attr_0, &ctx.attr);
-                        self.write_inode(&attr_0).await?;
-                    }
+                        let mut ctx = guard.get(&handle).unwrap().lock().await;
+                        (ctx.ino, ctx.attr.clone())
+                    };
+                    self.update_inode(ino, attr.into()).await?;
 
                     // also recreate readers because the file has changed
-                    self.recreate_handles(ino, Some(HashSet::from([handle]))).await?;
+                    self.recreate_handles(ino, Some(HashSet::from([handle])))
+                        .await?;
                 }
 
                 let guard = self.write_handles.read().await;
-                let mut ctx = guard.get(&handle).unwrap().write().await;
+                let mut ctx = guard.get(&handle).unwrap().lock().await;
 
                 let tmp_path_str = format!("{}.{}.tmp", ctx.ino.to_string(), &handle.to_string());
                 let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
                 let tmp_file = OpenOptions::new().write(true).create(true).truncate(true).open(tmp_path.clone())?;
 
-                let encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &*self.key.get().await?);
+                let encryptor =
+                    crypto_util::create_encryptor(tmp_file, &self.cipher, &*self.key.get().await?);
                 debug!("recreating encryptor");
                 ctx.encryptor.replace(encryptor);
                 ctx.pos = 0;
@@ -1039,7 +1196,7 @@ impl EncryptedFs {
             }
 
             let guard = self.write_handles.read().await;
-            let mut ctx = guard.get(&handle).unwrap().write().await;
+            let mut ctx = guard.get(&handle).unwrap().lock().await;
             // if offset is after current position (max file size) we fill up with zeros until offset
             if offset > ctx.pos {
                 debug!("filling up with zeros until offset");
@@ -1056,7 +1213,7 @@ impl EncryptedFs {
         }
 
         let guard = self.write_handles.read().await;
-        let mut ctx = guard.get(&handle).unwrap().write().await;
+        let mut ctx = guard.get(&handle).unwrap().lock().await;
 
         // now write the new data
         debug!("writing new data");
@@ -1065,6 +1222,7 @@ impl EncryptedFs {
 
         if ctx.pos > ctx.attr.size {
             // if we write pass file size set the new size
+            debug!("setting new file size {}", ctx.pos);
             ctx.attr.size = ctx.pos;
         }
         let actual_file_size = fs::metadata(ctx.path.clone())?.len();
@@ -1076,7 +1234,7 @@ impl EncryptedFs {
     }
 
     #[instrument(skip(ctx, key))]
-    fn copy_remaining_of_file(ctx: &mut RwLockWriteGuard<WriteHandleContext>, mut end_offset: u64, cipher: &Cipher, key: &SecretVec<u8>, file: PathBuf) -> Result<(), FsError> {
+    fn copy_remaining_of_file(ctx: &mut MutexGuard<WriteHandleContext>, mut end_offset: u64, cipher: &Cipher, key: &SecretVec<u8>, file: PathBuf) -> Result<(), FsError> {
         debug!("copy_remaining_of_file from file {}", file.to_str().unwrap());
         let actual_file_size = fs::metadata(ctx.path.clone())?.len();
         debug!("copy_remaining_of_file from {} to {}, file size {} actual file size {}", ctx.pos.to_formatted_string(&Locale::en), end_offset.to_formatted_string(&Locale::en), ctx.attr.size.to_formatted_string(&Locale::en), actual_file_size.to_formatted_string(&Locale::en));
@@ -1139,7 +1297,7 @@ impl EncryptedFs {
             return Ok(());
         }
         if let Some(ctx) = self.write_handles.read().await.get(&handle) {
-            ctx.write().await.encryptor.as_mut().unwrap().flush()?;
+            ctx.lock().await.encryptor.as_mut().unwrap().flush()?;
             return Ok(());
         }
 
@@ -1168,13 +1326,15 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
 
-        let lock = self.get_read_write_inode_lock(ino).await;
+        let mut map_guard = self.read_write_inode_locks.lock().await;
         let mut handle = 0_u64;
         if read {
+            let lock = map_guard.get_or_insert_with(ino, || Mutex::new(false));
             handle = self.allocate_next_handle();
-            self.do_with_read_handle(handle, ReadHandleContextOperation::Create { ino, lock: lock.clone() }).await?;
+            self.do_with_read_handle(handle, ReadHandleContextOperation::Create { ino, lock }).await?;
         }
         if write {
+            let lock = map_guard.get_or_insert_with(ino, || Mutex::new(false));
             handle = self.allocate_next_handle();
             let res = self.do_with_write_handle(handle, WriteHandleContextOperation::Create { ino, lock }).await;
             if res.is_err() && read {
@@ -1189,8 +1349,11 @@ impl EncryptedFs {
     }
 
     pub async fn truncate(&self, ino: u64, size: u64) -> FsResult<()> {
-        let binding = self.get_read_write_inode_lock(ino).await;
-        let _guard = binding.write();
+        let lock = {
+            let mut map_guard = self.read_write_inode_locks.lock().await;
+            map_guard.get_or_insert_with(ino, || Mutex::new(false))
+        };
+        let _guard = lock.lock().await;
 
         let mut attr = self.get_inode(ino).await?;
         if matches!(attr.kind, FileType::Directory) {
@@ -1283,11 +1446,12 @@ impl EncryptedFs {
             tokio::fs::rename(tmp_path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).await?;
         }
 
-        attr.size = size;
-        debug!("new file size {}", attr.size.to_formatted_string(&Locale::en));
-        attr.mtime = SystemTime::now();
-        attr.ctime = SystemTime::now();
-        self.write_inode(&attr).await?;
+        let set_attr = SetFileAttr::default()
+            .with_size(size)
+            .with_mtime(SystemTime::now())
+            .with_ctime(SystemTime::now());
+        debug!("new file size {}", set_attr.size.as_ref().unwrap().to_formatted_string(&Locale::en));
+        self.update_inode(ino, set_attr).await?;
 
         // also recreate handles because the file has changed
         self.recreate_handles(attr.ino, None).await?;
@@ -1297,60 +1461,62 @@ impl EncryptedFs {
 
     /// This will write any dirty data to the file and recreate handles.
     /// > ⚠️ **Warning**
-    /// > Need to be called in a context with write lock on `self.get_inode_lock(ino)`.
+    /// > Need to be called in a context with write lock on `self.read_write_inode_locks.lock().await.get(ino)`.
     async fn flush_writers(&self, ino: u64) -> FsResult<()> {
         debug!("flush_writers");
-        let keys: Vec<u64> = self.write_handles.read().await.keys().cloned()
-            .collect();
+        let keys: Vec<u64> = self.write_handles.read().await.keys().cloned().collect();
         for key in keys {
-            // using if let to skip if the key was removed from another thread
-            if let Some(ctx) = self.write_handles.read().await.get(&key) {
-                {
-                    if ctx.read().await.ino != ino {
-                        continue;
-                    }
+            let should_process = {
+                let guard = self.write_handles.read().await;
+                let v = guard.get(&key);
+                if let None = v {
+                    false
+                } else {
+                    let ctx = v.unwrap().lock().await;
+                    ctx.ino == ino
                 }
-                {
-                    let mut ctx = ctx.write().await;
-                    // if we have dirty content (ctx.pos > 0) and position is before file end we copy the rest of the file from position to the end
-                    if ctx.pos > 0 && ctx.pos < ctx.attr.size {
-                        debug!("dirty content, copying remaining of file");
-                        let ino_str = ctx.ino.to_string();
-                        let file_size = ctx.attr.size;
-                        Self::copy_remaining_of_file(&mut ctx, file_size, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
-                    }
+            };
+            if !should_process {
+                continue;
+            }
+            {
+                let guard = self.write_handles.read().await;
+                let mut ctx = guard.get(&key).unwrap().lock().await;
+                // if we have dirty content (ctx.pos > 0) and position is before file end we copy the rest of the file from position to the end
+                if ctx.pos > 0 && ctx.pos < ctx.attr.size {
+                    debug!("dirty content, copying remaining of file");
+                    let ino_str = ctx.ino.to_string();
+                    let file_size = ctx.attr.size;
+                    Self::copy_remaining_of_file(&mut ctx, file_size, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
                 }
-                {
-                    debug!("finishing current writer");
-                    ctx.write().await.encryptor.take().unwrap().finish()?;
-                }
-                // if we are in tmp file move it to actual file
-                {
-                    let (path, ino) = {
-                        let ctx = ctx.read().await;
-                        (ctx.path.clone(), ctx.ino)
-                    };
-                    if path.to_str().unwrap().ends_with(".tmp") {
-                        debug!("renaming tmp file to actual file");
-                        tokio::fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(ino.to_string())).await?;
-                        // also recreate handles because the file has changed
-                        self.recreate_handles(ino, Some(HashSet::from([key]))).await?;
-                    }
-                    let mut attr_0 = self.get_inode(ino).await?;
-                    merge_attr_time_and_set_size_obj(&mut attr_0, &ctx.read().await.attr);
-                    self.write_inode(&attr_0).await?;
-                }
-                // recreate the write handle so opened handle can continue writing
-                self.do_with_write_handle(key, WriteHandleContextOperation::RecreateEncryptor { existing: ctx.write().await, reset_size: true }).await?;
+            }
+            {
+                let guard = self.write_handles.read().await;
+                let mut ctx = guard.get(&key).unwrap().lock().await;
+                debug!("finishing current writer");
+                ctx.encryptor.take().unwrap().finish()?;
+            }
+            // if we are in tmp file move it to actual file
+            let (path, ino) = {
+                let guard = self.write_handles.read().await;
+                let ctx = guard.get(&key).unwrap().lock().await;
+                (ctx.path.clone(), ctx.ino)
+            };
+            if path.to_str().unwrap().ends_with(".tmp") {
+                debug!("renaming tmp file to actual file");
+                tokio::fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(ino.to_string())).await?;
+                // also recreate handles because the file has changed
+                self.recreate_handles(ino, Some(HashSet::from([key]))).await?;
+            }
+            // recreate the write handle so opened handle can continue writing
+            {
+                let guard = self.write_handles.read().await;
+                let ctx = guard.get(&key).unwrap().lock().await;
+                self.do_with_write_handle(key, WriteHandleContextOperation::RecreateEncryptor { existing: ctx, reset_size: true }).await?;
             }
         }
 
         Ok(())
-    }
-
-    async fn get_read_write_inode_lock(&self, ino: u64) -> Arc<RwLock<bool>> {
-        let mut map_guard = self.read_write_inode_locks.lock().await;
-        map_guard.get_or_insert_with(ino, || Arc::new(RwLock::new(false)))
     }
 
     pub async fn rename(&self, parent: u64, name: &SecretString, new_parent: u64, new_name: &SecretString) -> FsResult<()> {
@@ -1377,8 +1543,7 @@ impl EncryptedFs {
 
         // Only overwrite an existing directory if it's empty
         if let Ok(Some(new_attr)) = self.find_by_name(new_parent, new_name).await {
-            if new_attr.kind == FileType::Directory &&
-                self.children_count(new_attr.ino).await? > 2 {
+            if new_attr.kind == FileType::Directory && self.children_count(new_attr.ino).await? > 2 {
                 return Err(FsError::NotEmpty);
             }
         }
@@ -1412,23 +1577,6 @@ impl EncryptedFs {
             }).await?;
         }
 
-        Ok(())
-    }
-
-    pub(crate) async fn write_inode(&self, attr: &FileAttr) -> FsResult<()> {
-        let lock = {
-            let mut map_guard = self.serialize_inode_locks.lock().await;
-            map_guard.get_or_insert_with(attr.ino, || Arc::new(RwLock::new(false)))
-        };
-        let _guard = lock.write().await;
-        let path = self.data_dir.join(INODES_DIR).join(attr.ino.to_string());
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&path)?;
-        bincode::serialize_into(crypto_util::create_encryptor(file, &self.cipher, &*self.key.get().await?), &attr)?;
         Ok(())
     }
 
@@ -1495,15 +1643,19 @@ impl EncryptedFs {
             .filter(|k| if let Some(ref skip) = skip { !skip.contains(k) } else { true })
             .collect();
         for key in keys {
-            // using if let to skip if the key was removed from another thread
-            if let Some(ctx) = self.read_handles.read().await.get(&key) {
-                if ctx.read().await.ino != ino {
-                    continue;
+            {
+                // using if let to skip if the key was removed from another thread
+                if let Some(ctx) = self.read_handles.read().await.get(&key) {
+                    if ctx.lock().await.ino != ino {
+                        continue;
+                    }
                 }
             }
-            if let Some(ctx) = self.read_handles.read().await.get(&key) {
-                debug!("recreating read handle");
-                self.do_with_read_handle(key, ReadHandleContextOperation::RecreateDecryptor { existing: ctx.write().await }).await?;
+            {
+                if let Some(ctx) = self.read_handles.read().await.get(&key) {
+                    debug!("recreating read handle");
+                    self.do_with_read_handle(key, ReadHandleContextOperation::RecreateDecryptor { existing: ctx.lock().await }).await?;
+                }
             }
         }
 
@@ -1514,11 +1666,11 @@ impl EncryptedFs {
         for key in keys {
             // using if let to skip if the key was removed from another thread
             if let Some(ctx) = self.write_handles.read().await.get(&key) {
-                if ctx.read().await.ino != ino {
+                if ctx.lock().await.ino != ino {
                     continue;
                 }
                 debug!("recreating write handle");
-                self.do_with_write_handle(key, WriteHandleContextOperation::RecreateEncryptor { existing: ctx.write().await, reset_size: true }).await?;
+                self.do_with_write_handle(key, WriteHandleContextOperation::RecreateEncryptor { existing: ctx.lock().await, reset_size: true }).await?;
             }
         }
 
@@ -1530,10 +1682,10 @@ impl EncryptedFs {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path)?;
         let decryptor = crypto_util::create_decryptor(file, &self.cipher, &*self.key.get().await?);
-        let attr = self.get_inode(ino).await?;
+        let attr = self.get_inode_from_storage(ino).await?;
         match op {
             ReadHandleContextOperation::Create { ino, lock } => {
-                let attr = TimeAndSizeFileAttr::from_file_attr(&attr);
+                let attr: TimeAndSizeFileAttr = attr.into();
                 let ctx = ReadHandleContext {
                     ino,
                     attr,
@@ -1541,7 +1693,8 @@ impl EncryptedFs {
                     decryptor: Some(decryptor),
                     _lock: lock,
                 };
-                self.read_handles.write().await.insert(handle, RwLock::new(ctx));
+                self.read_handles.write().await.insert(handle, Mutex::new(ctx));
+                self.opened_files_for_read.write().await.entry(ino).or_insert_with(|| HashSet::new()).insert(handle);
             }
             ReadHandleContextOperation::RecreateDecryptor { mut existing } => {
                 existing.pos = 0;
@@ -1555,12 +1708,15 @@ impl EncryptedFs {
     async fn do_with_write_handle(&self, handle: u64, op: WriteHandleContextOperation<'_>) -> FsResult<()> {
         let ino = op.get_ino();
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
-        let file = OpenOptions::new().read(true).write(true).open(path.clone())?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path.clone())?;
         let encryptor = crypto_util::create_encryptor(file, &self.cipher, &*self.key.get().await?);
         match op {
             WriteHandleContextOperation::Create { ino, lock } => {
                 debug!("creating write handle");
-                let attr = TimeAndSizeFileAttr::from_file_attr(&self.get_inode(ino).await?);
+                let attr = self.get_inode(ino).await?.into();
                 let ctx = WriteHandleContext {
                     ino,
                     attr,
@@ -1569,7 +1725,7 @@ impl EncryptedFs {
                     encryptor: Some(encryptor),
                     _lock: lock,
                 };
-                self.write_handles.write().await.insert(handle, RwLock::new(ctx));
+                self.write_handles.write().await.insert(handle, Mutex::new(ctx));
                 self.opened_files_for_write.write().await.insert(ino, handle);
             }
             WriteHandleContextOperation::RecreateEncryptor { mut existing, reset_size } => {
@@ -1738,35 +1894,39 @@ async fn check_structure(data_dir: &PathBuf, ignore_empty: bool) -> FsResult<()>
     vec.sort();
     let mut vec2 = vec![INODES_DIR, CONTENTS_DIR, SECURITY_DIR];
     vec2.sort();
-    if vec != vec2 ||
-        !data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME).is_file() {
+    if vec != vec2 || !data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME).is_file() {
         return Err(FsError::InvalidDataDirStructure);
     }
 
     Ok(())
 }
 
-fn merge_attr(attr: &mut FileAttr, perm: u16, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, uid: u32, gid: u32, size: u64, nlink: u32, flags: u32) {
-    attr.perm = perm;
-    merge_attr_times_and_set_size(attr, atime, mtime, ctime, crtime, size);
-    attr.uid = uid;
-    attr.gid = gid;
-    attr.nlink = nlink;
-    attr.flags = flags;
-}
-
-fn merge_attr_times_and_set_size(attr: &mut FileAttr, atime: SystemTime, mtime: SystemTime, ctime: SystemTime, crtime: SystemTime, size: u64) {
-    attr.atime = max(attr.atime, atime);
-    attr.mtime = max(attr.mtime, mtime);
-    attr.ctime = max(attr.ctime, ctime);
-    attr.crtime = max(attr.crtime, crtime);
-    attr.size = size;
-}
-
-fn merge_attr_time_and_set_size_obj(attr: &mut FileAttr, from: &TimeAndSizeFileAttr) {
-    attr.atime = max(attr.atime, from.atime);
-    attr.mtime = max(attr.mtime, from.mtime);
-    attr.ctime = max(attr.ctime, from.ctime);
-    attr.crtime = max(attr.crtime, from.crtime);
-    attr.size = from.size;
+fn merge_attr(attr: &mut FileAttr, set_attr: SetFileAttr) {
+    if let Some(size) = set_attr.size {
+        attr.size = size;
+    }
+    if let Some(atime) = set_attr.atime {
+        attr.atime = max(atime, attr.atime);
+    }
+    if let Some(mtime) = set_attr.mtime {
+        attr.mtime = max(mtime, attr.mtime);
+    }
+    if let Some(ctime) = set_attr.ctime {
+        attr.ctime = max(ctime, attr.ctime);
+    }
+    if let Some(crtime) = set_attr.crtime {
+        attr.crtime = max(crtime, attr.crtime);
+    }
+    if let Some(perm) = set_attr.perm {
+        attr.perm = perm;
+    }
+    if let Some(uid) = set_attr.uid {
+        attr.uid = uid;
+    }
+    if let Some(gid) = set_attr.gid {
+        attr.gid = gid;
+    }
+    if let Some(flags) = set_attr.flags {
+        attr.flags = flags;
+    }
 }
