@@ -5,6 +5,7 @@ version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Radu Marias <radumarias@gmail.com>"]
+homepage = "https://github.com/radumarias/rencfs"
 repository = "https://github.com/radumarias/rencfs"
 readme = "README.md"
 keywords = ["filesystem", "fuse", "encryption", "system", "security"]

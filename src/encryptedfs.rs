@@ -5,9 +5,9 @@ use std::fmt::Debug;
 use std::fs::{File, OpenOptions, ReadDir};
 use std::io::{Read, Write};
 use std::ops::Deref;
-use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, SystemTime};
 
@@ -363,7 +363,7 @@ impl PartialEq for DirectoryEntryPlus {
 
 pub type FsResult<T> = Result<T, FsError>;
 
-pub struct DirectoryEntryIterator(ReadDir, Cipher, SecretVec<u8>);
+pub struct DirectoryEntryIterator(ReadDir, Cipher, Arc<SecretVec<u8>>, Arc<std::sync::RwLock<ArcHashMap<String, std::sync::RwLock<bool>>>>);
 
 impl Iterator for DirectoryEntryIterator {
     type Item = FsResult<DirectoryEntry>;
@@ -374,10 +374,16 @@ impl Iterator for DirectoryEntryIterator {
             return Some(Err(e.into()));
         }
         let entry = entry.unwrap();
+
+        let map = self.3.read().unwrap();
+        let lock = map.get_or_insert_with(entry.path().to_str().unwrap().to_string(), || std::sync::RwLock::new(false));
+        let _guard = lock.read().unwrap();
+
         let file = File::open(entry.path());
         if let Err(e) = file {
             return Some(Err(e.into()));
         }
+
         let file = file.unwrap();
         let name = entry.file_name().to_string_lossy().to_string();
         let name = {
@@ -389,6 +395,7 @@ impl Iterator for DirectoryEntryIterator {
                 crypto_util::decrypt_and_unnormalize_end_file_name(&name, &self.1, &self.2)
             }
         };
+
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto_util::create_decryptor(file, &self.1, &self.2));
         if let Err(e) = res {
             return Some(Err(e.into()));
@@ -398,7 +405,9 @@ impl Iterator for DirectoryEntryIterator {
     }
 }
 
-pub struct DirectoryEntryPlusIterator(ReadDir, PathBuf, Cipher, SecretVec<u8>);
+pub struct DirectoryEntryPlusIterator(ReadDir, PathBuf, Cipher, Arc<SecretVec<u8>>,
+                                      Arc<std::sync::RwLock<ArcHashMap<String, std::sync::RwLock<bool>>>>,
+                                      Arc<std::sync::RwLock<ArcHashMap<u64, std::sync::RwLock<bool>>>>);
 
 impl Iterator for DirectoryEntryPlusIterator {
     type Item = FsResult<DirectoryEntryPlus>;
@@ -411,6 +420,11 @@ impl Iterator for DirectoryEntryPlusIterator {
             return Some(Err(e.into()));
         }
         let entry = entry.unwrap();
+
+        let map = self.4.read().unwrap();
+        let lock = map.get_or_insert_with(entry.path().to_str().unwrap().to_string(), || std::sync::RwLock::new(false));
+        let _guard = lock.read().unwrap();
+
         let file = File::open(entry.path());
         if let Err(e) = file {
             error!(err = %e, "opening file");
@@ -433,6 +447,10 @@ impl Iterator for DirectoryEntryPlusIterator {
             return Some(Err(e.into()));
         }
         let (ino, kind): (u64, FileType) = res.unwrap();
+
+        let map_guard_ino = self.5.read().unwrap();
+        let lock_ino = map_guard_ino.get_or_insert_with(ino, || std::sync::RwLock::new(false));
+        let _guard_ino = lock_ino.read().unwrap();
 
         let file = File::open(&self.1.join(ino.to_string()));
         if let Err(e) = file {
@@ -562,9 +580,10 @@ pub struct EncryptedFs {
     opened_files_for_read: RwLock<HashMap<u64, HashSet<u64>>>,
     opened_files_for_write: RwLock<HashMap<u64, u64>>,
     // used for rw ops of actual serialization
-    serialize_inode_locks: Mutex<ArcHashMap<u64, Mutex<bool>>>,
+    serialize_inode_locks: Arc<std::sync::RwLock<ArcHashMap<u64, std::sync::RwLock<bool>>>>,
     // used for the update op
     serialize_update_inode_locks: Mutex<ArcHashMap<u64, Mutex<bool>>>,
+    serialize_dir_entries_locks: Arc<std::sync::RwLock<ArcHashMap<String, std::sync::RwLock<bool>>>>,
     read_write_inode_locks: Mutex<ArcHashMap<u64, Mutex<bool>>>,
     key: ExpireValue<SecretVec<u8>, FsError, KeyProvider>,
 }
@@ -580,6 +599,7 @@ impl EncryptedFs {
         let path = PathBuf::from(&data_dir);
 
         ensure_structure_created(&path.clone()).await?;
+        check_password(&path, &password, &cipher)?;
 
         let key_provider = KeyProvider {
             path: path.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
@@ -597,11 +617,13 @@ impl EncryptedFs {
             opened_files_for_read: RwLock::new(HashMap::new()),
             opened_files_for_write: RwLock::new(HashMap::new()),
             read_write_inode_locks: Mutex::new(ArcHashMap::new()),
-            serialize_inode_locks: Mutex::new(ArcHashMap::new()),
+            serialize_inode_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::new())),
             serialize_update_inode_locks: Mutex::new(ArcHashMap::new()),
+            serialize_dir_entries_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::new())),
             // todo: take duration from param
             key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)).await,
         };
+
         let _ = fs.ensure_root_exists().await;
 
         Ok(fs)
@@ -638,7 +660,7 @@ impl EncryptedFs {
         attr.ino = self.generate_next_inode();
 
         // write inode
-        self.write_inode(&attr).await?;
+        self.write_inode_to_storage(&attr, &*self.key.get().await?).await?;
 
         // create in contents directory
         match attr.kind {
@@ -660,12 +682,12 @@ impl EncryptedFs {
                     ino: attr.ino,
                     name: SecretString::from_str("$.").unwrap(),
                     kind: FileType::Directory,
-                }).await?;
+                }, &*self.key.get().await?).await?;
                 self.insert_directory_entry(attr.ino, DirectoryEntry {
                     ino: parent,
                     name: SecretString::from_str("$..").unwrap(),
                     kind: FileType::Directory,
-                }).await?;
+                }, &*self.key.get().await?).await?;
             }
         }
 
@@ -674,11 +696,10 @@ impl EncryptedFs {
             ino: attr.ino,
             name: SecretString::new(name.expose_secret().to_owned()),
             kind: attr.kind,
-        }).await?;
-        let mut parent_attr = self.get_inode(parent).await?;
-        parent_attr.mtime = SystemTime::now();
-        parent_attr.ctime = SystemTime::now();
-        self.write_inode(&parent_attr).await?;
+        }, &*self.key.get().await?).await?;
+        self.update_inode(parent, SetFileAttr::default()
+            .with_mtime(SystemTime::now())
+            .with_ctime(SystemTime::now())).await?;
 
         let handle = if attr.kind == FileType::RegularFile {
             if read || write {
@@ -747,18 +768,23 @@ impl EncryptedFs {
         }
 
         let ino_str = attr.ino.to_string();
+
         // remove inode file
-        tokio::fs::remove_file(self.data_dir.join(INODES_DIR).join(&ino_str)).await?;
+        {
+            let map = self.serialize_inode_locks.write().unwrap();
+            let lock = map.get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
+            let _guard = lock.write().unwrap();
+            fs::remove_file(self.data_dir.join(INODES_DIR).join(&ino_str))?;
+        }
+
         // remove contents directory
         tokio::fs::remove_dir_all(self.data_dir.join(CONTENTS_DIR).join(&ino_str)).await?;
         // remove from parent directory
-        let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &*self.key.get().await?);
-        tokio::fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name)).await?;
+        self.remove_directory_entry(parent, name).await?;
 
-        let mut parent_attr = self.get_inode(parent).await?;
-        parent_attr.mtime = SystemTime::now();
-        parent_attr.ctime = SystemTime::now();
-        self.write_inode(&parent_attr).await?;
+        self.update_inode(parent, SetFileAttr::default()
+            .with_mtime(SystemTime::now())
+            .with_ctime(SystemTime::now())).await?;
 
         Ok(())
     }
@@ -778,17 +804,22 @@ impl EncryptedFs {
         let ino_str = attr.ino.to_string();
 
         // remove inode file
-        tokio::fs::remove_file(self.data_dir.join(INODES_DIR).join(&ino_str)).await?;
+        {
+            let map = self.serialize_inode_locks.write().unwrap();
+            let lock = map.get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
+            let _guard = lock.write().unwrap();
+            fs::remove_file(self.data_dir.join(INODES_DIR).join(&ino_str))?;
+        }
+
         // remove contents file
         tokio::fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(&ino_str)).await?;
         // remove from parent directory
-        let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &*self.key.get().await?);
-        tokio::fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name)).await?;
+        // remove from parent contents
+        self.remove_directory_entry(parent, name).await?;
 
-        let mut parent_attr = self.get_inode(parent).await?;
-        parent_attr.mtime = SystemTime::now();
-        parent_attr.ctime = SystemTime::now();
-        self.write_inode(&parent_attr).await?;
+        self.update_inode(parent, SetFileAttr::default()
+            .with_mtime(SystemTime::now())
+            .with_ctime(SystemTime::now())).await?;
 
         Ok(())
     }
@@ -814,7 +845,7 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(contents_dir)?;
-        Ok(DirectoryEntryIterator(iter.into_iter(), self.cipher.clone(), SecretVec::new((*self.key.get().await?).expose_secret().to_vec())))
+        Ok(DirectoryEntryIterator(iter.into_iter(), self.cipher.clone(), self.key.get().await?, self.serialize_dir_entries_locks.clone()))
     }
 
     /// Like [read_dir](EncryptedFs::read_dir) but with [FileAttr] so we don't need to query again for those.
@@ -825,22 +856,23 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(contents_dir)?;
-        Ok(DirectoryEntryPlusIterator(iter.into_iter(), self.data_dir.join(INODES_DIR), self.cipher.clone(), SecretVec::new((*self.key.get().await?).expose_secret().to_vec())))
+        Ok(DirectoryEntryPlusIterator(iter.into_iter(), self.data_dir.join(INODES_DIR), self.cipher.clone(), self.key.get().await?,
+                                      self.serialize_dir_entries_locks.clone(), self.serialize_inode_locks.clone()))
     }
 
-    async fn get_inode_from_storage(&self, ino: u64) -> FsResult<FileAttr> {
-        let mut map_guard = self.serialize_inode_locks.lock().await;
-        let lock = map_guard.get_or_insert_with(ino, || Mutex::new(false));
-        let _guard = lock.lock().await;
+    async fn get_inode_from_storage(&self, ino: u64, key: &SecretVec<u8>) -> FsResult<FileAttr> {
+        let map_guard = self.serialize_inode_locks.read().unwrap();
+        let lock = map_guard.get_or_insert_with(ino, || std::sync::RwLock::new(false));
+        let _guard = lock.read().unwrap();
 
         let path = self.data_dir.join(INODES_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path).map_err(|_| { FsError::InodeNotFound })?;
-        Ok(bincode::deserialize_from::<Decryptor<File>, FileAttr>(crypto_util::create_decryptor(file, &self.cipher, &*self.key.get().await?))?)
+        Ok(bincode::deserialize_from::<Decryptor<File>, FileAttr>(crypto_util::create_decryptor(file, &self.cipher, key))?)
     }
 
     pub async fn get_inode(&self, ino: u64) -> FsResult<FileAttr> {
         debug!("get inode");
-        let mut attr = self.get_inode_from_storage(ino).await?;
+        let mut attr = self.get_inode_from_storage(ino, &*self.key.get().await?).await?;
 
         // merge time info and size with any open read handles
         let open_reads = { self.opened_files_for_read.read().await.contains_key(&ino) };
@@ -872,21 +904,21 @@ impl EncryptedFs {
     }
 
     pub async fn update_inode(&self, ino: u64, set_attr: SetFileAttr) -> FsResult<()> {
-        let mut map_serialize_update = self.serialize_update_inode_locks.lock().await;
+        let map_serialize_update = self.serialize_update_inode_locks.lock().await;
         let lock_serialize_update = map_serialize_update.get_or_insert_with(ino, || Mutex::new(false));
         let _guard_serialize_update = lock_serialize_update.lock().await;
 
         let mut attr = self.get_inode(ino).await?;
         merge_attr(&mut attr, set_attr);
 
-        self.write_inode(&attr).await?;
+        self.write_inode_to_storage(&attr, &*self.key.get().await?).await?;
         Ok(())
     }
 
-    async fn write_inode(&self, attr: &FileAttr) -> Result<(), FsError> {
-        let mut map = self.serialize_inode_locks.lock().await;
-        let lock = map.get_or_insert_with(attr.ino, || Mutex::new(false));
-        let _guard = lock.lock().await;
+    async fn write_inode_to_storage(&self, attr: &FileAttr, key: &SecretVec<u8>) -> Result<(), FsError> {
+        let map = self.serialize_inode_locks.write().unwrap();
+        let lock = map.get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
+        let _guard = lock.write().unwrap();
 
         let path = self.data_dir.join(INODES_DIR).join(attr.ino.to_string());
         let file = OpenOptions::new()
@@ -895,7 +927,7 @@ impl EncryptedFs {
             .create(true)
             .truncate(true)
             .open(&path)?;
-        bincode::serialize_into(crypto_util::create_encryptor(file, &self.cipher, &*self.key.get().await?), &attr)?;
+        bincode::serialize_into(crypto_util::create_encryptor(file, &self.cipher, key), &attr)?;
         Ok(())
     }
 
@@ -910,7 +942,7 @@ impl EncryptedFs {
         debug!("read");
         // lock for reading
         let lock = {
-            let mut map_guard = self.read_write_inode_locks.lock().await;
+            let map_guard = self.read_write_inode_locks.lock().await;
             map_guard.get_or_insert_with(ino, || Mutex::new(false))
         };
         let _guard = lock.lock().await;
@@ -1056,9 +1088,9 @@ impl EncryptedFs {
         if !valid_fh {
             return Err(FsError::InvalidFileHandle);
         }
-        debug!(serialize_inode_locks.size = self.serialize_inode_locks.lock().await.len());
-        debug!(read_write_inode_locks.size = self.read_write_inode_locks.lock().await.len());
+        debug!(serialize_inode_locks.size = self.serialize_inode_locks.read().unwrap().len());
         debug!(serialize_update_inode_locks.size = self.serialize_update_inode_locks.lock().await.len());
+        debug!(read_write_inode_locks.size = self.read_write_inode_locks.lock().await.len());
         Ok(())
     }
 
@@ -1084,7 +1116,7 @@ impl EncryptedFs {
         debug!("write_all");
         // lock for writing
         let lock = {
-            let mut map_guard = self.read_write_inode_locks.lock().await;
+            let map_guard = self.read_write_inode_locks.lock().await;
             map_guard.get_or_insert_with(ino, || Mutex::new(false))
         };
         let _guard = lock.lock().await;
@@ -1168,7 +1200,7 @@ impl EncryptedFs {
                     // update metadata
                     let (ino, attr) = {
                         let guard = self.write_handles.read().await;
-                        let mut ctx = guard.get(&handle).unwrap().lock().await;
+                        let ctx = guard.get(&handle).unwrap().lock().await;
                         (ctx.ino, ctx.attr.clone())
                     };
                     self.update_inode(ino, attr.into()).await?;
@@ -1326,7 +1358,7 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
 
-        let mut map_guard = self.read_write_inode_locks.lock().await;
+        let map_guard = self.read_write_inode_locks.lock().await;
         let mut handle = 0_u64;
         if read {
             let lock = map_guard.get_or_insert_with(ino, || Mutex::new(false));
@@ -1350,7 +1382,7 @@ impl EncryptedFs {
 
     pub async fn truncate(&self, ino: u64, size: u64) -> FsResult<()> {
         let lock = {
-            let mut map_guard = self.read_write_inode_locks.lock().await;
+            let map_guard = self.read_write_inode_locks.lock().await;
             map_guard.get_or_insert_with(ino, || Mutex::new(false))
         };
         let _guard = lock.lock().await;
@@ -1556,7 +1588,7 @@ impl EncryptedFs {
             ino: attr.ino,
             name: SecretString::new(new_name.expose_secret().to_owned()),
             kind: attr.kind,
-        }).await?;
+        }, &*self.key.get().await?).await?;
 
         let mut parent_attr = self.get_inode(parent).await?;
         parent_attr.mtime = SystemTime::now();
@@ -1574,7 +1606,7 @@ impl EncryptedFs {
                 ino: new_parent,
                 name: SecretString::from_str("$..").unwrap(),
                 kind: FileType::Directory,
-            }).await?;
+            }, &*self.key.get().await?).await?;
         }
 
         Ok(())
@@ -1682,7 +1714,7 @@ impl EncryptedFs {
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path)?;
         let decryptor = crypto_util::create_decryptor(file, &self.cipher, &*self.key.get().await?);
-        let attr = self.get_inode_from_storage(ino).await?;
+        let attr = self.get_inode_from_storage(ino, &*self.key.get().await?).await?;
         match op {
             ReadHandleContextOperation::Create { ino, lock } => {
                 let attr: TimeAndSizeFileAttr = attr.into();
@@ -1734,7 +1766,7 @@ impl EncryptedFs {
                 existing.encryptor.replace(encryptor);
                 existing.path = path.clone();
                 if reset_size {
-                    let attr = self.get_inode_from_storage(ino).await?;
+                    let attr = self.get_inode_from_storage(ino, &*self.key.get().await?).await?;
                     existing.attr.size = attr.size;
                     debug!("resetting size to {}", attr.size.to_formatted_string(&Locale::en));
                 }
@@ -1746,30 +1778,21 @@ impl EncryptedFs {
 
     async fn ensure_root_exists(&self) -> FsResult<()> {
         if !self.node_exists(ROOT_INODE) {
-            let mut attr = FileAttr {
-                ino: ROOT_INODE,
-                size: 0,
-                blocks: 0,
-                atime: SystemTime::now(),
-                mtime: SystemTime::now(),
-                ctime: SystemTime::now(),
-                crtime: SystemTime::now(),
+            let mut attr: FileAttr = CreateFileAttr {
                 kind: FileType::Directory,
                 perm: 0o755,
-                nlink: 2,
                 uid: 0,
                 gid: 0,
                 rdev: 0,
-                blksize: 0,
                 flags: 0,
-            };
-            #[cfg(target_os = "linux")] {
-                let metadata = tokio::fs::metadata(self.data_dir.clone()).await?;
-                attr.uid = metadata.uid();
-                attr.gid = metadata.gid();
+            }.into();
+            attr.ino = ROOT_INODE;
+            #[cfg(target_os = "linux")] unsafe {
+                attr.uid = libc::getuid();
+                attr.gid = libc::getgid();
             }
 
-            self.write_inode(&attr).await?;
+            self.write_inode_to_storage(&attr, &*self.key.get().await?).await?;
 
             // create the directory
             tokio::fs::create_dir(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).await?;
@@ -1779,25 +1802,30 @@ impl EncryptedFs {
                 ino: attr.ino,
                 name: SecretString::from_str("$.").unwrap(),
                 kind: FileType::Directory,
-            }).await?;
+            }, &*self.key.get().await?).await?;
         }
 
         Ok(())
     }
 
-    async fn insert_directory_entry(&self, parent: u64, entry: DirectoryEntry) -> FsResult<()> {
+    async fn insert_directory_entry(&self, parent: u64, entry: DirectoryEntry, key: &SecretVec<u8>) -> FsResult<()> {
         let parent_path = self.data_dir.join(CONTENTS_DIR).join(parent.to_string());
-        // remove path separators from name
         let name = crypto_util::normalize_end_encrypt_file_name(&entry.name, &self.cipher, &*self.key.get().await?);
+        let file_path = parent_path.join(name);
+
+        let map = self.serialize_dir_entries_locks.write().unwrap();
+        let lock = map.get_or_insert_with(file_path.to_str().unwrap().to_string(), || std::sync::RwLock::new(false));
+        let _guard = lock.write().unwrap();
+
         let file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .open(&parent_path.join(name))?;
+            .open(&file_path)?;
 
         // write inode and file type
         let entry = (entry.ino, entry.kind);
-        bincode::serialize_into(crypto_util::create_encryptor(file, &self.cipher, &*self.key.get().await?), &entry)?;
+        bincode::serialize_into(crypto_util::create_encryptor(file, &self.cipher, key), &entry)?;
 
         Ok(())
     }
@@ -1805,7 +1833,13 @@ impl EncryptedFs {
     async fn remove_directory_entry(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         let parent_path = self.data_dir.join(CONTENTS_DIR).join(parent.to_string());
         let name = crypto_util::normalize_end_encrypt_file_name(name, &self.cipher, &*self.key.get().await?);
-        tokio::fs::remove_file(parent_path.join(name)).await?;
+        let file_path = parent_path.join(name);
+
+        let map = self.serialize_dir_entries_locks.write().unwrap();
+        let lock = map.get_or_insert_with(file_path.to_str().unwrap().to_string(), || std::sync::RwLock::new(false));
+        let _guard = lock.write().unwrap();
+
+        fs::remove_file(file_path)?;
         Ok(())
     }
 
@@ -1929,4 +1963,18 @@ fn merge_attr(attr: &mut FileAttr, set_attr: SetFileAttr) {
     if let Some(flags) = set_attr.flags {
         attr.flags = flags;
     }
+}
+
+fn check_password(data_dir: &PathBuf, password: &SecretString, cipher: &Cipher) -> FsResult<()> {
+    let salt = crypto_util::hash_secret(password);
+    let initial_key = crypto_util::derive_key(password, cipher, salt)?;
+    let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
+    let decryptor = crypto_util::create_decryptor(File::open(enc_file.clone())?, cipher, &initial_key);
+    let key_store: KeyStore = bincode::deserialize_from(decryptor).map_err(|_| FsError::InvalidPassword)?;
+    // check hash
+    if key_store.hash != crypto_util::hash(key_store.key.expose_secret()) {
+        return Err(FsError::InvalidPassword);
+    }
+
+    Ok(())
 }

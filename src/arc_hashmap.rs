@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct ArcHashMap<K, V>
     where
-        K: Eq + Hash + Copy,
+        K: Eq + Hash,
 {
-    map: HashMap<K, (Arc<V>, Arc<AtomicUsize>)>,
+    map: Mutex<HashMap<K, (Arc<V>, Arc<AtomicUsize>)>>,
 }
 
 pub struct Guard<V>
@@ -32,51 +32,50 @@ impl<V> Deref for Guard<V> {
     }
 }
 
-impl<K: Eq + Hash + Copy, V> ArcHashMap<K, V> {
+impl<K: Eq + Hash, V> ArcHashMap<K, V> {
     pub fn new() -> Self {
         ArcHashMap {
-            map: HashMap::new(),
+            map: Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn insert(&mut self, key: K, value: V) -> Guard<V> {
+    pub fn insert(&self, key: K, value: V) -> Guard<V> {
         self.purge();
         self.get_or_insert_with(key, || value)
     }
 
-    pub fn get<'a>(&mut self, key: &K) -> Option<Guard<V>> {
-        let v = self.map.get_mut(key);
+    pub fn get<'a>(&self, key: &K) -> Option<Guard<V>> {
+        self.purge();
+        self.get_internal(self.map.lock().unwrap().get(key))
+    }
+
+    pub fn get_internal<'a>(&self, v: Option<&(Arc<V>, Arc<AtomicUsize>)>) -> Option<Guard<V>> {
         if let Some((v, rc)) = v {
             rc.fetch_add(1, Ordering::SeqCst);
             return Some(Guard { val: v.clone(), rc: rc.clone() });
         }
-        self.purge();
         None
     }
 
-    pub fn get_or_insert_with<F>(&mut self, key: K, f: F) -> Guard<V>
+    pub fn get_or_insert_with<F>(&self, key: K, f: F) -> Guard<V>
         where
             F: FnOnce() -> V,
     {
         self.purge();
-        let key2 = key.clone();
-        self.map.entry(key).or_insert_with(|| {
-            (Arc::new(f()), Arc::new(AtomicUsize::new(1)))
+        let mut map = self.map.lock().unwrap();
+        let v = map.entry(key).or_insert_with(|| {
+            (Arc::new(f()), Arc::new(AtomicUsize::new(0)))
         });
-        self.get(&key2).unwrap()
+        self.get_internal(Some(v)).unwrap()
     }
 
-    fn purge(&mut self) {
-        let keys = self.map.keys().cloned().collect::<Vec<_>>();
-        for k in keys {
-            if self.map.get(&k).unwrap().1.load(Ordering::SeqCst) == 0 {
-                self.map.remove(&k);
-            }
-        }
+    fn purge(&self) {
+        let mut map = self.map.lock().unwrap();
+        map.retain(|_, v| v.1.load(Ordering::SeqCst) > 0);
     }
 
-    pub fn len(&mut self) -> usize {
+    pub fn len(&self) -> usize {
         self.purge();
-        self.map.len()
+        self.map.lock().unwrap().len()
     }
 }

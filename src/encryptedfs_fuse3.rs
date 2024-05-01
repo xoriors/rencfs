@@ -15,7 +15,7 @@ use fuse3::raw::prelude::{DirectoryEntry, DirectoryEntryPlus, ReplyAttr, ReplyCo
 use fuse3::raw::{Filesystem, Request};
 use futures_util::stream;
 use futures_util::stream::Iter;
-use libc::{EACCES, EBADF, EIO, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
+use libc::{EACCES, EBADF, EEXIST, EIO, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, error, instrument, trace, warn};
 
@@ -185,16 +185,15 @@ impl EncryptedFsFuse3 {
         attr.uid = req.uid;
         attr.gid = creation_gid(&parent_attr, req.gid);
 
-        match self.get_fs().create_nod(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap(), attr, read, write).await {
-            Ok((fh, attr)) => Ok((fh, attr)),
-            Err(err) => {
-                error!(err = %err);
-                match err {
-                    FsError::AlreadyExists => { Err(libc::EEXIST) }
-                    _ => { return Err(ENOENT); }
-                }
+        let (fh, attr) = self.get_fs().create_nod(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap(), attr, read, write).await.map_err(|err| {
+            error!(err = %err);
+            match err {
+                FsError::AlreadyExists => EEXIST,
+                FsError::Io { source } => if source.to_string().to_lowercase().contains("too long") { ENAMETOOLONG } else { EIO },
+                _ => EIO,
             }
-        }
+        })?;
+        Ok((fh, attr))
     }
 }
 
@@ -251,7 +250,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         if name.len() > MAX_NAME_LENGTH as usize {
             warn!(name = %name.to_str().unwrap(), "name too long");
-            return Err(libc::ENAMETOOLONG.into());
+            return Err(ENAMETOOLONG.into());
         }
 
         match self.get_fs().get_inode(parent).await {
@@ -1068,25 +1067,19 @@ impl Filesystem for EncryptedFsFuse3 {
             }
         };
 
-        return match self.create_nod(parent, mode, &req, name, read, write).await {
-            Ok((handle, attr)) => {
-                debug!(handle, "created handle");
-                // TODO: implement flags
-                Ok(ReplyCreated {
-                    ttl: TTL,
-                    attr: attr.into(),
-                    generation: 0,
-                    fh: handle,
-                    flags: 0,
-                })
-            }
-            Err(err) => {
-                error!(err = %err);
-                Err(ENOENT.into())
-            }
-        };
+        let (handle, attr) = self.create_nod(parent, mode, &req, name, read, write).await.map_err(|err| {
+            error!(err = %err);
+            Errno::from(ENOENT)
+        })?;
+        debug!(handle, "created handle");
+        Ok(ReplyCreated {
+            ttl: TTL,
+            attr: attr.into(),
+            generation: 0,
+            fh: handle,
+            flags: 0,
+        })
     }
-
 
     type DirEntryPlusStream<'a> = Iter<Skip<DirectoryEntryPlusIterator>> where Self: 'a;
 
