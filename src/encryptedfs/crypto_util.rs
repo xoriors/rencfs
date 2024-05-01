@@ -1,11 +1,12 @@
 use std::fs::File;
 use cryptostream::{read, write};
 use std::os::unix::fs::MetadataExt;
-use rand::Rng;
+use rand::{thread_rng};
 use std::io::{Read, Write};
 use base64::decode;
 use std::io;
 use argon2::Argon2;
+use argon2::password_hash::rand_core::RngCore;
 use cryptostream::read::Decryptor;
 use cryptostream::write::Encryptor;
 use openssl::sha::sha256;
@@ -28,7 +29,7 @@ pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) ->
     let mut iv: Vec<u8> = vec![0; iv_len];
     if file.metadata().unwrap().size() == 0 {
         // generate random IV
-        rand::thread_rng().fill_bytes(&mut iv);
+        thread_rng().fill_bytes(&mut iv);
         file.write_all(&iv).unwrap();
     } else {
         // read IV from file

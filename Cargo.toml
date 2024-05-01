@@ -1,7 +1,7 @@
 [package]
 name = "rencfs"
 description = "An encrypted file system that mounts with FUSE on Linux. It can be used to create encrypted directories."
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Radu Marias <radumarias@gmail.com>"]
@@ -21,7 +21,7 @@ libc = "0.2.153"
 serde = { version = "1.0.197", features = ["derive"] }
 bincode = "1.3.3"
 thiserror = "1.0.58"
-rand = "0.3"
+rand = "0.8.5"
 base64 = "=0.13.1"
 openssl = "=0.10.64"
 fuse3 = { version = "0.7.1", features = ["tokio-runtime", "unprivileged"] }

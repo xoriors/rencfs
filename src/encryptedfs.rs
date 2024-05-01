@@ -11,12 +11,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, SystemTime};
 
+use argon2::password_hash::rand_core::RngCore;
 use cryptostream::read::Decryptor;
 use cryptostream::write::Encryptor;
 use futures_util::TryStreamExt;
 use num_format::{Locale, ToFormattedString};
 use openssl::error::ErrorStack;
-use rand::{OsRng, Rng};
+use rand::thread_rng;
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use strum_macros::{Display, EnumIter, EnumString};
@@ -27,7 +28,7 @@ use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::{ArcHashMap, Guard};
 use crate::expire_value;
-use crate::expire_value::ExpireValue;
+use crate::expire_value::{ExpireValue, Provider};
 
 pub mod crypto_util;
 #[cfg(test)]
@@ -603,17 +604,13 @@ impl EncryptedFs {
     pub async fn new(data_dir: &str, password_provider: Box<dyn PasswordProvider>, cipher: Cipher) -> FsResult<Self> {
         let path = PathBuf::from(&data_dir);
 
-        let password = password_provider.get_password().ok_or(FsError::InvalidPassword)?;
-
-        ensure_structure_created(&path.clone()).await?;
-        check_password(&path, &password, &cipher)?;
-
         let key_provider = KeyProvider {
             path: path.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
-            // todo: read pass from pass provider field
             password_provider,
             cipher: cipher.clone(),
         };
+
+        ensure_structure_created(&path.clone(), &key_provider).await?;
 
         let fs = EncryptedFs {
             data_dir: path.clone(),
@@ -1852,8 +1849,7 @@ impl EncryptedFs {
 
     fn generate_next_inode(&self) -> u64 {
         loop {
-            let mut rng = rand::thread_rng();
-            let ino = rng.gen::<u64>();
+            let ino = thread_rng().next_u64();
 
             if ino <= ROOT_INODE {
                 continue;
@@ -1889,7 +1885,7 @@ impl EncryptedFs {
                 Cipher::Aes256Gcm => 32,
             };
             key.resize(key_len, 0);
-            OsRng::new()?.fill_bytes(&mut key);
+            thread_rng().fill_bytes(&mut key);
             let key = SecretVec::new(key);
             let key_store = KeyStore::new(key);
             let mut encryptor = crypto_util::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path)?,
@@ -1900,7 +1896,7 @@ impl EncryptedFs {
     }
 }
 
-async fn ensure_structure_created(data_dir: &PathBuf) -> FsResult<()> {
+async fn ensure_structure_created(data_dir: &PathBuf, key_provider: &KeyProvider) -> FsResult<()> {
     if data_dir.exists() {
         check_structure(data_dir, true).await?;
     } else {
@@ -1915,6 +1911,9 @@ async fn ensure_structure_created(data_dir: &PathBuf) -> FsResult<()> {
             tokio::fs::create_dir_all(path).await?;
         }
     }
+
+    // create encryption key
+    key_provider.provide()?;
 
     Ok(())
 }
