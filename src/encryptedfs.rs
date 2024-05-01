@@ -559,14 +559,19 @@ struct WriteHandleContext {
 
 struct KeyProvider {
     path: PathBuf,
-    password: SecretString,
+    password_provider: Box<dyn PasswordProvider>,
     cipher: Cipher,
 }
 
 impl expire_value::Provider<SecretVec<u8>, FsError> for KeyProvider {
     fn provide(&self) -> Result<SecretVec<u8>, FsError> {
-        EncryptedFs::read_or_create_key(&self.path, &self.password, &self.cipher)
+        let password = self.password_provider.get_password().ok_or(FsError::InvalidPassword)?;
+        EncryptedFs::read_or_create_key(&self.path, &password, &self.cipher)
     }
+}
+
+pub trait PasswordProvider: Send + Sync + 'static {
+    fn get_password(&self) -> Option<SecretString>;
 }
 
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
@@ -595,8 +600,10 @@ const BUF_SIZE: usize = 256 * 1024;
 const BUF_SIZE: usize = 1024 * 1024; // 1 MB buffer
 
 impl EncryptedFs {
-    pub async fn new(data_dir: &str, password: SecretString, cipher: Cipher) -> FsResult<Self> {
+    pub async fn new(data_dir: &str, password_provider: Box<dyn PasswordProvider>, cipher: Cipher) -> FsResult<Self> {
         let path = PathBuf::from(&data_dir);
+
+        let password = password_provider.get_password().ok_or(FsError::InvalidPassword)?;
 
         ensure_structure_created(&path.clone()).await?;
         check_password(&path, &password, &cipher)?;
@@ -604,7 +611,7 @@ impl EncryptedFs {
         let key_provider = KeyProvider {
             path: path.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
             // todo: read pass from pass provider field
-            password: SecretString::new(password.expose_secret().to_owned()),
+            password_provider,
             cipher: cipher.clone(),
         };
 

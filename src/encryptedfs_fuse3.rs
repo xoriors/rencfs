@@ -19,7 +19,7 @@ use libc::{EACCES, EBADF, EEXIST, EIO, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY,
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, error, instrument, trace, warn};
 
-use crate::encryptedfs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult, SetFileAttr, CreateFileAttr};
+use crate::encryptedfs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult, SetFileAttr, CreateFileAttr, PasswordProvider};
 
 const TTL: Duration = Duration::from_secs(1);
 const STATFS: ReplyStatFs = ReplyStatFs {
@@ -120,18 +120,18 @@ pub struct EncryptedFsFuse3 {
 }
 
 impl EncryptedFsFuse3 {
-    pub async fn new(data_dir: &str, password: SecretString, cipher: Cipher,
+    pub async fn new(data_dir: &str, password_provider: Box<dyn PasswordProvider>, cipher: Cipher,
                      direct_io: bool, _suid_support: bool) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")] {
             Ok(Self {
-                fs: Arc::new(EncryptedFs::new(data_dir, password, cipher).await?),
+                fs: Arc::new(EncryptedFs::new(data_dir, password_provider, cipher).await?),
                 direct_io,
                 suid_support: _suid_support,
             })
         }
         #[cfg(not(feature = "abi-7-26"))] {
             Ok(Self {
-                fs: Arc::new(EncryptedFs::new(data_dir, password, cipher).await?),
+                fs: Arc::new(EncryptedFs::new(data_dir, password_provider, cipher).await?),
                 direct_io,
                 suid_support: false,
             })

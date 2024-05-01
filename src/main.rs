@@ -13,8 +13,10 @@ use anyhow::Result;
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 
-use rencfs::encryptedfs::{Cipher, EncryptedFs, FsError};
+use rencfs::encryptedfs::{Cipher, EncryptedFs, FsError, PasswordProvider};
 use rencfs::{is_debug, log_init};
+
+mod keyring;
 
 #[derive(Debug, Error)]
 enum ExitStatusError {
@@ -267,22 +269,52 @@ async fn run_normal(matches: ArgMatches, data_dir: &String, cipher: Cipher) -> R
             }
         }
     }
+    // save password in keyring
+    keyring::save(password.clone(), "password").map_err(|err| {
+        error!(err = %err);
+        ExitStatusError::from(ExitStatusError::Failure(1))
+    })?;
 
     if matches.get_flag("umount-on-start") {
         umount(mountpoint.as_str(), false)?;
     }
 
+    let auto_unmount = matches.get_flag("auto_unmount");
+    let mountpoint_kill = mountpoint.clone();
     // unmount on process kill
-    if matches.get_flag("auto_unmount") {
-        let mountpoint_kill = mountpoint.clone();
-        set_handler(move || {
-            info!("Received signal to exit");
-            let _ = umount(mountpoint_kill.as_str(), true).map_err(|err| error!(err = %err));
-            process::exit(0);
-        }).unwrap();
+    set_handler(move || {
+        info!("Received signal to exit");
+        let mut status: Option<ExitStatusError> = None;
+
+        if auto_unmount {
+            info!("Unmounting {}", mountpoint_kill);
+        }
+        umount(mountpoint_kill.as_str(), true).map_err(|err| {
+            error!(err = %err);
+            status.replace(ExitStatusError::Failure(1));
+        }).ok();
+
+        info!("Delete key from keyring");
+        keyring::delete("password").map_err(|err| {
+            error!(err = %err);
+            status.replace(ExitStatusError::Failure(1));
+        }).ok();
+
+        process::exit(status.map_or(0, |x| match x { ExitStatusError::Failure(status) => status }));
+    }).unwrap();
+
+    struct PasswordProviderImpl {}
+
+    impl PasswordProvider for PasswordProviderImpl {
+        fn get_password(&self) -> Option<SecretString> {
+            keyring::get("password").map_err(|err| {
+                error!(err = %err, "cannot get password from keyring");
+                err
+            }).ok()
+        }
     }
 
-    rencfs::run_fuse(&mountpoint, &data_dir, password, cipher,
+    rencfs::run_fuse(&mountpoint, &data_dir, Box::new(PasswordProviderImpl {}), cipher,
                      matches.get_flag("allow-root"), matches.get_flag("allow-other"),
                      matches.get_flag("direct-io"), matches.get_flag("suid")).await
 }

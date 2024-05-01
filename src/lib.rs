@@ -180,11 +180,9 @@ use tracing_appender::non_blocking::WorkerGuard;
 use fuse3::MountOptions;
 use std::ffi::OsStr;
 use fuse3::raw::Session;
-use keyring::Entry;
-use secrecy::{ExposeSecret, SecretString};
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
-use crate::encryptedfs::Cipher;
+use crate::encryptedfs::{Cipher, PasswordProvider};
 use crate::encryptedfs_fuse3::EncryptedFsFuse3;
 
 pub mod encryptedfs;
@@ -223,8 +221,8 @@ pub fn log_init(level: Level) -> WorkerGuard {
     guard
 }
 
-#[instrument(skip(password))]
-pub async fn run_fuse(mountpoint: &str, data_dir: &str, password: SecretString, cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
+#[instrument(skip(password_provider))]
+pub async fn run_fuse(mountpoint: &str, data_dir: &str, password_provider: Box<dyn PasswordProvider>, cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
     let mut mount_options = &mut MountOptions::default();
     #[cfg(target_os = "linux")] {
         unsafe {
@@ -242,27 +240,9 @@ pub async fn run_fuse(mountpoint: &str, data_dir: &str, password: SecretString, 
 
     info!("Checking password and mounting FUSE filesystem");
     Session::new(mount_options)
-        .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, password, cipher, direct_io, suid_support).await?, mount_path)
+        .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, password_provider, cipher, direct_io, suid_support).await?, mount_path)
         .await?
         .await?;
 
     Ok(())
-}
-
-const KEYRING_SERVICE: &'static str = "rencfs";
-const KEYRING_USER: &'static str = "encrypted_fs";
-
-pub(crate) fn save_to_keyring(password: SecretString, suffix: &str) -> Result<(), keyring::Error> {
-    let entry = Entry::new(KEYRING_SERVICE, &format!("{KEYRING_USER}.{suffix}"))?;
-    entry.set_password(password.expose_secret())
-}
-
-pub(crate) fn delete_from_keyring(suffix: &str) -> Result<(), keyring::Error> {
-    let entry = Entry::new(KEYRING_SERVICE, &format!("{KEYRING_USER}.{suffix}"))?;
-    entry.delete_password()
-}
-
-pub(crate) fn get_from_keyring(suffix: &str) -> Result<SecretString, keyring::Error> {
-    let entry = Entry::new(KEYRING_SERVICE, &format!("{KEYRING_USER}.{suffix}"))?;
-    Ok(SecretString::new(entry.get_password()?))
 }
