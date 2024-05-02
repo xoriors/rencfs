@@ -17,7 +17,13 @@ use thiserror::Error;
 use tracing::{debug, error, instrument};
 use strum_macros::{Display, EnumIter, EnumString};
 use serde::{Deserialize, Serialize};
-use crate::{crypto_util, stream_util};
+use crate::stream_util;
+
+#[derive(Debug, Clone, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
+pub enum Cipher {
+    ChaCha20,
+    Aes256Gcm,
+}
 
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -143,7 +149,7 @@ pub fn copy_from_file_exact(w: &mut impl Write, pos: u64, len: u64, cipher: &Cip
         return Ok(());
     }
     // create a new decryptor by reading from the beginning of the file
-    let mut decryptor = crypto_util::create_decryptor(OpenOptions::new().read(true).open(file)?, cipher, key);
+    let mut decryptor = create_decryptor(OpenOptions::new().read(true).open(file)?, cipher, key);
     // move read position to the write position
     stream_util::read_seek_forward_exact(&mut decryptor, pos)?;
 
@@ -151,10 +157,4 @@ pub fn copy_from_file_exact(w: &mut impl Write, pos: u64, len: u64, cipher: &Cip
     stream_util::copy_exact(&mut decryptor, w, len)?;
     decryptor.finish();
     Ok(())
-}
-
-#[derive(Debug, Clone, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
-pub enum Cipher {
-    ChaCha20,
-    Aes256Gcm,
 }

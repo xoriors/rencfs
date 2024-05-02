@@ -1,6 +1,6 @@
 use std::str::FromStr;
 use secrecy::SecretString;
-use rencfs::crypto_util::Cipher;
+use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError};
 
 #[tokio::main]

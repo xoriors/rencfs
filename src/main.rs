@@ -15,7 +15,7 @@ use thiserror::Error;
 use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
-use rencfs::crypto_util::Cipher;
+use rencfs::crypto::Cipher;
 
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::is_debug;

@@ -18,7 +18,7 @@ use futures_util::stream::Iter;
 use libc::{EACCES, EBADF, EEXIST, EIO, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, error, instrument, trace, warn};
-use crate::crypto_util::Cipher;
+use crate::crypto::Cipher;
 
 use crate::encryptedfs::{EncryptedFs, FileAttr, FileType, FsError, FsResult, SetFileAttr, CreateFileAttr, PasswordProvider};
 
