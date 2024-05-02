@@ -17,7 +17,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
 use rencfs::encryptedfs::{Cipher, EncryptedFs, FsError, PasswordProvider};
-use rencfs::{is_debug, log_init};
+use rencfs::is_debug;
 
 mod keyring;
 
