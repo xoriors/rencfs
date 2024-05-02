@@ -1,15 +1,16 @@
+pub mod decryptor;
+pub mod encryptor;
+
 use std::fs::{File, OpenOptions};
 use cryptostream::{read, write};
 use std::os::unix::fs::MetadataExt;
-use rand::{thread_rng};
+use rand::thread_rng;
 use std::io::{Read, Write};
 use base64::decode;
 use std::io;
 use std::path::PathBuf;
 use argon2::Argon2;
 use argon2::password_hash::rand_core::RngCore;
-use cryptostream::read::Decryptor;
-use cryptostream::write::Encryptor;
 use num_format::{Locale, ToFormattedString};
 use openssl::sha::sha256;
 use secrecy::{ExposeSecret, SecretString, SecretVec};
@@ -17,6 +18,9 @@ use thiserror::Error;
 use tracing::{debug, error, instrument};
 use strum_macros::{Display, EnumIter, EnumString};
 use serde::{Deserialize, Serialize};
+use openssl::error::ErrorStack;
+use crate::crypto::decryptor::{Decryptor, DecryptorCryptostream};
+use crate::crypto::encryptor::{Encryptor, EncryptorCryptostream};
 use crate::stream_util;
 
 #[derive(Debug, Clone, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
@@ -26,15 +30,23 @@ pub enum Cipher {
 }
 
 #[derive(Debug, Error)]
-pub enum CryptoError {
+pub enum Error {
+    #[error("cryptostream error: {source}")]
+    OpenSsl {
+        #[from]
+        source: ErrorStack,
+        // backtrace: Backtrace,
+    },
     #[error("crypto error: {0}")]
     Generic(String),
 }
 
-pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> Encryptor<File> {
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> impl Encryptor<File> {
     let iv_len = match cipher {
         Cipher::ChaCha20 => 16,
-        Cipher::Aes256Gcm => 316,
+        Cipher::Aes256Gcm => 16,
     };
     let mut iv: Vec<u8> = vec![0; iv_len];
     if file.metadata().unwrap().size() == 0 {
@@ -45,19 +57,19 @@ pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) ->
         // read IV from file
         file.read_exact(&mut iv).unwrap();
     }
-    Encryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
+    EncryptorCryptostream::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 }
 
 #[instrument(skip(key))]
-pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> Decryptor<File> {
+pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> impl Decryptor<File> {
     let iv_len = match cipher {
         Cipher::ChaCha20 => 16,
-        Cipher::Aes256Gcm => 316,
+        Cipher::Aes256Gcm => 16,
     };
     let mut iv: Vec<u8> = vec![0; iv_len];
     if file.metadata().unwrap().size() == 0 {
         // generate random IV
-        rand::thread_rng().fill_bytes(&mut iv);
+        thread_rng().fill_bytes(&mut iv);
         file.write_all(&iv).map_err(|err| {
             error!("{err}");
             err
@@ -69,7 +81,7 @@ pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) ->
             err
         }).unwrap();
     }
-    Decryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
+    DecryptorCryptostream::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 }
 
 pub fn encrypt_string(s: &SecretString, cipher: &Cipher, key: &SecretVec<u8>) -> String {
@@ -103,7 +115,7 @@ pub fn decrypt_and_unnormalize_end_file_name(name: &str, cipher: &Cipher, key: &
 }
 
 #[instrument(skip(password, salt))]
-pub fn derive_key(password: &SecretString, cipher: &Cipher, salt: SecretVec<u8>) -> Result<SecretVec<u8>, CryptoError> {
+pub fn derive_key(password: &SecretString, cipher: &Cipher, salt: SecretVec<u8>) -> Result<SecretVec<u8>> {
     let mut dk = vec![];
     let key_len = match cipher {
         Cipher::ChaCha20 => 32,
@@ -111,7 +123,7 @@ pub fn derive_key(password: &SecretString, cipher: &Cipher, salt: SecretVec<u8>)
     };
     dk.resize(key_len, 0);
     Argon2::default().hash_password_into(password.expose_secret().as_bytes(), salt.expose_secret(), &mut dk)
-        .map_err(|err| CryptoError::Generic(err.to_string()))?;
+        .map_err(|err| Error::Generic(err.to_string()))?;
     Ok(SecretVec::new(dk))
 }
 

@@ -12,11 +12,8 @@ use std::sync::atomic::AtomicU64;
 use std::time::{Duration, SystemTime};
 
 use argon2::password_hash::rand_core::RngCore;
-use cryptostream::read::Decryptor;
-use cryptostream::write::Encryptor;
 use futures_util::TryStreamExt;
 use num_format::{Locale, ToFormattedString};
-use openssl::error::ErrorStack;
 use rand::thread_rng;
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -28,6 +25,8 @@ use tracing::{debug, error, instrument, warn};
 use crate::arc_hashmap::{ArcHashMap, Guard};
 use crate::{crypto, expire_value, stream_util};
 use crate::crypto::Cipher;
+use crate::crypto::decryptor::Decryptor;
+use crate::crypto::encryptor::Encryptor;
 use crate::expire_value::{ExpireValue, Provider};
 
 #[cfg(test)]
@@ -253,13 +252,6 @@ pub enum FsError {
     #[error("other")]
     Other(String),
 
-    #[error("encryption error: {source}")]
-    Encryption {
-        #[from]
-        source: ErrorStack,
-        // backtrace: Backtrace,
-    },
-
     #[error("invalid password")]
     InvalidPassword,
 
@@ -269,7 +261,7 @@ pub enum FsError {
     #[error("crypto error: {source}")]
     Crypto {
         #[from]
-        source: crypto::CryptoError,
+        source: crypto::Error,
         // backtrace: Backtrace,
     },
 
@@ -499,7 +491,7 @@ struct ReadHandleContext {
     ino: u64,
     attr: TimeAndSizeFileAttr,
     pos: u64,
-    decryptor: Option<Decryptor<File>>,
+    decryptor: Option<Box<dyn Decryptor<File>>>,
     _lock: Guard<Mutex<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
 }
 
@@ -547,7 +539,7 @@ struct WriteHandleContext {
     attr: TimeAndSizeFileAttr,
     path: PathBuf,
     pos: u64,
-    encryptor: Option<Encryptor<File>>,
+    encryptor: Option<Box<dyn Encryptor<File>>>,
     _lock: Guard<Mutex<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
 }
 
@@ -864,7 +856,7 @@ impl EncryptedFs {
 
         let path = self.data_dir.join(INODES_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path).map_err(|_| { FsError::InodeNotFound })?;
-        Ok(bincode::deserialize_from::<Decryptor<File>, FileAttr>(crypto::create_decryptor(file, &self.cipher, key))?)
+        Ok(bincode::deserialize_from::<Box<dyn Decryptor<File>>, FileAttr>(Box::new(crypto::create_decryptor(file, &self.cipher, key)))?)
     }
 
     pub async fn get_inode(&self, ino: u64) -> FsResult<FileAttr> {
@@ -1202,7 +1194,7 @@ impl EncryptedFs {
 
                 let encryptor = crypto::create_encryptor(tmp_file, &self.cipher, &*self.key.get().await?);
                 debug!("recreating encryptor");
-                ctx.encryptor.replace(encryptor);
+                ctx.encryptor.replace(Box::new(encryptor));
                 ctx.pos = 0;
                 ctx.path = tmp_path;
                 let ino_str = ctx.ino.to_string();
@@ -1458,7 +1450,7 @@ impl EncryptedFs {
                 let guard = self.write_handles.read().await;
                 let mut ctx = guard.get(&key).unwrap().lock().await;
                 debug!("finishing current writer");
-                ctx.encryptor.take().unwrap().finish()?;
+                ctx.encryptor.as_mut().unwrap().finish()?;
             }
             // if we are in tmp file move it to actual file
             let (path, ino) = {
@@ -1545,12 +1537,12 @@ impl EncryptedFs {
     }
 
     /// Create an encryptor using internal encryption info.
-    pub async fn create_encryptor(&self, file: File) -> FsResult<Encryptor<File>> {
+    pub async fn create_encryptor(&self, file: File) -> FsResult<impl Encryptor<File>> {
         Ok(crypto::create_encryptor(file, &self.cipher, &*self.key.get().await?))
     }
 
     /// Create a decryptor using internal encryption info.
-    pub async fn create_decryptor(&self, file: File) -> FsResult<Decryptor<File>> {
+    pub async fn create_decryptor(&self, file: File) -> FsResult<impl Decryptor<File>> {
         Ok(crypto::create_decryptor(file, &self.cipher, &*self.key.get().await?))
     }
 
@@ -1654,7 +1646,7 @@ impl EncryptedFs {
                     ino,
                     attr,
                     pos: 0,
-                    decryptor: Some(decryptor),
+                    decryptor: Some(Box::new(decryptor)),
                     _lock: lock,
                 };
                 self.read_handles.write().await.insert(handle, Mutex::new(ctx));
@@ -1662,7 +1654,7 @@ impl EncryptedFs {
             }
             ReadHandleContextOperation::RecreateDecryptor { mut existing } => {
                 existing.pos = 0;
-                existing.decryptor.replace(decryptor);
+                existing.decryptor.replace(Box::new(decryptor));
                 existing.attr.size = attr.size;
             }
         }
@@ -1686,7 +1678,7 @@ impl EncryptedFs {
                     attr,
                     path,
                     pos: 0,
-                    encryptor: Some(encryptor),
+                    encryptor: Some(Box::new(encryptor)),
                     _lock: lock,
                 };
                 self.write_handles.write().await.insert(handle, Mutex::new(ctx));
@@ -1695,7 +1687,7 @@ impl EncryptedFs {
             WriteHandleContextOperation::RecreateEncryptor { mut existing, reset_size } => {
                 existing.pos = 0;
                 debug!("recreating encryptor");
-                existing.encryptor.replace(encryptor);
+                existing.encryptor.replace(Box::new(encryptor));
                 existing.path = path.clone();
                 if reset_size {
                     let attr = self.get_inode_from_storage(ino, &*self.key.get().await?).await?;
