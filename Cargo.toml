@@ -46,6 +46,7 @@ keyring = "2.3.2"
 secrecy = "0.8.0"
 retainer = "0.3.0"
 num-format = "0.4.4"
+aes-stream = "0.2.1"
 
 [package.metadata.aur]
 depends = ["fuse3"]

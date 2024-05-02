@@ -19,8 +19,8 @@ use tracing::{debug, error, instrument};
 use strum_macros::{Display, EnumIter, EnumString};
 use serde::{Deserialize, Serialize};
 use openssl::error::ErrorStack;
-use crate::crypto::decryptor::{Decryptor, DecryptorCryptostream};
-use crate::crypto::encryptor::{Encryptor, EncryptorCryptostream};
+use crate::crypto::decryptor::{Decryptor, CryptostreamDecryptor};
+use crate::crypto::encryptor::{Encryptor, CryptostreamEncryptor};
 use crate::stream_util;
 
 #[derive(Debug, Clone, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
@@ -57,7 +57,7 @@ pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) ->
         // read IV from file
         file.read_exact(&mut iv).unwrap();
     }
-    EncryptorCryptostream::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
+    CryptostreamEncryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 }
 
 #[instrument(skip(key))]
@@ -81,7 +81,7 @@ pub fn create_decryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) ->
             err
         }).unwrap();
     }
-    DecryptorCryptostream::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
+    CryptostreamDecryptor::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 }
 
 pub fn encrypt_string(s: &SecretString, cipher: &Cipher, key: &SecretVec<u8>) -> String {
