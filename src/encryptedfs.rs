@@ -1066,7 +1066,7 @@ impl EncryptedFs {
                 Self::copy_remaining_of_file(&mut ctx, file_size, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
             }
 
-            debug!("finishing encryptwarnor");
+            debug!("finishing encryptor");
             ctx.encryptor.take().unwrap().finish()?;
             // if we are in tmp file move it to actual file
             let mut recreate_readers = false;
@@ -1221,8 +1221,7 @@ impl EncryptedFs {
                 let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
                 let tmp_file = OpenOptions::new().write(true).create(true).truncate(true).open(tmp_path.clone())?;
 
-                let encryptor =
-                    crypto_util::create_encryptor(tmp_file, &self.cipher, &*self.key.get().await?);
+                let encryptor = crypto_util::create_encryptor(tmp_file, &self.cipher, &*self.key.get().await?);
                 debug!("recreating encryptor");
                 ctx.encryptor.replace(encryptor);
                 ctx.pos = 0;
@@ -1270,15 +1269,10 @@ impl EncryptedFs {
     }
 
     #[instrument(skip(ctx, key))]
-    fn copy_remaining_of_file(ctx: &mut MutexGuard<WriteHandleContext>, mut end_offset: u64, cipher: &Cipher, key: &SecretVec<u8>, file: PathBuf) -> Result<(), FsError> {
+    fn copy_remaining_of_file(ctx: &mut MutexGuard<WriteHandleContext>, end_offset: u64, cipher: &Cipher, key: &SecretVec<u8>, file: PathBuf) -> Result<(), FsError> {
         debug!("copy_remaining_of_file from file {}", file.to_str().unwrap());
-        let actual_file_size = fs::metadata(ctx.path.clone())?.len();
-        debug!("copy_remaining_of_file from {} to {}, file size {} actual file size {}", ctx.pos.to_formatted_string(&Locale::en), end_offset.to_formatted_string(&Locale::en), ctx.attr.size.to_formatted_string(&Locale::en), actual_file_size.to_formatted_string(&Locale::en));
-        // keep offset in file size bounds
-        if end_offset > ctx.attr.size {
-            debug!("end offset {} is bigger than file size {}", end_offset.to_formatted_string(&Locale::en), ctx.attr.size.to_formatted_string(&Locale::en));
-            end_offset = ctx.attr.size;
-        }
+        let actual_file_size = fs::metadata(file.clone())?.len();
+        debug!("copy_remaining_of_file from {} to {}, ctx file size {} actual file size {}", ctx.pos.to_formatted_string(&Locale::en), end_offset.to_formatted_string(&Locale::en), ctx.attr.size.to_formatted_string(&Locale::en), actual_file_size.to_formatted_string(&Locale::en));
         if ctx.pos == end_offset {
             debug!("no need to copy, pos {} end_offset {}", ctx.pos.to_formatted_string(&Locale::en), end_offset.to_formatted_string(&Locale::en));
             // no-op
@@ -1289,7 +1283,7 @@ impl EncryptedFs {
         // move read position to the write position
         if ctx.pos > 0 {
             let mut buffer = vec![0; BUF_SIZE];
-            let mut read_pos = 0u64;
+            let mut read_pos = 0_u64;
             loop {
                 let len = min(buffer.len(), (ctx.pos - read_pos) as usize);
                 decryptor.read_exact(&mut buffer[..len]).map_err(|err| {
@@ -1307,6 +1301,7 @@ impl EncryptedFs {
         // copy the rest of the file
         let mut buffer = vec![0; BUF_SIZE];
         loop {
+            debug!("reading from file pos {} end_offset {}", ctx.pos.to_formatted_string(&Locale::en), end_offset.to_formatted_string(&Locale::en));
             let len = min(buffer.len(), (end_offset - ctx.pos) as usize);
             decryptor.read_exact(&mut buffer[..len]).map_err(|err| {
                 debug!("error reading from file pos {} len {} {end_offset} file size {} actual file size {}",
@@ -1969,18 +1964,4 @@ fn merge_attr(attr: &mut FileAttr, set_attr: SetFileAttr) {
     if let Some(flags) = set_attr.flags {
         attr.flags = flags;
     }
-}
-
-fn check_password(data_dir: &PathBuf, password: &SecretString, cipher: &Cipher) -> FsResult<()> {
-    let salt = crypto_util::hash_secret(password);
-    let initial_key = crypto_util::derive_key(password, cipher, salt)?;
-    let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
-    let decryptor = crypto_util::create_decryptor(File::open(enc_file.clone())?, cipher, &initial_key);
-    let key_store: KeyStore = bincode::deserialize_from(decryptor).map_err(|_| FsError::InvalidPassword)?;
-    // check hash
-    if key_store.hash != crypto_util::hash(key_store.key.expose_secret()) {
-        return Err(FsError::InvalidPassword);
-    }
-
-    Ok(())
 }

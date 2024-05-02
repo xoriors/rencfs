@@ -1,3 +1,4 @@
+use tracing_test::traced_test;
 use std::{fs, io};
 use std::fs::OpenOptions;
 use std::io::Read;
@@ -9,7 +10,7 @@ use std::sync::Arc;
 use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::Mutex;
 
-use crate::encryptedfs::{Cipher, CONTENTS_DIR, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileAttr, FileType, FsError, FsResult, ROOT_INODE};
+use crate::encryptedfs::{Cipher, CONTENTS_DIR, CreateFileAttr, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType, FsError, FsResult, PasswordProvider, ROOT_INODE};
 
 const TESTS_DATA_DIR: &str = "/tmp/rencfs-test-data/";
 
@@ -29,7 +30,15 @@ async fn setup(setup: TestSetup) -> FsResult<SetupResult> {
         fs::remove_dir_all(path)?;
     }
     fs::create_dir_all(path)?;
-    let fs = EncryptedFs::new(path, SecretString::from_str("pass-42").unwrap(), Cipher::ChaCha20).await?;
+
+    struct PasswordProviderImpl {}
+    impl PasswordProvider for PasswordProviderImpl {
+        fn get_password(&self) -> Option<SecretString> {
+            Some(SecretString::from_str("password").unwrap())
+        }
+    }
+
+    let fs = EncryptedFs::new(path, Box::new(PasswordProviderImpl {}), Cipher::ChaCha20).await?;
 
     Ok(SetupResult {
         fs: Some(fs),
@@ -71,28 +80,15 @@ async fn run_test<T>(init: TestSetup, t: T) -> FsResult<()>
 
 thread_local!(static SETUP_RESULT: Arc<Mutex<Option<SetupResult>>> = Arc::new(Mutex::new(None)));
 
-fn create_attr(ino: u64, file_type: FileType) -> FileAttr {
-    FileAttr {
-        ino,
-        size: 0,
-        blocks: 0,
-        atime: std::time::SystemTime::now(),
-        mtime: std::time::SystemTime::now(),
-        ctime: std::time::SystemTime::now(),
-        crtime: std::time::SystemTime::now(),
-        kind: file_type,
-        perm: if file_type == FileType::Directory { 0o755 } else { 0o644 },
-        nlink: if file_type == FileType::Directory { 2 } else { 1 },
+fn create_attr_from_type(kind: FileType) -> CreateFileAttr {
+    CreateFileAttr {
+        kind,
+        perm: 0,
         uid: 0,
         gid: 0,
         rdev: 0,
-        blksize: 0,
         flags: 0,
     }
-}
-
-fn create_attr_from_type(file_type: FileType) -> FileAttr {
-    create_attr(0, file_type)
 }
 
 async fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
@@ -325,6 +321,7 @@ async fn test_truncate() -> FsResult<()> {
 }
 
 #[tokio::test]
+#[traced_test]
 async fn test_copy_file_range() -> FsResult<()> {
     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_copy_file_range") }, async {
         let fs = SETUP_RESULT.with(|s| Arc::clone(s));

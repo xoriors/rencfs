@@ -12,6 +12,9 @@ use tracing::{error, info, Level, warn};
 use anyhow::Result;
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
+use tracing::level_filters::LevelFilter;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::EnvFilter;
 
 use rencfs::encryptedfs::{Cipher, EncryptedFs, FsError, PasswordProvider};
 use rencfs::{is_debug, log_init};
@@ -329,4 +332,27 @@ fn umount(mountpoint: &str, print_fail_status: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub fn log_init(level: Level) -> WorkerGuard {
+    let directive = format!("rencfs={}", level.as_str()).parse().unwrap();
+    let filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env().unwrap()
+        .add_directive(directive);
+
+    let (writer, guard) = tracing_appender::non_blocking(io::stdout());
+    let builder = tracing_subscriber::fmt()
+        .with_writer(writer)
+        .with_env_filter(filter);
+    // .with_max_level(level);
+    if is_debug() {
+        builder
+            .pretty()
+            .init()
+    } else {
+        builder.init();
+    }
+
+    guard
 }
