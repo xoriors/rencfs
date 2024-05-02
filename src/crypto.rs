@@ -15,7 +15,7 @@ use num_format::{Locale, ToFormattedString};
 use openssl::sha::sha256;
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use thiserror::Error;
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, info, instrument};
 use strum_macros::{Display, EnumIter, EnumString};
 use serde::{Deserialize, Serialize};
 use openssl::error::ErrorStack;

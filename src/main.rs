@@ -352,7 +352,9 @@ pub fn log_init(level: Level) -> WorkerGuard {
             .pretty()
             .init()
     } else {
-        builder.init();
+        builder
+            .pretty()
+            .init()
     }
 
     guard

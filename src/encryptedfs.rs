@@ -20,7 +20,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 use tokio::sync::{Mutex, MutexGuard, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::arc_hashmap::{ArcHashMap, Guard};
 use crate::{crypto, expire_value, stream_util};
@@ -974,12 +974,21 @@ impl EncryptedFs {
                 self.do_with_read_handle(handle, ReadHandleContextOperation::RecreateDecryptor { existing: ctx }).await?;
                 ctx = guard.get(&handle).unwrap().lock().await;
             }
-            stream_util::read_seek_forward_exact(&mut ctx.decryptor.as_mut().unwrap(), offset)?;
+            let pos = ctx.pos;
+            let actual_file_size = fs::metadata(self.data_dir.join(CONTENTS_DIR).join(ino.to_string()))?.len();
+            debug!(pos = pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), file_size = ctx.attr.size.to_formatted_string(&Locale::en),
+                actual_file_size = actual_file_size.to_formatted_string(&Locale::en), "seeking");
+            let len = offset - pos;
+            stream_util::read_seek_forward_exact(&mut ctx.decryptor.as_mut().unwrap(), len)?;
+            ctx.pos += len;
         }
         if offset + buf.len() as u64 > ctx.attr.size {
             buf = &mut buf[..(ctx.attr.size - offset) as usize];
         }
-        ctx.decryptor.as_mut().unwrap().read_exact(&mut buf)?;
+        ctx.decryptor.as_mut().unwrap().read_exact(&mut buf).map_err(|err| {
+            error!(err = %err, pos = ctx.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), file_size = ctx.attr.size.to_formatted_string(&Locale::en), "reading from decryptor");
+            err
+        })?;
         ctx.pos += buf.len() as u64;
 
         ctx.attr.atime = SystemTime::now();
@@ -1339,17 +1348,7 @@ impl EncryptedFs {
 
             // copy existing data until new size
             debug!("copying data until new size");
-            let mut buf = vec![0; BUF_SIZE];
-            let mut pos = 0_u64;
-            loop {
-                let len = min(buf.len(), (size - pos) as usize);
-                decryptor.read_exact(&mut buf[..len])?;
-                encryptor.write_all(&buf[..len])?;
-                pos += len as u64;
-                if pos == size {
-                    break;
-                }
-            }
+            stream_util::copy_exact(&mut decryptor, &mut encryptor, size)?;
             debug!("rename from tmp file");
             tokio::fs::rename(tmp_path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).await?;
         } else {
@@ -1370,29 +1369,12 @@ impl EncryptedFs {
 
             // copy existing data
             debug!("copying existing data");
-            let mut buf = vec![0; BUF_SIZE];
-            let mut pos = 0_u64;
-            loop {
-                let len = min(buf.len(), (attr.size - pos) as usize);
-                decryptor.read_exact(&mut buf[..len])?;
-                encryptor.write_all(&buf[..len])?;
-                pos += len as u64;
-                if pos == attr.size {
-                    break;
-                }
-            }
+            stream_util::copy_exact(&mut decryptor, &mut encryptor, attr.size)?;
+            attr.size = size;
 
             // now fill up with zeros until new size
             debug!("filling up with zeros until new size");
-            let buf = vec![0; BUF_SIZE];
-            loop {
-                let len = min(buf.len(), (size - attr.size) as usize);
-                encryptor.write_all(&buf[..len])?;
-                attr.size += len as u64;
-                if attr.size == size {
-                    break;
-                }
-            }
+            stream_util::fill_zeros(&mut encryptor, size - attr.size)?;
 
             encryptor.finish()?;
             debug!("rename from tmp file");
@@ -1583,7 +1565,7 @@ impl EncryptedFs {
         let new_key = crypto::derive_key(&new_password, &cipher, salt)?;
         tokio::fs::remove_file(enc_file.clone()).await?;
         let mut encryptor = crypto::create_encryptor(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
-                                                          &cipher, &new_key);
+                                                     &cipher, &new_key);
         bincode::serialize_into(&mut encryptor, &key_store)?;
 
         Ok(())
@@ -1809,7 +1791,7 @@ impl EncryptedFs {
             let key = SecretVec::new(key);
             let key_store = KeyStore::new(key);
             let mut encryptor = crypto::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path)?,
-                                                              cipher, &derived_key);
+                                                         cipher, &derived_key);
             bincode::serialize_into(&mut encryptor, &key_store)?;
             Ok(key_store.key)
         }
