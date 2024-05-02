@@ -9,14 +9,15 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 RUN . ~/.cargo/env && rustup target add x86_64-unknown-linux-musl
 
 # Cache downloaded+built dependencies
-COPY Cargo.toml Cargo.lock /usr/src/rencfs/
-RUN mkdir /usr/src/rencfs/src && \
-    echo 'fn main() {}' > /usr/src/rencfs/src/main.rs
-
-RUN . ~/.cargo/env && cd /usr/src/rencfs/ && cargo build --release && \
-    rm -Rvf /usr/src/rencfs/src
+#COPY Cargo.toml Cargo.lock /usr/src/rencfs/
+#RUN mkdir /usr/src/rencfs/src && \
+#    echo 'fn main() {}' > /usr/src/rencfs/src/main.rs
+#
+#RUN . ~/.cargo/env && cd /usr/src/rencfs/ && cargo build --release && \
+#    rm -Rvf /usr/src/rencfs/src
 
 # Build our actual code
+COPY Cargo.toml Cargo.lock /usr/src/rencfs/
 COPY src /usr/src/rencfs/src
 RUN touch /usr/src/rencfs/src/main.rs
 RUN . ~/.cargo/env &&  \

@@ -1,19 +1,23 @@
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use cryptostream::{read, write};
 use std::os::unix::fs::MetadataExt;
 use rand::{thread_rng};
 use std::io::{Read, Write};
 use base64::decode;
 use std::io;
+use std::path::PathBuf;
 use argon2::Argon2;
 use argon2::password_hash::rand_core::RngCore;
 use cryptostream::read::Decryptor;
 use cryptostream::write::Encryptor;
+use num_format::{Locale, ToFormattedString};
 use openssl::sha::sha256;
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use thiserror::Error;
-use tracing::{error, instrument};
-use crate::encryptedfs::Cipher;
+use tracing::{debug, error, instrument};
+use strum_macros::{Display, EnumIter, EnumString};
+use serde::{Deserialize, Serialize};
+use crate::{crypto_util, stream_util};
 
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -21,7 +25,7 @@ pub enum CryptoError {
     Generic(String),
 }
 
-pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> write::Encryptor<File> {
+pub fn create_encryptor(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> Encryptor<File> {
     let iv_len = match cipher {
         Cipher::ChaCha20 => 16,
         Cipher::Aes256Gcm => 316,
@@ -128,4 +132,29 @@ fn get_cipher(cipher: &Cipher) -> openssl::symm::Cipher {
         Cipher::ChaCha20 => openssl::symm::Cipher::chacha20(),
         Cipher::Aes256Gcm => openssl::symm::Cipher::aes_256_gcm(),
     }
+}
+
+/// Copy from `pos` position in file `len` bytes
+#[instrument(skip(w, key), fields(pos = pos.to_formatted_string(& Locale::en), len = len.to_formatted_string(& Locale::en)))]
+pub fn copy_from_file_exact(w: &mut impl Write, pos: u64, len: u64, cipher: &Cipher, key: &SecretVec<u8>, file: PathBuf) -> io::Result<()> {
+    debug!("");
+    if len == 0 {
+        // no-op
+        return Ok(());
+    }
+    // create a new decryptor by reading from the beginning of the file
+    let mut decryptor = crypto_util::create_decryptor(OpenOptions::new().read(true).open(file)?, cipher, key);
+    // move read position to the write position
+    stream_util::read_seek_forward_exact(&mut decryptor, pos)?;
+
+    // copy the rest of the file
+    stream_util::copy_exact(&mut decryptor, w, len)?;
+    decryptor.finish();
+    Ok(())
+}
+
+#[derive(Debug, Clone, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
+pub enum Cipher {
+    ChaCha20,
+    Aes256Gcm,
 }

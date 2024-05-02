@@ -18,7 +18,7 @@
 //!
 //! ```no_run
 //! use rencfs::run_fuse;
-//! use rencfs::encryptedfs::Cipher;
+//! use rencfs::crypto_util::Cipher;
 //! use secrecy::SecretString;
 //! use rencfs::encryptedfs::PasswordProvider;
 //! use std::str::FromStr;
@@ -45,7 +45,8 @@
 //! use fuse3::MountOptions;
 //! use fuse3::raw::Session;
 //! use secrecy::SecretString;
-//! use rencfs::encryptedfs::{Cipher, PasswordProvider};
+//! use rencfs::crypto_util::Cipher;
+//! use rencfs::encryptedfs::{ PasswordProvider};
 //! use rencfs::encryptedfs_fuse3::EncryptedFsFuse3;
 //!
 //! async fn run_fuse(mountpoint: &str, data_dir: &str, password_provider: Box<dyn PasswordProvider>, cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
@@ -90,6 +91,7 @@
 //! use std::str::FromStr;
 //! use secrecy::SecretString;
 //! use rencfs::encryptedfs::{EncryptedFs, FileAttr, FileType, PasswordProvider, CreateFileAttr};
+//! use rencfs::crypto_util::Cipher;
 //!
 //! const ROOT_INODE: u64 = 1;
 //!
@@ -106,7 +108,7 @@
 //!     let data_dir = "/tmp/rencfs_data_test";
 //!     let  _ = fs::remove_dir_all(data_dir);
 //!     let password = SecretString::from_str("password").unwrap();
-//!     let cipher = rencfs::encryptedfs::Cipher::ChaCha20;
+//!     let cipher = Cipher::ChaCha20;
 //!     let mut fs = EncryptedFs::new(data_dir, Box::new(PasswordProviderImpl{}), cipher ).await?;
 //!
 //!     let  file1 = SecretString::from_str("file1").unwrap();
@@ -143,7 +145,7 @@
 //! use std::str::FromStr;
 //! use secrecy::SecretString;
 //! use rencfs::encryptedfs::{EncryptedFs, FsError, FsResult};
-//! use rencfs::encryptedfs::Cipher;
+//! use rencfs::crypto_util::Cipher;
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -165,12 +167,13 @@
 //! use std::str::FromStr;
 //! use rpassword::read_password;
 //! use secrecy::{ExposeSecret, Secret, SecretString};
-//! use rencfs::encryptedfs::{Cipher, EncryptedFs, FsError};
+//! use rencfs::encryptedfs::{EncryptedFs, FsError};
 //!
 //! #[tokio::main]
 //! async fn main() {
 //!     // read password from stdin
-//!     print!("Enter old password: ");
+//!     use rencfs::crypto_util::Cipher;
+//! print!("Enter old password: ");
 //!     io::stdout().flush().unwrap();
 //!     let password = SecretString::new(read_password().unwrap());
 //!     print!("Enter new password: ");
@@ -197,13 +200,16 @@ use tracing::{info, instrument};
 use fuse3::MountOptions;
 use std::ffi::OsStr;
 use fuse3::raw::Session;
-use crate::encryptedfs::{Cipher, PasswordProvider};
+use crate::crypto_util::Cipher;
+use crate::encryptedfs::PasswordProvider;
 use crate::encryptedfs_fuse3::EncryptedFsFuse3;
 
 pub mod encryptedfs;
 pub mod encryptedfs_fuse3;
 pub mod expire_value;
 pub mod arc_hashmap;
+pub mod crypto_util;
+pub mod stream_util;
 
 #[allow(unreachable_code)]
 pub fn is_debug() -> bool {

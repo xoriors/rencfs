@@ -6,17 +6,18 @@ use std::str::FromStr;
 use clap::{Arg, ArgAction, ArgMatches, Command, crate_version};
 use ctrlc::set_handler;
 use rpassword::read_password;
-use strum::IntoEnumIterator;
 use tokio::{fs, task};
 use tracing::{error, info, Level, warn};
 use anyhow::Result;
 use secrecy::{ExposeSecret, SecretString};
+use strum::IntoEnumIterator;
 use thiserror::Error;
 use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
+use rencfs::crypto_util::Cipher;
 
-use rencfs::encryptedfs::{Cipher, EncryptedFs, FsError, PasswordProvider};
+use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::is_debug;
 
 mod keyring;

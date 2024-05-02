@@ -20,17 +20,16 @@ use openssl::error::ErrorStack;
 use rand::thread_rng;
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tokio::sync::{Mutex, MutexGuard, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
 use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::{ArcHashMap, Guard};
-use crate::expire_value;
+use crate::{crypto_util, expire_value, stream_util};
+use crate::crypto_util::Cipher;
 use crate::expire_value::{ExpireValue, Provider};
 
-pub mod crypto_util;
 #[cfg(test)]
 mod encryptedfs_test;
 #[cfg(test)]
@@ -280,12 +279,6 @@ pub enum FsError {
         source: keyring::Error,
         // backtrace: Backtrace,
     },
-}
-
-#[derive(Debug, Clone, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
-pub enum Cipher {
-    ChaCha20,
-    Aes256Gcm,
 }
 
 #[derive(Debug, Clone)]
@@ -989,28 +982,7 @@ impl EncryptedFs {
                 self.do_with_read_handle(handle, ReadHandleContextOperation::RecreateDecryptor { existing: ctx }).await?;
                 ctx = guard.get(&handle).unwrap().lock().await;
             }
-            if offset > 0 {
-                debug!("reading from current position to offset");
-                let mut buffer = vec![0; BUF_SIZE];
-                loop {
-                    let read_len = if ctx.pos + buffer.len() as u64 > offset {
-                        (offset - ctx.pos) as usize
-                    } else {
-                        buffer.len()
-                    };
-                    debug!(read_len = read_len.to_formatted_string(&Locale::en), "reading");
-                    if read_len > 0 {
-                        ctx.decryptor.as_mut().unwrap().read_exact(&mut buffer[..read_len])?;
-                        ctx.pos += read_len as u64;
-                        if ctx.pos == offset {
-                            break;
-                        }
-                        debug!(pos = ctx.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), "read");
-                    } else {
-                        break;
-                    }
-                }
-            }
+            stream_util::read_seek_forward_exact(&mut ctx.decryptor.as_mut().unwrap(), offset)?;
         }
         if offset + buf.len() as u64 > ctx.attr.size {
             buf = &mut buf[..(ctx.attr.size - offset) as usize];
@@ -1063,7 +1035,10 @@ impl EncryptedFs {
                 debug!("dirty content, copying remaining of file");
                 let ino_str = ctx.ino.to_string();
                 let file_size = ctx.attr.size;
-                Self::copy_remaining_of_file(&mut ctx, file_size, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                let pos = ctx.pos;
+                let len = file_size - pos;
+                crypto_util::copy_from_file_exact(&mut ctx.encryptor.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                ctx.pos += len;
             }
 
             debug!("finishing encryptor");
@@ -1172,7 +1147,9 @@ impl EncryptedFs {
                 let guard = self.write_handles.read().await;
                 let mut ctx = guard.get(&handle).unwrap().lock().await;
                 let ino_str = ino.to_string();
-                Self::copy_remaining_of_file(&mut ctx, offset, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                let len = offset - pos;
+                crypto_util::copy_from_file_exact(&mut ctx.encryptor.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                ctx.pos += len;
             } else {
                 debug!("seeking backward or from the beginning of the file");
                 // we need to seek backward, or we can't seek forward, but we cannot do that, we need to recreate all stream from the beginning until the desired offset
@@ -1186,7 +1163,9 @@ impl EncryptedFs {
                     let file_size = size;
                     let guard = self.write_handles.read().await;
                     let mut ctx = guard.get(&handle).unwrap().lock().await;
-                    Self::copy_remaining_of_file(&mut ctx, file_size, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                    let len = file_size - pos;
+                    crypto_util::copy_from_file_exact(&mut ctx.encryptor.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                    ctx.pos += len;
                 }
                 {
                     let guard = self.write_handles.read().await;
@@ -1227,7 +1206,8 @@ impl EncryptedFs {
                 ctx.pos = 0;
                 ctx.path = tmp_path;
                 let ino_str = ctx.ino.to_string();
-                Self::copy_remaining_of_file(&mut ctx, offset, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                crypto_util::copy_from_file_exact(&mut ctx.encryptor.as_mut().unwrap(), 0, offset, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                ctx.pos += offset;
             }
 
             let guard = self.write_handles.read().await;
@@ -1265,56 +1245,6 @@ impl EncryptedFs {
         ctx.attr.mtime = SystemTime::now();
         ctx.attr.ctime = SystemTime::now();
 
-        Ok(())
-    }
-
-    #[instrument(skip(ctx, key))]
-    fn copy_remaining_of_file(ctx: &mut MutexGuard<WriteHandleContext>, end_offset: u64, cipher: &Cipher, key: &SecretVec<u8>, file: PathBuf) -> Result<(), FsError> {
-        debug!("copy_remaining_of_file from file {}", file.to_str().unwrap());
-        let actual_file_size = fs::metadata(file.clone())?.len();
-        debug!("copy_remaining_of_file from {} to {}, ctx file size {} actual file size {}", ctx.pos.to_formatted_string(&Locale::en), end_offset.to_formatted_string(&Locale::en), ctx.attr.size.to_formatted_string(&Locale::en), actual_file_size.to_formatted_string(&Locale::en));
-        if ctx.pos == end_offset {
-            debug!("no need to copy, pos {} end_offset {}", ctx.pos.to_formatted_string(&Locale::en), end_offset.to_formatted_string(&Locale::en));
-            // no-op
-            return Ok(());
-        }
-        // create a new decryptor by reading from the beginning of the file
-        let mut decryptor = crypto_util::create_decryptor(OpenOptions::new().read(true).open(file)?, cipher, key);
-        // move read position to the write position
-        if ctx.pos > 0 {
-            let mut buffer = vec![0; BUF_SIZE];
-            let mut read_pos = 0_u64;
-            loop {
-                let len = min(buffer.len(), (ctx.pos - read_pos) as usize);
-                decryptor.read_exact(&mut buffer[..len]).map_err(|err| {
-                    error!("error reading from file pos {} read_pos {} len {} file size {} actual file size {}",
-                        ctx.pos.to_formatted_string(&Locale::en), read_pos.to_formatted_string(&Locale::en), len.to_formatted_string(&Locale::en), ctx.attr.size.to_formatted_string(&Locale::en), actual_file_size.to_formatted_string(&Locale::en));
-                    err
-                })?;
-                read_pos += len as u64;
-                if read_pos == ctx.pos {
-                    break;
-                }
-            }
-        }
-
-        // copy the rest of the file
-        let mut buffer = vec![0; BUF_SIZE];
-        loop {
-            debug!("reading from file pos {} end_offset {}", ctx.pos.to_formatted_string(&Locale::en), end_offset.to_formatted_string(&Locale::en));
-            let len = min(buffer.len(), (end_offset - ctx.pos) as usize);
-            decryptor.read_exact(&mut buffer[..len]).map_err(|err| {
-                debug!("error reading from file pos {} len {} {end_offset} file size {} actual file size {}",
-                    ctx.pos.to_formatted_string(&Locale::en), len.to_formatted_string(&Locale::en), ctx.attr.size.to_formatted_string(&Locale::en), actual_file_size.to_formatted_string(&Locale::en));
-                err
-            })?;
-            ctx.encryptor.as_mut().unwrap().write_all(&buffer[..len])?;
-            ctx.pos += len as u64;
-            if ctx.pos == end_offset {
-                break;
-            }
-        }
-        decryptor.finish();
         Ok(())
     }
 
@@ -1518,7 +1448,10 @@ impl EncryptedFs {
                     debug!("dirty content, copying remaining of file");
                     let ino_str = ctx.ino.to_string();
                     let file_size = ctx.attr.size;
-                    Self::copy_remaining_of_file(&mut ctx, file_size, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                    let pos = ctx.pos;
+                    let len = file_size - pos;
+                    crypto_util::copy_from_file_exact(&mut ctx.encryptor.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                    ctx.pos += len;
                 }
             }
             {

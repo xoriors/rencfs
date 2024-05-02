@@ -18,8 +18,9 @@ use futures_util::stream::Iter;
 use libc::{EACCES, EBADF, EEXIST, EIO, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, error, instrument, trace, warn};
+use crate::crypto_util::Cipher;
 
-use crate::encryptedfs::{EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult, SetFileAttr, CreateFileAttr, PasswordProvider};
+use crate::encryptedfs::{EncryptedFs, FileAttr, FileType, FsError, FsResult, SetFileAttr, CreateFileAttr, PasswordProvider};
 
 const TTL: Duration = Duration::from_secs(1);
 const STATFS: ReplyStatFs = ReplyStatFs {
