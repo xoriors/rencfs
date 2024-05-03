@@ -15,7 +15,7 @@ use fuse3::raw::prelude::{DirectoryEntry, DirectoryEntryPlus, ReplyAttr, ReplyCo
 use fuse3::raw::{Filesystem, Request};
 use futures_util::stream;
 use futures_util::stream::Iter;
-use libc::{EACCES, EBADF, EEXIST, EIO, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
+use libc::{EACCES, EEXIST, EIO, EISDIR, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, error, instrument, trace, warn};
 use crate::crypto::Cipher;
@@ -36,7 +36,7 @@ const STATFS: ReplyStatFs = ReplyStatFs {
 
 const FMODE_EXEC: i32 = 0x20;
 
-const MAX_NAME_LENGTH: u32 = 255;
+// const MAX_NAME_LENGTH: u32 = 255;
 
 // Flags returned by the open request
 const FOPEN_DIRECT_IO: u32 = 1 << 0; // bypass page cache for this open file
@@ -249,10 +249,10 @@ impl Filesystem for EncryptedFsFuse3 {
     async fn lookup(&self, req: Request, parent: u64, name: &OsStr) -> Result<ReplyEntry> {
         trace!("");
 
-        if name.len() > MAX_NAME_LENGTH as usize {
-            warn!(name = %name.to_str().unwrap(), "name too long");
-            return Err(ENAMETOOLONG.into());
-        }
+        // if name.len() > MAX_NAME_LENGTH as usize {
+        //     warn!(name = %name.to_str().unwrap(), "name too long");
+        //     return Err(ENAMETOOLONG.into());
+        // }
 
         match self.get_fs().get_inode(parent).await {
             Err(err) => {
@@ -370,7 +370,7 @@ impl Filesystem for EncryptedFsFuse3 {
             set_attr2 = set_attr2.with_atime(SystemTime::now());
             self.get_fs().update_inode(inode, set_attr2).await.map_err(|err| {
                 error!(err = %err);
-                Errno::from(EBADF)
+                Errno::from(EIO)
             })?;
             return Ok(ReplyAttr {
                 ttl: TTL,
@@ -422,7 +422,7 @@ impl Filesystem for EncryptedFsFuse3 {
             set_attr2 = set_attr2.with_atime(SystemTime::now());
             self.get_fs().update_inode(inode, set_attr2).await.map_err(|err| {
                 error!(err = %err);
-                Errno::from(EBADF)
+                Errno::from(EIO)
             })?;
             return Ok(ReplyAttr {
                 ttl: TTL,
@@ -483,7 +483,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         self.get_fs().update_inode(inode, set_attr2).await.map_err(|err| {
             error!(err = %err);
-            Errno::from(EBADF)
+            Errno::from(EIO)
         })?;
 
         Ok(ReplyAttr {
@@ -682,7 +682,10 @@ impl Filesystem for EncryptedFsFuse3 {
 
         if let Err(err) = self.get_fs().remove_dir(parent, &SecretString::from_str(name.to_str().unwrap()).unwrap()).await {
             error!(err = %err);
-            return Err(EBADF.into());
+            return match err {
+                FsError::NotEmpty => Err(EISDIR.into()),
+                _ => Err(EIO.into()),
+            }
         }
 
         Ok(())
@@ -813,7 +816,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         let attr = self.get_fs().get_inode(inode).await.map_err(|err| {
             error!(err = %err);
-            EBADF
+            EIO
         })?;
         //
         if check_access(attr.uid, attr.gid, attr.perm, req.uid, req.gid, access_mask) {
@@ -826,7 +829,7 @@ impl Filesystem for EncryptedFsFuse3 {
             let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
             let fh = self.get_fs().open(inode, read, write).await.map_err(|err| {
                 error!(err = %err);
-                EBADF
+                EIO
             })?;
             debug!(fh, "opened handle");
             Ok(ReplyOpen { fh, flags: open_flags })
@@ -875,14 +878,14 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
         debug!(size = data.len());
 
-        self.get_fs().write_all(inode, offset, data, fh).await.map_err(|err| {
+        let len = self.get_fs().write(inode, offset, data, fh).await.map_err(|err| {
             error!("{err:#?}");
             error!(err = %err);
             EIO
         })?;
 
         Ok(ReplyWrite {
-            written: data.len() as u32,
+            written: len as u32,
         })
     }
 
@@ -933,7 +936,7 @@ impl Filesystem for EncryptedFsFuse3 {
             set_attr = set_attr.with_perm(clear_suid_sgid(attr.perm));
             fs.update_inode(inode, set_attr).await.map_err(|err| {
                 error!(err = %err, "replace attr");
-                Errno::from(EBADF)
+                Errno::from(EIO)
             })?;
         }
 
@@ -1128,7 +1131,7 @@ impl Filesystem for EncryptedFsFuse3 {
             .copy_file_range(inode, off_in, inode_out, off_out, length as usize, fh_in, fh_out).await {
             Err(err) => {
                 error!(err = %err);
-                return Err(EBADF.into());
+                return Err(EIO.into());
             }
             Ok(len) => {
                 Ok(ReplyCopyFileRange {

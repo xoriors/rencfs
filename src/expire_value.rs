@@ -67,6 +67,10 @@ impl<T: Send + Sync + 'static, E: Error + 'static, P: Provider<T, E>> ExpireValu
         }
         None
     }
+
+    pub async fn clear(&self) {
+        self.cache.clear().await;
+    }
 }
 
 impl<T: Send + Sync + 'static, E: Error, P: Provider<T, E>> Drop for ExpireValue<T, E, P> {

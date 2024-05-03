@@ -15,7 +15,7 @@ fn main() -> io::Result<()> {
 
     let mut input = OpenOptions::new().read(true).open("/home/gnome/Downloads/Zero.Days.2016.720p.WEBRip.x264.AAC-ETRG/Zero.Days.2016.720p.WEBRip.x264.AAC-ETRG.mp4").unwrap();
     let out_path = Path::new("./encrypted.enc");
-    let out = OpenOptions::new().create(true).write(true).open(out_path)?;
+    let out = OpenOptions::new().create(true).write(true).truncate(true).open(out_path)?;
 
     let mut encryptor = write::Encryptor::new(out, Cipher::chacha20(), &key, &iv).unwrap();
 

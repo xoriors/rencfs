@@ -92,6 +92,7 @@
 //! use secrecy::SecretString;
 //! use rencfs::encryptedfs::{EncryptedFs, FileAttr, FileType, PasswordProvider, CreateFileAttr};
 //! use rencfs::crypto::Cipher;
+//! use anyhow::Result;
 //!
 //! const ROOT_INODE: u64 = 1;
 //!
@@ -104,8 +105,9 @@
 //! }
 //!
 //! #[tokio::main]
-//! async fn main() -> anyhow::Result<()> {
-//!     let data_dir = "/tmp/rencfs_data_test";
+//! async fn main() -> Result<()> {
+//!     use rencfs::stream_util::write_all_string_to_fs;
+//! let data_dir = "/tmp/rencfs_data_test";
 //!     let  _ = fs::remove_dir_all(data_dir);
 //!     let password = SecretString::from_str("password").unwrap();
 //!     let cipher = Cipher::ChaCha20;
@@ -114,7 +116,7 @@
 //!     let  file1 = SecretString::from_str("file1").unwrap();
 //!     let (fh, attr) = fs.create_nod(ROOT_INODE, &file1, file_attr(), false, true).await?;
 //!     let data = "Hello, world!";
-//!     fs.write_all(attr.ino, 0, data.as_bytes(), fh).await?;
+//!     write_all_string_to_fs( &fs, attr.ino, 0,data, fh).await?;
 //!     fs.flush(fh).await?;
 //!     fs.release(fh).await?;
 //!     let fh = fs.open(attr.ino, true, false).await?;

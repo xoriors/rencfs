@@ -2,7 +2,8 @@ use std::cmp::min;
 use std::io;
 use std::io::{Read, Write};
 use num_format::{Locale, ToFormattedString};
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, instrument};
+use crate::encryptedfs::EncryptedFs;
 
 #[cfg(test)]
 const BUF_SIZE: usize = 256 * 1024;
@@ -73,13 +74,29 @@ pub fn fill_zeros(w: &mut impl Write, len: u64) -> io::Result<()> {
     if len == 0 {
         return Ok(());
     }
-    let mut buffer = vec![0; BUF_SIZE];
+    let buffer = vec![0; BUF_SIZE];
     let mut written = 0_u64;
     loop {
         let buf_len = min(buffer.len(), (len - written) as usize);
         w.write_all(&buffer[..buf_len])?;
         written += buf_len as u64;
         if written == len {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub async fn write_all_string_to_fs(fs: &EncryptedFs, ino: u64, offset: u64, s: &str, fh: u64) -> anyhow::Result<()> {
+    write_all_bytes_to_fs(fs, ino, offset, s.as_bytes(), fh).await
+}
+
+pub async fn write_all_bytes_to_fs(fs: &EncryptedFs, ino: u64, offset: u64, buf: &[u8], fh: u64) -> anyhow::Result<()> {
+    let mut pos = 0_usize;
+    loop {
+        let len = fs.write(ino, offset, &buf[pos..], fh).await.unwrap();
+        pos += len;
+        if pos == buf.len() {
             break;
         }
     }

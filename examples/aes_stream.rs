@@ -2,7 +2,7 @@ use std::fs::OpenOptions;
 use std::io::{Read, Seek, Write};
 use aesstream::{AesReader, AesWriter};
 
-use crypto::aessafe::{AesSafe256Decryptor, AesSafe256Encryptor};
+use rust_crypto::aessafe::{AesSafe256Decryptor, AesSafe256Encryptor};
 
 fn main() {
     let key: [u8; 32] = "a".repeat(32).as_bytes().try_into().unwrap();

@@ -1,10 +1,11 @@
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io;
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use ring::error::Unspecified;
 use ring::rand::SecureRandom;
 use ring::rand::SystemRandom;
-use ring::aead::Algorithm;
+use ring::aead::{Algorithm, LessSafeKey};
 use ring::aead::AES_128_GCM;
 use ring::aead::AES_256_GCM;
 use ring::aead::CHACHA20_POLY1305;
@@ -28,17 +29,17 @@ impl NonceSequence for CounterNonceSequence {
 
         let bytes = self.0.to_be_bytes();
         nonce_bytes[8..].copy_from_slice(&bytes);
-        println!("nonce_bytes = {}", hex::encode(&nonce_bytes));
+        // println!("nonce_bytes = {}", hex::encode(&nonce_bytes));
 
         self.0 += 1; // advance the counter
         Nonce::try_assume_unique_for_key(&nonce_bytes)
     }
 }
 
-fn main() -> std::io::Result<()> {
+fn main() -> io::Result<()> {
     let mut input = OpenOptions::new().read(true).open("/home/gnome/Downloads/Zero.Days.2016.720p.WEBRip.x264.AAC-ETRG/Zero.Days.2016.720p.WEBRip.x264.AAC-ETRG.mp4").unwrap();
-    let out_path = Path::new("./encrypted.enc");
-    let mut out = OpenOptions::new().create(true).write(true).open(out_path)?;
+    let out_path = Path::new("/tmp/encrypted.enc");
+    let mut out = OpenOptions::new().create(true).write(true).truncate(true).open(out_path)?;
 
     // Create a new instance of SystemRandom to be used as the single source of entropy
     let rand = SystemRandom::new();
@@ -59,31 +60,107 @@ fn main() -> std::io::Result<()> {
     let mut sealing_key = SealingKey::new(unbound_key, nonce_sequence);
 
     // This data will be authenticated but not encrypted
-//let associated_data = Aad::empty(); // is optional so can be empty
-    let associated_data = Aad::from(b"additional public data");
+    // let associated_data = Aad::empty(); // is optional so can be empty
+    // let associated_data = Aad::from(b"additional public data");
+
+    let file_size = input.metadata()?.len();
+
+    let mut input = BufReader::new(input);
+    let mut out = BufWriter::new(out);
 
     let start = std::time::Instant::now();
-    let mut buffer = [0; 4096];
+    let mut buffer = vec![0; 4096];
     loop {
-        let len = input.read(&mut buffer).unwrap();
+        let len = {
+            let mut pos = 0;
+            loop {
+                match input.read(&mut buffer[pos..]) {
+                    Ok(read) => {
+                        pos += read;
+                        if read == 0 {
+                            break;
+                        }
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+            pos
+        };
         if len == 0 {
             break;
         }
+        if len != buffer.len() {
+            println!("len = {}", len);
+        }
 // Data to be encrypted
-        let data = buffer[..len].to_vec();
+        let mut data = &mut buffer[..len];
+//         let mut data = buffer[..len].to_vec();
 
 // Create a mutable copy of the data that will be encrypted in place
-        let mut in_out = data.clone();
+//         let mut in_out = data.clone();
 
 // Encrypt the data with AEAD using the AES_256_GCM algorithm
-        let tag = sealing_key.seal_in_place_separate_tag(associated_data, &mut in_out).unwrap();
+        let tag = sealing_key.seal_in_place_separate_tag(Aad::empty(), &mut data).unwrap();
 
-        out.write(&in_out).unwrap();
+        out.write(&data).unwrap();
+        out.write(tag.as_ref()).unwrap();
     }
     out.flush().unwrap();
     let end = std::time::Instant::now();
     let duration = end.duration_since(start);
-    let file_size = input.metadata()?.len();
+    println!("duration = {:?}", duration);
+    println!("speed MB/s {}", (file_size as f64 / duration.as_secs_f64()) / 1024.0 / 1024.0);
+
+    // decrypt
+    let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, &key_bytes).unwrap();
+    let nonce_sequence = CounterNonceSequence(1);
+    let mut opening_key = OpeningKey::new(unbound_key, nonce_sequence);
+
+    let input = OpenOptions::new().read(true).open(out_path).unwrap();
+    let out = OpenOptions::new().create(true).write(true).truncate(true).open(Path::new("/tmp/encrypted.dec"))?;
+
+    let start = std::time::Instant::now();
+    let mut buffer = vec![0; 4096 + CHACHA20_POLY1305.tag_len()];
+    let mut input = BufReader::new(input);
+    let mut out = BufWriter::new(out);
+    loop {
+        let len = {
+            let mut pos = 0;
+            loop {
+                match input.read(&mut buffer[pos..]) {
+                    Ok(read) => {
+                        pos += read;
+                        if read == 0 {
+                            break;
+                        }
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+            pos
+        };
+        if len == 0 {
+            break;
+        }
+        if len != buffer.len() {
+            println!("len = {}", len);
+        }
+// Data to be encrypted
+        let mut data = &mut buffer[..len];
+
+// Create a mutable copy of the data that will be encrypted in place
+//         let mut in_out = data.clone();
+
+// Encrypt the data with AEAD using the AES_256_GCM algorithm
+        let dec = opening_key.open_within(Aad::empty(), &mut data, 0..).unwrap();
+        // let dec = opening_key.open_in_place(Aad::empty(), &mut data).unwrap();
+
+        out.write(&dec).unwrap();
+    }
+    out.flush().unwrap();
+    let end = std::time::Instant::now();
+    let duration = end.duration_since(start);
+// let file_size = input.metadata()?.len();
     println!("duration = {:?}", duration);
     println!("speed MB/s {}", (file_size as f64 / duration.as_secs_f64()) / 1024.0 / 1024.0);
 

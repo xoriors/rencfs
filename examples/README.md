@@ -6,6 +6,5 @@ hex = "0.4.3"
 fuser = "0.14.0"
 env_logger = "0.11.3"
 log = "0.4.21"
-rust-crypto = "=0.2.36"
-
+rust-crypto = { version = "0.2.36", package = "rust-crypto" }
 ```

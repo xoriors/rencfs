@@ -1,5 +1,5 @@
 use std::{fs, io};
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions, ReadDir};
@@ -15,18 +15,19 @@ use argon2::password_hash::rand_core::RngCore;
 use futures_util::TryStreamExt;
 use num_format::{Locale, ToFormattedString};
 use rand::thread_rng;
+use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 use tokio::sync::{Mutex, MutexGuard, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
+use crate::{crypto, stream_util};
 use crate::arc_hashmap::{ArcHashMap, Guard};
-use crate::{crypto, expire_value, stream_util};
 use crate::crypto::Cipher;
-use crate::crypto::decryptor::Decryptor;
-use crate::crypto::encryptor::Encryptor;
+use crate::crypto::decryptor::CryptoReader;
+use crate::crypto::encryptor::CryptoWriter;
 use crate::expire_value::{ExpireValue, Provider};
 
 #[cfg(test)]
@@ -374,15 +375,22 @@ impl Iterator for DirectoryEntryIterator {
         let name = entry.file_name().to_string_lossy().to_string();
         let name = {
             if name == "$." {
-                SecretString::from_str(".").unwrap()
+                Some(SecretString::from_str(".").unwrap())
             } else if name == "$.." {
-                SecretString::from_str("..").unwrap()
+                Some(SecretString::from_str("..").unwrap())
             } else {
-                crypto::decrypt_and_unnormalize_end_file_name(&name, &self.1, &self.2)
+                crypto::decrypt_and_unnormalize_end_file_name(&name, &self.1, &self.2).map_err(|err| {
+                    error!(err = %err, "decrypting and unnormalizing end file name");
+                    err
+                }).ok()
             }
         };
+        if name.is_none() {
+            return Some(Err(FsError::InvalidInput("invalid file name".to_string())));
+        }
+        let name = name.unwrap();
 
-        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto::create_decryptor(file, &self.1, &self.2));
+        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto::create_crypto_reader(file, &self.1, &self.2));
         if let Err(e) = res {
             return Some(Err(e.into()));
         }
@@ -420,14 +428,22 @@ impl Iterator for DirectoryEntryPlusIterator {
         let name = entry.file_name().to_string_lossy().to_string();
         let name = {
             if name == "$." {
-                SecretString::from_str(".").unwrap()
+                Some(SecretString::from_str(".").unwrap())
             } else if name == "$.." {
-                SecretString::from_str("..").unwrap()
+                Some(SecretString::from_str("..").unwrap())
             } else {
-                crypto::decrypt_and_unnormalize_end_file_name(&name, &self.2, &self.3)
+                crypto::decrypt_and_unnormalize_end_file_name(&name, &self.2, &self.3).map_err(|err| {
+                    error!(err = %err, "decrypting and unnormalizing end file name");
+                    err
+                }).ok()
             }
         };
-        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto::create_decryptor(file, &self.2, &self.3));
+        if name.is_none() {
+            return Some(Err(FsError::InvalidInput("invalid file name".to_string())));
+        }
+        let name = name.unwrap();
+
+        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto::create_crypto_reader(file, &self.2, &self.3));
         if let Err(e) = res {
             error!(err = %e, "deserializing directory entry");
             return Some(Err(e.into()));
@@ -444,7 +460,7 @@ impl Iterator for DirectoryEntryPlusIterator {
             return Some(Err(e.into()));
         }
         let file = file.unwrap();
-        let attr = bincode::deserialize_from(crypto::create_decryptor(file, &self.2, &self.3));
+        let attr = bincode::deserialize_from(crypto::create_crypto_reader(file, &self.2, &self.3));
         if let Err(e) = attr {
             error!(err = %e, "deserializing file attr");
             return Some(Err(e.into()));
@@ -491,7 +507,7 @@ struct ReadHandleContext {
     ino: u64,
     attr: TimeAndSizeFileAttr,
     pos: u64,
-    decryptor: Option<Box<dyn Decryptor<File>>>,
+    reader: Option<Box<dyn CryptoReader<File>>>,
     _lock: Guard<Mutex<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
 }
 
@@ -539,7 +555,7 @@ struct WriteHandleContext {
     attr: TimeAndSizeFileAttr,
     path: PathBuf,
     pos: u64,
-    encryptor: Option<Box<dyn Encryptor<File>>>,
+    writer: Option<Box<dyn CryptoWriter<File>>>,
     _lock: Guard<Mutex<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
 }
 
@@ -549,7 +565,7 @@ struct KeyProvider {
     cipher: Cipher,
 }
 
-impl expire_value::Provider<SecretVec<u8>, FsError> for KeyProvider {
+impl Provider<SecretVec<u8>, FsError> for KeyProvider {
     fn provide(&self) -> Result<SecretVec<u8>, FsError> {
         let password = self.password_provider.get_password().ok_or(FsError::InvalidPassword)?;
         EncryptedFs::read_or_create_key(&self.path, &password, &self.cipher)
@@ -579,12 +595,6 @@ pub struct EncryptedFs {
     key: ExpireValue<SecretVec<u8>, FsError, KeyProvider>,
 }
 
-#[cfg(test)]
-const BUF_SIZE: usize = 256 * 1024;
-// 256 KB buffer, smaller for tests because they all run in parallel
-#[cfg(not(test))]
-const BUF_SIZE: usize = 1024 * 1024; // 1 MB buffer
-
 impl EncryptedFs {
     pub async fn new(data_dir: &str, password_provider: Box<dyn PasswordProvider>, cipher: Cipher) -> FsResult<Self> {
         let path = PathBuf::from(&data_dir);
@@ -613,7 +623,7 @@ impl EncryptedFs {
             key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)).await,
         };
 
-        let _ = fs.ensure_root_exists().await;
+        fs.ensure_root_exists().await?;
 
         Ok(fs)
     }
@@ -724,9 +734,9 @@ impl EncryptedFs {
                 SecretString::new(name.expose_secret().to_owned())
             }
         };
-        let name = crypto::normalize_end_encrypt_file_name(&name, &self.cipher, &*self.key.get().await?);
+        let name = crypto::encrypt_file_name(&name, &self.cipher, &*self.key.get().await?)?;
         let file = File::open(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
-        let (inode, _): (u64, FileType) = bincode::deserialize_from(crypto::create_decryptor(file, &self.cipher, &*self.key.get().await?))?;
+        let (inode, _): (u64, FileType) = bincode::deserialize_from(crypto::create_crypto_reader(file, &self.cipher, &*self.key.get().await?))?;
         Ok(Some(self.get_inode(inode).await?))
     }
 
@@ -823,7 +833,7 @@ impl EncryptedFs {
                 SecretString::new(name.expose_secret().to_owned())
             }
         };
-        let name = crypto::normalize_end_encrypt_file_name(&name, &self.cipher, &*self.key.get().await?);
+        let name = crypto::encrypt_file_name(&name, &self.cipher, &*self.key.get().await?)?;
         Ok(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name).exists())
     }
 
@@ -856,7 +866,7 @@ impl EncryptedFs {
 
         let path = self.data_dir.join(INODES_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path).map_err(|_| { FsError::InodeNotFound })?;
-        Ok(bincode::deserialize_from::<Box<dyn Decryptor<File>>, FileAttr>(Box::new(crypto::create_decryptor(file, &self.cipher, key)))?)
+        Ok(bincode::deserialize_from::<Box<dyn CryptoReader<File>>, FileAttr>(Box::new(crypto::create_crypto_reader(file, &self.cipher, key)))?)
     }
 
     pub async fn get_inode(&self, ino: u64) -> FsResult<FileAttr> {
@@ -871,7 +881,10 @@ impl EncryptedFs {
                 for fh in fhs {
                     if let Some(ctx) = self.read_handles.read().await.get(&fh) {
                         let ctx = ctx.lock().await;
-                        merge_attr(&mut attr, ctx.attr.clone().into());
+                        let mut attr1: SetFileAttr = ctx.attr.clone().into();
+                        // we don't want to set size because readers don't change the size and we might have an older version
+                        attr1.size.take();
+                        merge_attr(&mut attr, attr1);
                     }
                 }
             }
@@ -916,7 +929,10 @@ impl EncryptedFs {
             .create(true)
             .truncate(true)
             .open(&path)?;
-        bincode::serialize_into(crypto::create_encryptor(file, &self.cipher, key), &attr)?;
+        let mut writer = crypto::create_crypto_writer(file, &self.cipher, key);
+        bincode::serialize_into(&mut writer, &attr)?;
+        writer.flush()?;
+        writer.finish()?;
         Ok(())
     }
 
@@ -970,7 +986,7 @@ impl EncryptedFs {
             if ctx.pos > offset {
                 // if we need an offset before the current position, we can't seek back, we need
                 // to read from the beginning until the desired offset
-                debug!("seeking back, recreating decryptor");
+                debug!("seeking back, recreating reader");
                 self.do_with_read_handle(handle, ReadHandleContextOperation::RecreateDecryptor { existing: ctx }).await?;
                 ctx = guard.get(&handle).unwrap().lock().await;
             }
@@ -979,17 +995,17 @@ impl EncryptedFs {
             debug!(pos = pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), file_size = ctx.attr.size.to_formatted_string(&Locale::en),
                 actual_file_size = actual_file_size.to_formatted_string(&Locale::en), "seeking");
             let len = offset - pos;
-            stream_util::read_seek_forward_exact(&mut ctx.decryptor.as_mut().unwrap(), len)?;
+            stream_util::read_seek_forward_exact(&mut ctx.reader.as_mut().unwrap(), len)?;
             ctx.pos += len;
         }
         if offset + buf.len() as u64 > ctx.attr.size {
             buf = &mut buf[..(ctx.attr.size - offset) as usize];
         }
-        ctx.decryptor.as_mut().unwrap().read_exact(&mut buf).map_err(|err| {
-            error!(err = %err, pos = ctx.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), file_size = ctx.attr.size.to_formatted_string(&Locale::en), "reading from decryptor");
+        let len = ctx.reader.as_mut().unwrap().read(&mut buf).map_err(|err| {
+            error!(err = %err, pos = ctx.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), file_size = ctx.attr.size.to_formatted_string(&Locale::en), "reading from reader");
             err
         })?;
-        ctx.pos += buf.len() as u64;
+        ctx.pos += len as u64;
 
         ctx.attr.atime = SystemTime::now();
 
@@ -1009,19 +1025,25 @@ impl EncryptedFs {
         if let Some(ctx) = ctx {
             let mut ctx = ctx.lock().await;
 
+            {
+                let mut opened_files_for_read = self.opened_files_for_read.write().await;
+                opened_files_for_read.get_mut(&ctx.ino).and_then(|set| {
+                    set.remove(&handle);
+                    Some(())
+                });
+                if opened_files_for_read.get(&ctx.ino).unwrap().is_empty() {
+                    opened_files_for_read.remove(&ctx.ino);
+                }
+            }
+
             // write attr only here to avoid serializing it multiple times while reading
             // it will merge time fields with existing data because it might got change while we kept the handle
-            self.update_inode(ctx.ino, ctx.attr.clone().into()).await?;
+            let mut attr: SetFileAttr = ctx.attr.clone().into();
+            // we don't want to set size because readers don't change the size and we might have an older version
+            attr.size.take();
+            self.update_inode(ctx.ino, attr).await?;
 
-            ctx.decryptor.take().unwrap().finish();
-            let mut opened_files_for_read = self.opened_files_for_read.write().await;
-            opened_files_for_read.get_mut(&ctx.ino).and_then(|set| {
-                set.remove(&handle);
-                Some(())
-            });
-            if opened_files_for_read.get(&ctx.ino).unwrap().is_empty() {
-                opened_files_for_read.remove(&ctx.ino);
-            }
+            ctx.reader.take().unwrap().finish();
 
             valid_fh = true;
         }
@@ -1038,12 +1060,12 @@ impl EncryptedFs {
                 let file_size = ctx.attr.size;
                 let pos = ctx.pos;
                 let len = file_size - pos;
-                crypto::copy_from_file_exact(&mut ctx.encryptor.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                crypto::copy_from_file_exact(&mut ctx.writer.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
                 ctx.pos += len;
             }
 
-            debug!("finishing encryptor");
-            ctx.encryptor.take().unwrap().finish()?;
+            debug!("finishing writer");
+            ctx.writer.take().unwrap().finish()?;
             // if we are in tmp file move it to actual file
             let mut recreate_readers = false;
             if ctx.path.to_str().unwrap().ends_with(".tmp") {
@@ -1092,8 +1114,8 @@ impl EncryptedFs {
     /// If we write outside of file size, we fill up with zeros until offset.
     /// If the file is not opened for write, it will return an error of type ['FsError::InvalidFileHandle'].
     #[instrument(skip(self, buf))]
-    pub async fn write_all(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<()> {
-        debug!("write_all");
+    pub async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
+        debug!("");
         // lock for writing
         let lock = {
             let map_guard = self.read_write_inode_locks.lock().await;
@@ -1117,7 +1139,7 @@ impl EncryptedFs {
         // write lock to avoid writing from multiple threads
         // let binding = self.get_read_write_inode_lock(ino).await;
         // let _guard = binding.write();
-        debug!("write_all after lock");
+        debug!("after lock");
 
         if self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
@@ -1131,7 +1153,7 @@ impl EncryptedFs {
         }
         if buf.len() == 0 {
             // no-op
-            return Ok(());
+            return Ok(0);
         }
 
         let (path, pos, ino, size) = {
@@ -1139,6 +1161,9 @@ impl EncryptedFs {
             let ctx = guard.get(&handle).unwrap().lock().await;
             (ctx.path.clone(), ctx.pos, ctx.ino, ctx.attr.size)
         };
+        if size == 0 {
+            debug!("file size is 0");
+        }
         if pos != offset {
             debug!("seeking to offset {} from pos {}",offset.to_formatted_string(&Locale::en),pos.to_formatted_string(&Locale::en));
             if pos < offset && pos > 0 {
@@ -1148,13 +1173,14 @@ impl EncryptedFs {
                 let guard = self.write_handles.read().await;
                 let mut ctx = guard.get(&handle).unwrap().lock().await;
                 let ino_str = ino.to_string();
-                let len = offset - pos;
-                crypto::copy_from_file_exact(&mut ctx.encryptor.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                let offset_in_bounds = offset.min(size);
+                let len = offset_in_bounds - pos;
+                crypto::copy_from_file_exact(&mut ctx.writer.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
                 ctx.pos += len;
             } else {
                 debug!("seeking backward or from the beginning of the file");
                 // we need to seek backward, or we can't seek forward, but we cannot do that, we need to recreate all stream from the beginning until the desired offset
-                // for that we create a new encryptor into a tmp file reading from original file and writing to tmp one
+                // for that we create a new writer into a tmp file reading from original file and writing to tmp one
                 // when we release the handle we will move this tmp file to the actual file
 
                 // if we have dirty content (ctx.pos > 0) and position is before file end we copy the rest of the file from position to the end
@@ -1165,7 +1191,7 @@ impl EncryptedFs {
                     let guard = self.write_handles.read().await;
                     let mut ctx = guard.get(&handle).unwrap().lock().await;
                     let len = file_size - pos;
-                    crypto::copy_from_file_exact(&mut ctx.encryptor.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                    crypto::copy_from_file_exact(&mut ctx.writer.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
                     ctx.pos += len;
                 }
                 {
@@ -1173,7 +1199,7 @@ impl EncryptedFs {
                     let mut ctx = guard.get(&handle).unwrap().lock().await;
                     // finish the current writer so we flush all data to the file
                     debug!("finishing current writer");
-                    ctx.encryptor.take().unwrap().finish()?;
+                    ctx.writer.take().unwrap().finish()?;
                 }
 
                 // if we are already in the tmp file first copy tmp to actual file
@@ -1201,30 +1227,24 @@ impl EncryptedFs {
                 let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
                 let tmp_file = OpenOptions::new().write(true).create(true).truncate(true).open(tmp_path.clone())?;
 
-                let encryptor = crypto::create_encryptor(tmp_file, &self.cipher, &*self.key.get().await?);
-                debug!("recreating encryptor");
-                ctx.encryptor.replace(Box::new(encryptor));
+                let writer = crypto::create_crypto_writer(tmp_file, &self.cipher, &*self.key.get().await?);
+                debug!("recreating writer");
+                ctx.writer.replace(Box::new(writer));
                 ctx.pos = 0;
                 ctx.path = tmp_path;
                 let ino_str = ctx.ino.to_string();
-                crypto::copy_from_file_exact(&mut ctx.encryptor.as_mut().unwrap(), 0, offset, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
-                ctx.pos += offset;
+                let offset_in_bounds = offset.min(size);
+                crypto::copy_from_file_exact(&mut ctx.writer.as_mut().unwrap(), 0, offset_in_bounds, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                ctx.pos += offset_in_bounds;
             }
 
             let guard = self.write_handles.read().await;
             let mut ctx = guard.get(&handle).unwrap().lock().await;
             // if offset is after current position (max file size) we fill up with zeros until offset
             if offset > ctx.pos {
-                debug!("filling up with zeros until offset");
-                let buffer = vec![0; BUF_SIZE];
-                loop {
-                    let len = min(buffer.len(), (offset - ctx.pos) as usize);
-                    ctx.encryptor.as_mut().unwrap().write_all(&buffer[..len])?;
-                    ctx.pos += len as u64;
-                    if ctx.pos == offset {
-                        break;
-                    }
-                }
+                debug!("filling up with zeros from {} until offset {}", ctx.pos.to_formatted_string(&Locale::en), offset.to_formatted_string(&Locale::en));
+                let pos = ctx.pos;
+                stream_util::fill_zeros(&mut ctx.writer.as_mut().unwrap(), offset - pos)?;
             }
         }
 
@@ -1233,8 +1253,8 @@ impl EncryptedFs {
 
         // now write the new data
         debug!("writing new data");
-        ctx.encryptor.as_mut().unwrap().write_all(buf)?;
-        ctx.pos += buf.len() as u64;
+        let len = ctx.writer.as_mut().unwrap().write(buf)?;
+        ctx.pos += len as u64;
 
         if ctx.pos > ctx.attr.size {
             // if we write pass file size set the new size
@@ -1246,7 +1266,7 @@ impl EncryptedFs {
         ctx.attr.mtime = SystemTime::now();
         ctx.attr.ctime = SystemTime::now();
 
-        Ok(())
+        Ok(len)
     }
 
     /// Flush the data to the underlying storage.
@@ -1259,7 +1279,7 @@ impl EncryptedFs {
             return Ok(());
         }
         if let Some(ctx) = self.write_handles.read().await.get(&handle) {
-            ctx.lock().await.encryptor.as_mut().unwrap().flush()?;
+            ctx.lock().await.writer.as_mut().unwrap().flush()?;
             return Ok(());
         }
 
@@ -1274,8 +1294,18 @@ impl EncryptedFs {
 
         let mut buf = vec![0; size];
         let len = self.read(src_ino, src_offset, &mut buf, src_fh).await?;
-        self.write_all(dest_ino, dest_offset, &buf[..len], dest_fh).await?;
-
+        if len == 0 {
+            return Ok(0);
+        }
+        let mut copied = 0;
+        while copied < size {
+            let len = self.write(dest_ino, dest_offset, &buf[copied..len], dest_fh).await?;
+            if len == 0 && copied < size {
+                error!(len, "Failed to copy all read bytes");
+                return Err(FsError::Other("Failed to copy all read bytes".to_string()));
+            }
+            copied += len;
+        }
         Ok(len)
     }
 
@@ -1289,25 +1319,27 @@ impl EncryptedFs {
         }
 
         let map_guard = self.read_write_inode_locks.lock().await;
-        let mut handle = 0_u64;
+        let mut handle: Option<u64> = None;
         if read {
             let lock = map_guard.get_or_insert_with(ino, || Mutex::new(false));
-            handle = self.allocate_next_handle();
-            self.do_with_read_handle(handle, ReadHandleContextOperation::Create { ino, lock }).await?;
+            handle = Some(self.allocate_next_handle());
+            self.do_with_read_handle(*handle.as_ref().unwrap(), ReadHandleContextOperation::Create { ino, lock }).await?;
         }
         if write {
             let lock = map_guard.get_or_insert_with(ino, || Mutex::new(false));
-            handle = self.allocate_next_handle();
-            let res = self.do_with_write_handle(handle, WriteHandleContextOperation::Create { ino, lock }).await;
+            if let None = handle {
+                handle = Some(self.allocate_next_handle());
+            }
+            let res = self.do_with_write_handle(*handle.as_ref().unwrap(), WriteHandleContextOperation::Create { ino, lock }).await;
             if res.is_err() && read {
                 // on error remove the read handle if it was added above
                 // remove the read handle if it was added above
-                self.read_handles.write().await.remove(&handle);
+                self.read_handles.write().await.remove(&handle.as_ref().unwrap());
                 return Err(FsError::AlreadyOpenForWrite);
             }
             res?;
         }
-        Ok(handle)
+        Ok(handle.unwrap())
     }
 
     pub async fn truncate(&self, ino: u64, size: u64) -> FsResult<()> {
@@ -1317,7 +1349,7 @@ impl EncryptedFs {
         };
         let _guard = lock.lock().await;
 
-        let mut attr = self.get_inode(ino).await?;
+        let attr = self.get_inode(ino).await?;
         if matches!(attr.kind, FileType::Directory) {
             return Err(FsError::InvalidInodeType);
         }
@@ -1339,16 +1371,18 @@ impl EncryptedFs {
             let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
             let in_file = OpenOptions::new().read(true).write(true).open(in_path.clone())?;
             let key = self.key.get().await?;
-            let mut decryptor = crypto::create_decryptor(in_file, &self.cipher, &*key);
+            let mut reader = crypto::create_crypto_reader(in_file, &self.cipher, &*key);
 
             let tmp_path_str = format!("{}.truncate.tmp", attr.ino.to_string());
             let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
             let tmp_file = OpenOptions::new().write(true).create(true).truncate(true).open(tmp_path.clone())?;
-            let mut encryptor = crypto::create_encryptor(tmp_file, &self.cipher, &*key);
+            let mut writer = crypto::create_crypto_writer(tmp_file, &self.cipher, &*key);
 
             // copy existing data until new size
             debug!("copying data until new size");
-            stream_util::copy_exact(&mut decryptor, &mut encryptor, size)?;
+            stream_util::copy_exact(&mut reader, &mut writer, size)?;
+            writer.flush()?;
+            writer.finish()?;
             debug!("rename from tmp file");
             tokio::fs::rename(tmp_path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).await?;
         } else {
@@ -1360,23 +1394,22 @@ impl EncryptedFs {
 
             let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
             let in_file = OpenOptions::new().read(true).write(true).open(in_path.clone())?;
-            let mut decryptor = crypto::create_decryptor(in_file, &self.cipher, &*self.key.get().await?);
+            let mut reader = crypto::create_crypto_reader(in_file, &self.cipher, &*self.key.get().await?);
 
             let tmp_path_str = format!("{}.truncate.tmp", attr.ino.to_string());
             let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
             let tmp_file = OpenOptions::new().write(true).create(true).truncate(true).open(tmp_path.clone())?;
-            let mut encryptor = crypto::create_encryptor(tmp_file, &self.cipher, &*self.key.get().await?);
+            let mut writer = crypto::create_crypto_writer(tmp_file, &self.cipher, &*self.key.get().await?);
 
             // copy existing data
             debug!("copying existing data");
-            stream_util::copy_exact(&mut decryptor, &mut encryptor, attr.size)?;
-            attr.size = size;
+            stream_util::copy_exact(&mut reader, &mut writer, attr.size)?;
 
             // now fill up with zeros until new size
             debug!("filling up with zeros until new size");
-            stream_util::fill_zeros(&mut encryptor, size - attr.size)?;
+            stream_util::fill_zeros(&mut writer, size - attr.size)?;
 
-            encryptor.finish()?;
+            writer.finish()?;
             debug!("rename from tmp file");
             tokio::fs::rename(tmp_path, self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).await?;
         }
@@ -1424,7 +1457,7 @@ impl EncryptedFs {
                     let file_size = ctx.attr.size;
                     let pos = ctx.pos;
                     let len = file_size - pos;
-                    crypto::copy_from_file_exact(&mut ctx.encryptor.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
+                    crypto::copy_from_file_exact(&mut ctx.writer.as_mut().unwrap(), pos, len, &self.cipher, &*self.key.get().await?, self.data_dir.join(CONTENTS_DIR).join(ino_str))?;
                     ctx.pos += len;
                 }
             }
@@ -1432,7 +1465,7 @@ impl EncryptedFs {
                 let guard = self.write_handles.read().await;
                 let mut ctx = guard.get(&key).unwrap().lock().await;
                 debug!("finishing current writer");
-                ctx.encryptor.as_mut().unwrap().finish()?;
+                ctx.writer.as_mut().unwrap().finish()?;
             }
             // if we are in tmp file move it to actual file
             let (path, ino) = {
@@ -1518,29 +1551,29 @@ impl EncryptedFs {
         Ok(())
     }
 
-    /// Create an encryptor using internal encryption info.
-    pub async fn create_encryptor(&self, file: File) -> FsResult<impl Encryptor<File>> {
-        Ok(crypto::create_encryptor(file, &self.cipher, &*self.key.get().await?))
+    /// Create a crypto writer using internal encryption info.
+    pub async fn create_crypto_writer(&self, file: File) -> FsResult<impl CryptoWriter<File>> {
+        Ok(crypto::create_crypto_writer(file, &self.cipher, &*self.key.get().await?))
     }
 
-    /// Create a decryptor using internal encryption info.
-    pub async fn create_decryptor(&self, file: File) -> FsResult<impl Decryptor<File>> {
-        Ok(crypto::create_decryptor(file, &self.cipher, &*self.key.get().await?))
+    /// Create a crypto reader using internal encryption info.
+    pub async fn create_crypto_reader(&self, file: File) -> FsResult<impl CryptoReader<File>> {
+        Ok(crypto::create_crypto_reader(file, &self.cipher, &*self.key.get().await?))
     }
 
     /// Encrypts a string using internal encryption info.
     pub async fn encrypt_string(&self, s: &SecretString) -> FsResult<String> {
-        Ok(crypto::encrypt_string(s, &self.cipher, &*self.key.get().await?))
+        Ok(crypto::encrypt_string(s, &self.cipher, &*self.key.get().await?)?)
     }
 
     /// Decrypts a string using internal encryption info.
     pub async fn decrypt_string(&self, s: &str) -> FsResult<SecretString> {
-        Ok(crypto::decrypt_string(s, &self.cipher, &*self.key.get().await?))
+        Ok(crypto::decrypt_string(s, &self.cipher, &*self.key.get().await?)?)
     }
 
     /// Normalize and encrypt a file name.
     pub async fn normalize_end_encrypt_file_name(&self, name: &SecretString) -> FsResult<String> {
-        Ok(crypto::normalize_end_encrypt_file_name(name, &self.cipher, &*self.key.get().await?))
+        Ok(crypto::encrypt_file_name(name, &self.cipher, &*self.key.get().await?)?)
     }
 
     /// Change the password of the filesystem used to access the encryption key.
@@ -1553,8 +1586,8 @@ impl EncryptedFs {
         let salt = crypto::hash_secret(&old_password);
         let initial_key = crypto::derive_key(&old_password, &cipher, salt)?;
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
-        let decryptor = crypto::create_decryptor(File::open(enc_file.clone())?, &cipher, &initial_key);
-        let key_store: KeyStore = bincode::deserialize_from(decryptor).map_err(|_| FsError::InvalidPassword)?;
+        let reader = crypto::create_crypto_reader(File::open(enc_file.clone())?, &cipher, &initial_key);
+        let key_store: KeyStore = bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
         // check hash
         if key_store.hash != crypto::hash(key_store.key.expose_secret()) {
             return Err(FsError::InvalidPassword);
@@ -1564,9 +1597,11 @@ impl EncryptedFs {
         let salt = crypto::hash_secret(&new_password);
         let new_key = crypto::derive_key(&new_password, &cipher, salt)?;
         tokio::fs::remove_file(enc_file.clone()).await?;
-        let mut encryptor = crypto::create_encryptor(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
-                                                     &cipher, &new_key);
-        bincode::serialize_into(&mut encryptor, &key_store)?;
+        let mut writer = crypto::create_crypto_writer(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
+                                                      &cipher, &new_key);
+        bincode::serialize_into(&mut writer, &key_store)?;
+        writer.flush()?;
+        writer.finish()?;
 
         Ok(())
     }
@@ -1619,7 +1654,7 @@ impl EncryptedFs {
         let ino = op.get_ino();
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         let file = OpenOptions::new().read(true).write(true).open(path)?;
-        let decryptor = crypto::create_decryptor(file, &self.cipher, &*self.key.get().await?);
+        let reader = crypto::create_crypto_reader(file, &self.cipher, &*self.key.get().await?);
         let attr = self.get_inode_from_storage(ino, &*self.key.get().await?).await?;
         match op {
             ReadHandleContextOperation::Create { ino, lock } => {
@@ -1628,7 +1663,7 @@ impl EncryptedFs {
                     ino,
                     attr,
                     pos: 0,
-                    decryptor: Some(Box::new(decryptor)),
+                    reader: Some(Box::new(reader)),
                     _lock: lock,
                 };
                 self.read_handles.write().await.insert(handle, Mutex::new(ctx));
@@ -1636,7 +1671,7 @@ impl EncryptedFs {
             }
             ReadHandleContextOperation::RecreateDecryptor { mut existing } => {
                 existing.pos = 0;
-                existing.decryptor.replace(Box::new(decryptor));
+                existing.reader.replace(Box::new(reader));
                 existing.attr.size = attr.size;
             }
         }
@@ -1650,7 +1685,7 @@ impl EncryptedFs {
             .read(true)
             .write(true)
             .open(path.clone())?;
-        let encryptor = crypto::create_encryptor(file, &self.cipher, &*self.key.get().await?);
+        let writer = crypto::create_crypto_writer(file, &self.cipher, &*self.key.get().await?);
         match op {
             WriteHandleContextOperation::Create { ino, lock } => {
                 debug!("creating write handle");
@@ -1660,7 +1695,7 @@ impl EncryptedFs {
                     attr,
                     path,
                     pos: 0,
-                    encryptor: Some(Box::new(encryptor)),
+                    writer: Some(Box::new(writer)),
                     _lock: lock,
                 };
                 self.write_handles.write().await.insert(handle, Mutex::new(ctx));
@@ -1668,8 +1703,8 @@ impl EncryptedFs {
             }
             WriteHandleContextOperation::RecreateEncryptor { mut existing, reset_size } => {
                 existing.pos = 0;
-                debug!("recreating encryptor");
-                existing.encryptor.replace(Box::new(encryptor));
+                debug!("recreating writer");
+                existing.writer.replace(Box::new(writer));
                 existing.path = path.clone();
                 if reset_size {
                     let attr = self.get_inode_from_storage(ino, &*self.key.get().await?).await?;
@@ -1716,7 +1751,7 @@ impl EncryptedFs {
 
     async fn insert_directory_entry(&self, parent: u64, entry: DirectoryEntry, key: &SecretVec<u8>) -> FsResult<()> {
         let parent_path = self.data_dir.join(CONTENTS_DIR).join(parent.to_string());
-        let name = crypto::normalize_end_encrypt_file_name(&entry.name, &self.cipher, &*self.key.get().await?);
+        let name = crypto::encrypt_file_name(&entry.name, &self.cipher, &*self.key.get().await?)?;
         let file_path = parent_path.join(name);
 
         let map = self.serialize_dir_entries_locks.write().unwrap();
@@ -1731,14 +1766,17 @@ impl EncryptedFs {
 
         // write inode and file type
         let entry = (entry.ino, entry.kind);
-        bincode::serialize_into(crypto::create_encryptor(file, &self.cipher, key), &entry)?;
+        let mut writer = crypto::create_crypto_writer(file, &self.cipher, key);
+        bincode::serialize_into(&mut writer, &entry)?;
+        writer.flush()?;
+        writer.finish()?;
 
         Ok(())
     }
 
     async fn remove_directory_entry(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         let parent_path = self.data_dir.join(CONTENTS_DIR).join(parent.to_string());
-        let name = crypto::normalize_end_encrypt_file_name(name, &self.cipher, &*self.key.get().await?);
+        let name = crypto::encrypt_file_name(name, &self.cipher, &*self.key.get().await?)?;
         let file_path = parent_path.join(name);
 
         let map = self.serialize_dir_entries_locks.write().unwrap();
@@ -1771,8 +1809,8 @@ impl EncryptedFs {
         if path.exists() {
             // read key
 
-            let decryptor = crypto::create_decryptor(File::open(path)?, cipher, &derived_key);
-            let key_store: KeyStore = bincode::deserialize_from(decryptor).map_err(|_| FsError::InvalidPassword)?;
+            let reader = crypto::create_crypto_reader(File::open(path)?, cipher, &derived_key);
+            let key_store: KeyStore = bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
             // check hash
             if key_store.hash != crypto::hash(key_store.key.expose_secret()) {
                 return Err(FsError::InvalidPassword);
@@ -1783,16 +1821,18 @@ impl EncryptedFs {
 
             let mut key: Vec<u8> = vec![];
             let key_len = match cipher {
-                Cipher::ChaCha20 => 32,
-                Cipher::Aes256Gcm => 32,
+                Cipher::ChaCha20 => CHACHA20_POLY1305.key_len(),
+                Cipher::Aes256Gcm => AES_256_GCM.key_len(),
             };
             key.resize(key_len, 0);
             thread_rng().fill_bytes(&mut key);
             let key = SecretVec::new(key);
             let key_store = KeyStore::new(key);
-            let mut encryptor = crypto::create_encryptor(OpenOptions::new().read(true).write(true).create(true).open(path)?,
-                                                         cipher, &derived_key);
-            bincode::serialize_into(&mut encryptor, &key_store)?;
+            let mut writer = crypto::create_crypto_writer(OpenOptions::new().read(true).write(true).create(true).open(path)?,
+                                                          cipher, &derived_key);
+            bincode::serialize_into(&mut writer, &key_store)?;
+            writer.flush()?;
+            writer.finish()?;
             Ok(key_store.key)
         }
     }
