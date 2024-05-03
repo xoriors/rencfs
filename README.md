@@ -11,6 +11,19 @@ You can also store it in any cloud storage like Google Drive, Dropbox, etc. and 
 [![docs.rs](https://img.shields.io/docsrs/rencfs?label=docs.rs)](https://docs.rs/rencfs/)
 [![test](https://github.com/radumarias/rencfs/actions/workflows/test.yml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/test.yml)
 
+
+# Functionality
+
+I keeps all encrypted data in a dedicated directory with files structured on inodes (with meta info), files for binary content and folders entries. All data and also filenames are encrypted
+
+# Stack
+
+- it's fully async built upon [tokio](https://crates.io/crates/tokio) and [fuse3](https://crates.io/crates/fuse3)
+- [ring](https://crates.io/crates/ring) for encryption and [argon2](https://crates.io/crates/argon2) for key derivation function (creating encryption key from password)
+- [secrecy](https://crates.io/crates/secrecy) for keeping pass and encryption keys safe in memory and zeroing them when not used. It keeps encryption keys in memory only while being used and when not active it will release and zeroing them from memory
+- password can be saved in OS keyring using [keyring](https://crates.io/crates/keyring)
+- [tracing](https://crates.io/crates/tracing) for logs
+
 # Usage
 
 You can use it as a command line tool to mount an encrypted file system, or directly using the library to build your own binary (for library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/)).
