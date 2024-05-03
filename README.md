@@ -32,8 +32,7 @@ sudo apt-get update && sudo apt-get -y install fuse3
 
 You can install the encrypted file system binary using the following command
 ```bash
-yay -Syu
-yay -S rencfs
+yay -Syu && yay -S rencfs
 ```
 
 ### Install with cargo
