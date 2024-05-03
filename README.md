@@ -14,7 +14,7 @@ You can also store it in any cloud storage like Google Drive, Dropbox, etc. and 
 
 # Functionality
 
-I keeps all encrypted data in a dedicated directory with files structured on inodes (with meta info), files for binary content and folders entries. All data and also filenames are encrypted
+I keeps all encrypted data in a dedicated directory with files structured on inodes (with meta info), files for binary content and folders entries. All data and also filenames are encrypted. For new files it generates inode number randomly in `u64` space so it reduces the chance of conflicts when used offline and synced later. Password is collected from CLI and can pe saved in OS keyring
 
 # Stack
 
@@ -188,3 +188,14 @@ cargo build --release
 ```bash
 cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
 ```
+
+# Future
+
+- Plan is to implement it also on macOS and Windows
+- A systemd service is being worked on [rencfs-daemon](https://github.com/radumarias/rencfs-daemon
+- A GUI is on the way [rencfs_desktop](https://github.com/radumarias/rencfs_desktop)
+- Mobile apps for Android and iOS are on the way
+
+# Contribution
+
+Feel free to fork it and change it the way you want. If you build something interesting and feel to share pull requests are always apporeciated
