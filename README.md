@@ -35,11 +35,6 @@ Encryption key is also encrypted with another key derived from the password. Thi
 - password can be saved in OS keyring using [keyring](https://crates.io/crates/keyring)
 - [tracing](https://crates.io/crates/tracing) for logs
 
-# Considerations
-
-It doesn't have any independent review from experts, but if the project gains any traction would think about doing that.
-Please note, this project doesn't try to reinvent the wheel or be better than already proven implementations. It started as a learning project of Rust programming language and I feel like keep building more on it. It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight" other well known implementations but it can be a project from which others can learn or build upon or why not for some to actually use it keeping in mind all the above.
-
 # Usage
 
 You can use it as a command line tool to mount an encrypted file system, or directly using the library to build your own binary (for library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/)).
@@ -215,3 +210,8 @@ cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
 # Contribution
 
 Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing pull requests are always apporeciated.
+
+# Considerations
+
+It doesn't have any independent review from experts, but if the project gains any traction would think about doing that.
+Please note, this project doesn't try to reinvent the wheel or be better than already proven implementations. It started as a learning project of Rust programming language and I feel like keep building more on it. It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight" other well known implementations but it can be a project from which others can learn or build upon or why not for some to actually use it keeping in mind all the above.
