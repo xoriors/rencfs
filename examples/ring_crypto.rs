@@ -60,15 +60,15 @@ fn main() {
     let key = SecretVec::new(key);
     let key_store = KeyStore::new(key);
     println!("hash {:?}", key_store.hash);
-    let mut writer = crypto::create_crypto_writer(OpenOptions::new().read(true).write(true).create(true).open(path.clone()).unwrap(),
-                                                  &cipher, &derived_key);
+    let mut writer = crypto::create_writer(OpenOptions::new().read(true).write(true).create(true).open(path.clone()).unwrap(),
+                                           &cipher, &derived_key, 42_u64);
     bincode::serialize_into(&mut writer, &key_store).unwrap();
     writer.flush().unwrap();
     writer.finish().unwrap();
 
     // read key
 
-    let reader = crypto::create_crypto_reader(File::open(path).unwrap(), &cipher, &derived_key);
+    let reader = crypto::create_reader(File::open(path).unwrap(), &cipher, &derived_key);
     let key_store: KeyStore = bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword).unwrap();
     println!("key {:?}", key_store.key.expose_secret());
     println!("hash {:?}", key_store.hash);

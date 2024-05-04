@@ -110,7 +110,7 @@ fn get_cli_args() -> ArgMatches {
                 .short('c')
                 .value_name("cipher")
                 .default_value("ChaCha20")
-                .help(format!("Encryption type, possible values: {}",
+                .help(format!("Cipher used for encryption, possible values: {}",
                               Cipher::iter().fold(String::new(), |mut acc, x| {
                                   acc.push_str(format!("{acc}{}{x}", if acc.len() != 0 { ", " } else { "" }).as_str());
                                   acc
@@ -120,14 +120,14 @@ fn get_cli_args() -> ArgMatches {
         .arg(
             Arg::new("umount-on-start")
                 .long("umount-on-start")
-                .short('x')
+                .short('u')
                 .action(ArgAction::SetTrue)
                 .help("If we should try to umount the mountpoint before starting the FUSE server. This can be useful when the previous run crashed or was forced kll and the mountpoint is still mounted."),
         )
         .arg(
             Arg::new("auto_unmount")
                 .long("auto_unmount")
-                .short('u')
+                .short('x')
                 .default_value("true")
                 .action(ArgAction::SetTrue)
                 .help("Automatically unmount on process exit"),

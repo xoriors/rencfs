@@ -107,7 +107,7 @@ async fn copy_all_file_range(fs: &EncryptedFs, src_ino: u64, src_offset: u64, de
     }
 }
 
-async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, mut buf: &mut [u8], handle: u64) {
+async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8], handle: u64) {
     let mut read = 0;
     while read < buf.len() {
         let len = fs.read(ino, offset + read as u64, &mut buf[read..], handle).await.unwrap();

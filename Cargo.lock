@@ -1493,6 +1493,7 @@ dependencies = [
  "mio",
  "num-format",
  "rand",
+ "rand_chacha",
  "retainer",
  "ring",
  "rpassword",

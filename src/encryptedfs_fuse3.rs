@@ -36,7 +36,7 @@ const STATFS: ReplyStatFs = ReplyStatFs {
 
 const FMODE_EXEC: i32 = 0x20;
 
-// const MAX_NAME_LENGTH: u32 = 255;
+// const MAX_NAME_LENGTH: u32 = 255 - ENCRYPT_FILENAME_OVERHEAD_CHARS as u32;
 
 // Flags returned by the open request
 const FOPEN_DIRECT_IO: u32 = 1 << 0; // bypass page cache for this open file

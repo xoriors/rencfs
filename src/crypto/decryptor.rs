@@ -2,6 +2,7 @@ use std::io;
 use std::io::{Read, Seek, SeekFrom};
 
 use ring::aead::{Aad, Algorithm, BoundKey, OpeningKey, UnboundKey};
+use tracing::{error, instrument};
 
 use crate::crypto::buf_mut::BufMut;
 use crate::crypto::encryptor::{BUF_SIZE, CounterNonceSequence};
@@ -51,9 +52,9 @@ pub struct RingCryptoReader<R: Read> {
 }
 
 impl<R: Read> RingCryptoReader<R> {
-    pub fn new<'a: 'static>(r: R, algorithm: &'a Algorithm, key: &[u8]) -> Self {
+    pub fn new<'a: 'static>(r: R, algorithm: &'a Algorithm, key: &[u8], nonce_seed: u64) -> Self {
         let unbound_key = UnboundKey::new(algorithm, &key).unwrap();
-        let nonce_sequence = CounterNonceSequence(1);
+        let nonce_sequence = CounterNonceSequence::new(nonce_seed);
         let opening_key = OpeningKey::new(unbound_key, nonce_sequence);
         let buf = BufMut::new(vec![0; BUF_SIZE + algorithm.tag_len()]);
         Self {
@@ -65,6 +66,7 @@ impl<R: Read> RingCryptoReader<R> {
 }
 
 impl<R: Read> Read for RingCryptoReader<R> {
+    #[instrument(name = "RingCryptoReader:read", skip(self, buf))]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // first try to read remaining decrypted data
         let len = self.buf.read(buf)?;
@@ -94,7 +96,11 @@ impl<R: Read> Read for RingCryptoReader<R> {
                 return Ok(0);
             }
             let mut data = &mut buffer[..len];
-            let plaintext = self.opening_key.open_within(Aad::empty(), &mut data, 0..).unwrap();
+            let res = self.opening_key.open_within(Aad::empty(), &mut data, 0..);
+            if res.is_err() {
+                error!("error opening in place: {:?}", res);
+            }
+            let plaintext = res.unwrap();
             plaintext.len()
         };
         self.buf.seek(SeekFrom::Start(pos as u64)).unwrap();
@@ -104,7 +110,7 @@ impl<R: Read> Read for RingCryptoReader<R> {
 }
 
 impl<R: Read + Send + Sync> Seek for RingCryptoReader<R> {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+    fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
         todo!()
     }
 }
