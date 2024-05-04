@@ -22,7 +22,7 @@ Encryption key is also encrypted with another key derived from the password. Thi
 # Stack
 
 - it's fully async built upon [tokio](https://crates.io/crates/tokio) and [fuse3](https://crates.io/crates/fuse3)
-- [ring](https://crates.io/crates/ring) for encryption and [argon2](https://crates.io/crates/argon2) for key derivation function (creating encryption key from password)
+- [ring](https://crates.io/crates/ring) for encryption and [argon2](https://crates.io/crates/argon2) for key derivation function (creating key used to encrypt master encryption key from password)
 - [secrecy](https://crates.io/crates/secrecy) for keeping pass and encryption keys safe in memory and zeroing them when not used. It keeps encryption keys in memory only while being used and when not active it will release and zeroing them from memory
 - password can be saved in OS keyring using [keyring](https://crates.io/crates/keyring)
 - [tracing](https://crates.io/crates/tracing) for logs
