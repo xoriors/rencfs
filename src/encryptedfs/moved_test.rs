@@ -90,9 +90,9 @@ fn create_attr_from_type(kind: FileType) -> CreateFileAttr {
     }
 }
 
-async fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
+async fn read_to_string(path: PathBuf, fs: &EncryptedFs, ino: u64) -> String {
     let mut buf: Vec<u8> = vec![];
-    fs.create_crypto_reader(OpenOptions::new().read(true).write(true).open(path).unwrap()).await.unwrap().read_to_end(&mut buf).unwrap();
+    fs.create_crypto_reader(OpenOptions::new().read(true).write(true).open(path).unwrap(), ino).await.unwrap().read_to_end(&mut buf).unwrap();
     String::from_utf8(buf).unwrap()
 }
 
@@ -131,7 +131,7 @@ async fn test_write_all() {
         write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh).await.unwrap();
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
-        assert_eq!(data, read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs).await);
+        assert_eq!(data, read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs, attr.ino).await);
         let attr = fs.get_inode(attr.ino).await.unwrap();
         assert_eq!(data.len() as u64, attr.size);
 
@@ -141,7 +141,7 @@ async fn test_write_all() {
         write_all_bytes_to_fs(&fs, attr.ino, 5, data.as_bytes(), fh).await.unwrap();
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
-        assert_eq!(data, &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs).await[5..]);
+        assert_eq!(data, &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs, attr.ino).await[5..]);
 
         // offset after file end
         let data = "37";
@@ -149,7 +149,7 @@ async fn test_write_all() {
         write_all_bytes_to_fs(&fs, attr.ino, 42, data.as_bytes(), fh).await.unwrap();
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
-        assert_eq!(format!("test-37{}37", "\0".repeat(35)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs).await);
+        assert_eq!(format!("test-37{}37", "\0".repeat(35)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs, attr.ino).await);
 
         // offset before current position, several blocks
         let test_file_2 = SecretString::from_str("test-file-2").unwrap();
@@ -162,7 +162,7 @@ async fn test_write_all() {
         write_all_bytes_to_fs(&fs, attr.ino, 8, data2.as_bytes(), fh).await.unwrap();
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
-        assert_eq!("test-01-02-42", &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs).await);
+        assert_eq!("test-01-02-42", &read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs, attr.ino).await);
 
         // write before current position then write to the end, also check it preserves the content from
         // the first write to offset to end of the file
@@ -174,7 +174,7 @@ async fn test_write_all() {
         write_all_bytes_to_fs(&fs, attr.ino, data.len() as u64, b"-42", fh).await.unwrap();
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
-        let new_content = read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs).await;
+        let new_content = read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs, attr.ino).await;
         assert_eq!("test-37-37-42", new_content);
 
         let buf = [0; 0];
@@ -310,13 +310,13 @@ async fn test_truncate() {
         write_all_bytes_to_fs(&fs, attr.ino, 5, data.as_bytes(), fh).await.unwrap();
         fs.truncate(attr.ino, 10).await.unwrap();
         assert_eq!(10, fs.get_inode(attr.ino).await.unwrap().size);
-        assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs).await);
+        assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs, attr.ino).await);
         fs.release(fh).await.unwrap();
 
         // size doesn't change
         fs.truncate(attr.ino, 10).await.unwrap();
         assert_eq!(10, fs.get_inode(attr.ino).await.unwrap().size);
-        assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs).await);
+        assert_eq!(format!("test-37{}", "\0".repeat(3)), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs, attr.ino).await);
 
         // size decrease, preserve opened writer content
         let fh = fs.open(attr.ino, false, true).await.unwrap();
@@ -324,13 +324,13 @@ async fn test_truncate() {
         write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh).await.unwrap();
         fs.truncate(attr.ino, 4).await.unwrap();
         assert_eq!(4, fs.get_inode(attr.ino).await.unwrap().size);
-        assert_eq!("37st", read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs).await);
+        assert_eq!("37st", read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs, attr.ino).await);
         fs.release(fh).await.unwrap();
 
         // size decrease to 0
         fs.truncate(attr.ino, 0).await.unwrap();
         assert_eq!(0, fs.get_inode(attr.ino).await.unwrap().size);
-        assert_eq!("".to_string(), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs).await);
+        assert_eq!("".to_string(), read_to_string(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()), &fs, attr.ino).await);
     }).await
 }
 

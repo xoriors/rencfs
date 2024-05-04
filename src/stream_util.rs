@@ -12,7 +12,7 @@ const BUF_SIZE: usize = 256 * 1024;
 const BUF_SIZE: usize = 1024 * 1024; // 1 MB buffer
 
 #[instrument(skip(r, len), fields(len = len.to_formatted_string( & Locale::en)))]
-pub fn read_seek_forward_exact(mut r: impl Read, len: u64) -> io::Result<()> {
+pub fn read_seek_forward_exact(r: &mut impl Read, len: u64) -> io::Result<()> {
     debug!("");
     if len == 0 {
         return Ok(());

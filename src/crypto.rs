@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 use std::io;
 use std::num::ParseIntError;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use argon2::Argon2;
 use argon2::password_hash::rand_core::RngCore;
@@ -18,13 +19,13 @@ use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tracing::{debug, error, instrument};
 
-use crate::crypto::decryptor::{CryptoReader, RingCryptoReader};
-use crate::crypto::encryptor::{CryptoWriter, RingCryptoWriter};
+use crate::crypto::reader::{CryptoReader, RingCryptoReader};
+use crate::crypto::writer::{CryptoWriter, RingCryptoWriter};
 use crate::encryptedfs::FsResult;
 use crate::stream_util;
 
-pub mod decryptor;
-pub mod encryptor;
+pub mod reader;
+pub mod writer;
 pub mod buf_mut;
 
 #[derive(Debug, Clone, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
@@ -75,24 +76,24 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub fn create_writer<W: Write + Send + Sync>(writer: W, cipher: &Cipher, key: &SecretVec<u8>, nonce_seed: u64) -> impl CryptoWriter<W> {
+pub fn create_writer<W: Write + Send + Sync>(writer: W, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> impl CryptoWriter<W> {
     create_ring_writer(writer, cipher, key, nonce_seed)
 }
 
-fn create_ring_writer<W: Write + Send + Sync>(writer: W, cipher: &Cipher, key: &SecretVec<u8>, nonce_seed: u64) -> RingCryptoWriter<W> {
+fn create_ring_writer<W: Write + Send + Sync>(writer: W, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> RingCryptoWriter<W> {
     let algorithm = match cipher {
         Cipher::ChaCha20 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoWriter::new(writer, algorithm, &key.expose_secret(), nonce_seed)
+    RingCryptoWriter::new(writer, algorithm, key, nonce_seed)
 }
 
-fn create_ring_reader<R: Read + Send + Sync>(reader: R, cipher: &Cipher, key: &SecretVec<u8>, nonce_seed: u64) -> RingCryptoReader<R> {
+fn create_ring_reader<R: Read + Send + Sync>(reader: R, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> RingCryptoReader<R> {
     let algorithm = match cipher {
         Cipher::ChaCha20 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoReader::new(reader, algorithm, &key.expose_secret(), nonce_seed)
+    RingCryptoReader::new(reader, algorithm, key, nonce_seed)
 }
 
 // fn _create_cryptostream_crypto_writer(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> impl CryptoWriter<File> {
@@ -113,8 +114,8 @@ fn create_ring_reader<R: Read + Send + Sync>(reader: R, cipher: &Cipher, key: &S
 // }
 
 #[instrument(skip(reader, key))]
-pub fn create_reader<R: Read + Send + Sync>(reader: R, cipher: &Cipher, key: &SecretVec<u8>, nonce_seed: u64) -> impl CryptoReader<R> {
-    create_ring_reader(reader, cipher, &key, nonce_seed)
+pub fn create_reader<R: Read + Send + Sync>(reader: R, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> impl CryptoReader<R> {
+    create_ring_reader(reader, cipher, key, nonce_seed)
 }
 
 // fn _create_cryptostream_crypto_reader(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> CryptostreamCryptoReader<File> {
@@ -140,7 +141,7 @@ pub fn create_reader<R: Read + Send + Sync>(reader: R, cipher: &Cipher, key: &Se
 //     CryptostreamCryptoReader::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 // }
 
-pub fn encrypt_string_with_nonce_seed(s: &SecretString, cipher: &Cipher, key: &SecretVec<u8>, nonce_seed: u64) -> Result<String> {
+pub fn encrypt_string_with_nonce_seed(s: &SecretString, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> Result<String> {
     let mut cursor = io::Cursor::new(vec![]);
     let mut writer = create_writer(cursor, cipher, key, nonce_seed);
     writer.write_all(s.expose_secret().as_bytes())?;
@@ -150,7 +151,7 @@ pub fn encrypt_string_with_nonce_seed(s: &SecretString, cipher: &Cipher, key: &S
     Ok(format!("{}.{}", base64::encode(v), nonce_seed))
 }
 
-pub fn decrypt_string(s: &str, cipher: &Cipher, key: &SecretVec<u8>) -> Result<SecretString> {
+pub fn decrypt_string(s: &str, cipher: &Cipher, key: Arc<SecretVec<u8>>) -> Result<SecretString> {
     // extract nonce seed
     if !s.contains(".") {
         return Err(Error::Generic("nonce seed is missing"));
@@ -167,7 +168,7 @@ pub fn decrypt_string(s: &str, cipher: &Cipher, key: &SecretVec<u8>) -> Result<S
     Ok(SecretString::new(decrypted))
 }
 
-pub fn decrypt_file_name(name: &str, cipher: &Cipher, key: &SecretVec<u8>) -> Result<SecretString> {
+pub fn decrypt_file_name(name: &str, cipher: &Cipher, key: Arc<SecretVec<u8>>) -> Result<SecretString> {
     let name = String::from(name).replace("|", "/");
     decrypt_string(&name, cipher, key)
 }
@@ -185,7 +186,7 @@ pub fn derive_key(password: &SecretString, cipher: &Cipher, salt: SecretVec<u8>)
     Ok(SecretVec::new(dk))
 }
 
-pub fn encrypt_file_name_with_nonce_seed(name: &SecretString, cipher: &Cipher, key: &SecretVec<u8>, nonce_seed: u64) -> FsResult<String> {
+pub fn encrypt_file_name_with_nonce_seed(name: &SecretString, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> FsResult<String> {
     if name.expose_secret() != "$." && name.expose_secret() != "$.." {
         let normalized_name = SecretString::new(name.expose_secret().replace("/", " ").replace("\\", " "));
         let mut encrypted = encrypt_string_with_nonce_seed(&normalized_name, cipher, key, nonce_seed)?;
@@ -211,7 +212,7 @@ pub fn hash_secret(data: &SecretString) -> SecretVec<u8> {
 
 /// Copy from `pos` position in file `len` bytes
 #[instrument(skip(w, key), fields(pos = pos.to_formatted_string(& Locale::en), len = len.to_formatted_string(& Locale::en)))]
-pub fn copy_from_file_exact(w: &mut impl Write, pos: u64, len: u64, cipher: &Cipher, key: &SecretVec<u8>, nonce_seed: u64, file: PathBuf) -> io::Result<()> {
+pub fn copy_from_file_exact(w: &mut impl Write, pos: u64, len: u64, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64, file: PathBuf) -> io::Result<()> {
     debug!("");
     if len == 0 {
         // no-op

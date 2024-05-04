@@ -11,7 +11,7 @@ use tokio::fs;
 
 use rencfs::crypto;
 use rencfs::crypto::Cipher;
-use rencfs::crypto::encryptor::CryptoWriter;
+use rencfs::crypto::writer::CryptoWriter;
 use rencfs::encryptedfs::FsError;
 
 fn main() {
