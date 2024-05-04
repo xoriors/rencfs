@@ -16,13 +16,15 @@ use argon2::password_hash::rand_core::RngCore;
 use futures_util::TryStreamExt;
 use num_format::{Locale, ToFormattedString};
 use rand::thread_rng;
+use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::SeedableRng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 use tokio::sync::{Mutex, MutexGuard, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::{crypto, stream_util};
 use crate::arc_hashmap::{ArcHashMap, Guard};
@@ -1036,10 +1038,6 @@ impl EncryptedFs {
             error!(err = %err, pos = ctx.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), file_size = ctx.attr.size.to_formatted_string(&Locale::en), "seeking");
             err
         })?;
-
-        if offset + buf.len() as u64 > ctx.attr.size {
-            buf = &mut buf[..(ctx.attr.size - offset) as usize];
-        }
         let len = ctx.reader.as_mut().unwrap().read(&mut buf).map_err(|err| {
             error!(err = %err, pos = ctx.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), file_size = ctx.attr.size.to_formatted_string(&Locale::en), "reading from reader");
             err
@@ -1855,7 +1853,8 @@ impl EncryptedFs {
                 Cipher::Aes256Gcm => AES_256_GCM.key_len(),
             };
             key.resize(key_len, 0);
-            thread_rng().fill_bytes(&mut key);
+            let mut rand = ChaCha20Rng::from_entropy();
+            rand.fill_bytes(&mut key);
             let key = SecretVec::new(key);
             let key_store = KeyStore::new(key);
             let mut writer = crypto::create_writer(OpenOptions::new().read(true).write(true).create(true).open(path)?,

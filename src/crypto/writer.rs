@@ -1,7 +1,7 @@
 use std::io;
 use std::io::{BufWriter, Write};
 use std::sync::Arc;
-use rand_chacha::ChaCha8Rng;
+use rand_chacha::ChaCha20Rng;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 
 use ring::aead::{Aad, Algorithm, BoundKey, Nonce, NONCE_LEN, NonceSequence, SealingKey, UnboundKey};
@@ -54,7 +54,7 @@ pub(crate) const BUF_SIZE: usize = 1024 * 1024; // 1 MB buffer
 
 pub struct RingCryptoWriter<W: Write> {
     out: Option<BufWriter<W>>,
-    sealing_key: SealingKey<CounterNonceSequence>,
+    sealing_key: SealingKey<RandomNonceSequence>,
     buf: BufMut,
 }
 
@@ -62,7 +62,7 @@ impl<W: Write> RingCryptoWriter<W> {
     pub fn new<'a: 'static>(w: W, algorithm: &'a Algorithm, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> Self {
         // todo: param for start nonce sequence
         let unbound_key = UnboundKey::new(&algorithm, key.expose_secret()).unwrap();
-        let nonce_sequence = CounterNonceSequence::new(nonce_seed);
+        let nonce_sequence = RandomNonceSequence::new(nonce_seed);
         let sealing_key = SealingKey::new(unbound_key, nonce_sequence);
         let buf = BufMut::new(vec![0; BUF_SIZE]);
         Self {
@@ -122,30 +122,30 @@ impl<W: Write + Send + Sync> CryptoWriter<W> for RingCryptoWriter<W> {
     }
 }
 
-pub(crate) struct CounterNonceSequence {
-    // rng: ChaCha8Rng,
-    seed: u64,
+pub(crate) struct RandomNonceSequence {
+    rng: ChaCha20Rng,
+    // seed: u64,
 }
 
-impl CounterNonceSequence {
+impl RandomNonceSequence {
     pub fn new(seed: u64) -> Self {
         Self {
-            // rng: ChaCha8Rng::seed_from_u64(seed),
-            seed: 1,
+            rng: ChaCha20Rng::seed_from_u64(seed),
+            // seed: 1,
         }
     }
 }
 
-impl NonceSequence for CounterNonceSequence {
+impl NonceSequence for RandomNonceSequence {
     // called once for each seal operation
     fn advance(&mut self) -> Result<Nonce, Unspecified> {
         let mut nonce_bytes = vec![0; NONCE_LEN];
 
-        // let bytes = self.rng.next_u64().to_le_bytes();
-        let bytes = self.seed.to_le_bytes();
+        let bytes = self.rng.next_u64().to_le_bytes();
+        // let bytes = self.seed.to_le_bytes();
         nonce_bytes[4..].copy_from_slice(&bytes);
         // println!("nonce_bytes = {}", hex::encode(&nonce_bytes));
-        self.seed += 1;
+        // self.seed += 1;
 
         Nonce::try_assume_unique_for_key(&nonce_bytes)
     }

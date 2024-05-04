@@ -1,18 +1,17 @@
-use std::{fs, io};
+use std::io;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
-use num_format::{Locale, ToFormattedString};
 
+use num_format::{Locale, ToFormattedString};
 use ring::aead::{Aad, Algorithm, BoundKey, OpeningKey, UnboundKey};
 use secrecy::{ExposeSecret, SecretVec};
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::crypto::buf_mut::BufMut;
-use crate::crypto::writer::{BUF_SIZE, CounterNonceSequence};
-use crate::encryptedfs::CONTENTS_DIR;
+use crate::crypto::writer::{BUF_SIZE, RandomNonceSequence};
 use crate::stream_util;
 
-pub trait CryptoReader<R: Read>: Read + Seek + Send + Sync {
+pub trait CryptoReader<R: Read + Seek>: Read + Seek + Send + Sync {
     fn finish(&mut self) -> Option<R>;
 }
 
@@ -50,9 +49,9 @@ pub trait CryptoReader<R: Read>: Read + Seek + Send + Sync {
 
 /// ring
 
-pub struct RingCryptoReader<R: Read> {
+pub struct RingCryptoReader<R: Read + Seek> {
     input: Option<R>,
-    opening_key: Option<OpeningKey<CounterNonceSequence>>,
+    opening_key: OpeningKey<RandomNonceSequence>,
     buf: BufMut,
     pos: u64,
     algorithm: &'static Algorithm,
@@ -60,13 +59,13 @@ pub struct RingCryptoReader<R: Read> {
     nonce_seed: u64,
 }
 
-impl<R: Read> RingCryptoReader<R> {
+impl<R: Read + Seek> RingCryptoReader<R> {
     pub fn new(r: R, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> Self {
         let opening_key = Self::create_opening_key(algorithm, key.clone(), nonce_seed);
         let buf = BufMut::new(vec![0; BUF_SIZE + algorithm.tag_len()]);
         Self {
             input: Some(r),
-            opening_key: Some(opening_key),
+            opening_key,
             buf,
             pos: 0,
             algorithm,
@@ -75,9 +74,9 @@ impl<R: Read> RingCryptoReader<R> {
         }
     }
 
-    fn create_opening_key(algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> OpeningKey<CounterNonceSequence> {
+    fn create_opening_key(algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> OpeningKey<RandomNonceSequence> {
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).unwrap();
-        let nonce_sequence = CounterNonceSequence::new(nonce_seed);
+        let nonce_sequence = RandomNonceSequence::new(nonce_seed);
         OpeningKey::new(unbound_key, nonce_sequence)
     }
 
@@ -89,27 +88,30 @@ impl<R: Read> RingCryptoReader<R> {
                 // if we need an offset before the current position, we can't seek back, we need
                 // to read from the beginning until the desired offset
                 debug!("seeking back, recreating decryptor");
-                self.opening_key.replace(Self::create_opening_key(self.algorithm, self.key.clone(), self.nonce_seed));
+                self.opening_key = Self::create_opening_key(self.algorithm, self.key.clone(), self.nonce_seed);
                 self.buf.clear();
                 self.pos = 0;
+                self.input.as_mut().unwrap().seek(SeekFrom::Start(0))?;
             }
             debug!(pos = self.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), "seeking");
             let len = offset - self.pos;
-            stream_util::read_seek_forward_exact(self, len)?;
-            self.pos += len;
+            stream_util::seek_forward(self, len)?;
         }
 
         Ok(self.pos)
     }
 }
 
-impl<R: Read> Read for RingCryptoReader<R> {
+impl<R: Read + Seek> Read for RingCryptoReader<R> {
     #[instrument(name = "RingCryptoReader:read", skip(self, buf))]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // first try to read remaining decrypted data
-        let len = self.buf.read(buf)?;
-        if len != 0 {
-            return Ok(len);
+        {
+            let len = self.buf.read(buf)?;
+            if len != 0 {
+                self.pos += len as u64;
+                return Ok(len);
+            }
         }
         // we read all the data from the buffer, so we need to read a new block and decrypt it
         let pos = {
@@ -134,11 +136,10 @@ impl<R: Read> Read for RingCryptoReader<R> {
                 return Ok(0);
             }
             let mut data = &mut buffer[..len];
-            let res = self.opening_key.as_mut().unwrap().open_within(Aad::empty(), &mut data, 0..);
-            if res.is_err() {
-                error!("error opening in place: {:?}", res);
-            }
-            let plaintext = res.unwrap();
+            let plaintext = self.opening_key.open_within(Aad::empty(), &mut data, 0..).map_err(|err| {
+                error!("error opening within: {}", err);
+                io::Error::new(io::ErrorKind::Other, "error opening within")
+            })?;
             plaintext.len()
         };
         self.buf.seek(SeekFrom::Start(pos as u64)).unwrap();
@@ -148,7 +149,7 @@ impl<R: Read> Read for RingCryptoReader<R> {
     }
 }
 
-impl<R: Read + Send + Sync> Seek for RingCryptoReader<R> {
+impl<R: Read + Seek + Send + Sync> Seek for RingCryptoReader<R> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         match pos {
             SeekFrom::Start(pos) => self.seek_from_start(pos),
@@ -164,7 +165,7 @@ impl<R: Read + Send + Sync> Seek for RingCryptoReader<R> {
     }
 }
 
-impl<R: Read + Send + Sync> CryptoReader<R> for RingCryptoReader<R> {
+impl<R: Read + Seek + Send + Sync> CryptoReader<R> for RingCryptoReader<R> {
     fn finish(&mut self) -> Option<R> {
         Some(self.input.take().unwrap())
     }

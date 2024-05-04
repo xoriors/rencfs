@@ -1,12 +1,11 @@
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::io;
 use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::sync::Arc;
-
 use argon2::Argon2;
-use argon2::password_hash::rand_core::RngCore;
+
 use base64::DecodeError;
 use hex::FromHexError;
 use num_format::{Locale, ToFormattedString};
@@ -34,7 +33,7 @@ pub enum Cipher {
     Aes256Gcm,
 }
 
-pub const ENCRYPT_FILENAME_OVERHEAD_CHARS: usize = 8;
+pub const ENCRYPT_FILENAME_OVERHEAD_CHARS: usize = 22;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -88,7 +87,7 @@ fn create_ring_writer<W: Write + Send + Sync>(writer: W, cipher: &Cipher, key: A
     RingCryptoWriter::new(writer, algorithm, key, nonce_seed)
 }
 
-fn create_ring_reader<R: Read + Send + Sync>(reader: R, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> RingCryptoReader<R> {
+fn create_ring_reader<R: Read + Seek + Send + Sync>(reader: R, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> RingCryptoReader<R> {
     let algorithm = match cipher {
         Cipher::ChaCha20 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
@@ -114,7 +113,7 @@ fn create_ring_reader<R: Read + Send + Sync>(reader: R, cipher: &Cipher, key: Ar
 // }
 
 #[instrument(skip(reader, key))]
-pub fn create_reader<R: Read + Send + Sync>(reader: R, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> impl CryptoReader<R> {
+pub fn create_reader<R: Read + Seek + Send + Sync>(reader: R, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> impl CryptoReader<R> {
     create_ring_reader(reader, cipher, key, nonce_seed)
 }
 
@@ -221,7 +220,7 @@ pub fn copy_from_file_exact(w: &mut impl Write, pos: u64, len: u64, cipher: &Cip
     // create a new reader by reading from the beginning of the file
     let mut reader = create_reader(OpenOptions::new().read(true).open(file)?, cipher, key, nonce_seed);
     // move read position to the write position
-    stream_util::read_seek_forward_exact(&mut reader, pos)?;
+    stream_util::seek_forward(&mut reader, pos)?;
 
     // copy the rest of the file
     stream_util::copy_exact(&mut reader, w, len)?;

@@ -2,7 +2,7 @@ use std::cmp::min;
 use std::io;
 use std::io::{Read, Write};
 use num_format::{Locale, ToFormattedString};
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, info, instrument, warn};
 use crate::encryptedfs::EncryptedFs;
 
 #[cfg(test)]
@@ -12,7 +12,7 @@ const BUF_SIZE: usize = 256 * 1024;
 const BUF_SIZE: usize = 1024 * 1024; // 1 MB buffer
 
 #[instrument(skip(r, len), fields(len = len.to_formatted_string( & Locale::en)))]
-pub fn read_seek_forward_exact(r: &mut impl Read, len: u64) -> io::Result<()> {
+pub fn seek_forward(r: &mut impl Read, len: u64) -> io::Result<()> {
     debug!("");
     if len == 0 {
         return Ok(());
@@ -26,15 +26,17 @@ pub fn read_seek_forward_exact(r: &mut impl Read, len: u64) -> io::Result<()> {
         } else {
             buffer.len()
         };
-        debug!(pos, read_len = read_len.to_formatted_string(&Locale::en), "reading");
+        // debug!(pos = pos.to_formatted_string(&Locale::en), read_len = read_len.to_formatted_string(&Locale::en), "reading");
         if read_len > 0 {
-            r.read_exact(&mut buffer[..read_len]).map_err(|err| {
+            let read = r.read(&mut buffer[..read_len]).map_err(|err| {
                 error!("error reading from file pos {} len {}", pos.to_formatted_string(&Locale::en), read_len.to_formatted_string(&Locale::en));
                 err
             })?;
-            pos += read_len as u64;
+            pos += read as u64;
             if pos == len {
                 break;
+            } else if read == 0 {
+                Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected eof"))?;
             }
         } else {
             break;
