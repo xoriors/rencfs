@@ -14,10 +14,18 @@ You can also store it in any cloud storage like Google Drive, Dropbox, etc. and 
 
 # Functionality
 
-I keeps all encrypted data and encryption key in a dedicated directory with files structured on inodes (with meta info), files for binary content and directories with files/directories entries. All data, metadata and also filenames are encrypted. For new files it generates inode number randomly in `u64` space so it reduces the chance of conflicts when used offline and synced later.
+I keeps all encrypted data and master encryption key in a dedicated directory with files structured on inodes (with meta info), files for binary content and directories with files/directories entries. All data, metadata and also filenames are encrypted. For new files it generates inode number randomly in `u64` space so it reduces the chance of conflicts when used offline and synced later.
 
 Password is collected from CLI and can be saved in OS keyring.
 Encryption key is also encrypted with another key derived from the password. This gives the ability to change the password without re-encrypting all data, we just re-encrypt the key.
+
+# Implementation
+
+- Safety on process kill (or crash): all writes to encrypted content is done in a tmp file and them using `mv` to move to destination. the `mv` operation is atomic as it's using `rename()` which is atomic as per specs, see [here](https://pubs.opengroup.org/onlinepubs/009695399/functions/rename.html) `That specification requires that the action of the function be atomic.`.
+- Phantom reads: reading older content from a file, this is not possible. While writing, data is kept in a buffer and tmp file and on flushing that buffer we write the new content to the file (as per above the tmp file is moved into place with `mv`). After that we reset all opened readers so any reads after that will pickup the new content.
+- What kind of metadata does it leak: close to none. The filename, actual file size and other file attrs (times, permissions, other flags) are kept encrypted. What it could possible leak is the following
+  - If a directory has children we keep those children in a directory with name as inode numiber with encrypted names as file entries in it. So we could see how many children a directory has, but we can't identify that actual directory name, we can just see it's inode number (internal representation like an id for each file) and we cannot see the actual filenames or directory or children.
+  - Each file content is saved in a separate file so we could see the size of the encrypted content, but not the actual filesize.
 
 # Stack
 
@@ -26,6 +34,11 @@ Encryption key is also encrypted with another key derived from the password. Thi
 - [secrecy](https://crates.io/crates/secrecy) for keeping pass and encryption keys safe in memory and zeroing them when not used. It keeps encryption keys in memory only while being used and when not active it will release and zeroing them from memory
 - password can be saved in OS keyring using [keyring](https://crates.io/crates/keyring)
 - [tracing](https://crates.io/crates/tracing) for logs
+
+# Considerations
+
+It doesn't have any independent review from experts, but if the project gains any traction would think about doing that.
+Please note, this project doesn't try to reinvent the wheel or be better than already proven implementations. It started as a learning project of Rust programming language and I feel like keep building more on it. It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight" other well known implementations but it can be a project from which others can learn or build upon or why not for some to actually use it keeping in mind all the above.
 
 # Usage
 
@@ -195,10 +208,10 @@ cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
 # Future
 
 - Plan is to implement it also on macOS and Windows
-- A systemd service is being worked on [rencfs-daemon](https://github.com/radumarias/rencfs-daemon
+- A systemd service is being worked on [rencfs-daemon](https://github.com/radumarias/rencfs-daemon)
 - A GUI is on the way [rencfs_desktop](https://github.com/radumarias/rencfs_desktop)
 - Mobile apps for Android and iOS are on the way
 
 # Contribution
 
-Feel free to fork it and change it the way you want. If you build something interesting and feel to share pull requests are always apporeciated
+Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing pull requests are always apporeciated.
