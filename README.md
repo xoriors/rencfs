@@ -5,7 +5,6 @@ An encrypted file system that mounts with FUSE on Linux. It can be used to creat
 You can then safely backup the encrypted folder on an untrusted server without worrying about the data being exposed.\
 You can also store it in any cloud storage like Google Drive, Dropbox, etc. and have it synced across multiple devices.
 
-\
 [![rencfs-bin](https://img.shields.io/aur/version/rencfs-bin?color=1793d1&label=rencfs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/rencfs-bin/)
 [![crates.io](https://img.shields.io/crates/v/rencfs.svg)](https://crates.io/crates/rencfs)
 [![docs.rs](https://img.shields.io/docsrs/rencfs?label=docs.rs)](https://docs.rs/rencfs/)
@@ -18,14 +17,6 @@ I keeps all encrypted data and master encryption key in a dedicated directory wi
 
 Password is collected from CLI and can be saved in OS keyring.
 Encryption key is also encrypted with another key derived from the password. This gives the ability to change the password without re-encrypting all data, we just re-encrypt the key.
-
-# Implementation
-
-- Safety on process kill (or crash): all writes to encrypted content is done in a tmp file and them using `mv` to move to destination. the `mv` operation is atomic as it's using `rename()` which is atomic as per specs, see [here](https://pubs.opengroup.org/onlinepubs/009695399/functions/rename.html) `That specification requires that the action of the function be atomic.`
-- Phantom reads: reading older content from a file, this is not possible. While writing, data is kept in a buffer and tmp file and on flushing that buffer we write the new content to the file (as per above the tmp file is moved into place with `mv`). After that we reset all opened readers so any reads after that will pickup the new content.
-- What kind of metadata does it leak: close to none. The filename, actual file size and other file attrs (times, permissions, other flags) are kept encrypted. What it could possible leak is the following
-  - If a directory has children we keep those children in a directory with name as inode numiber with encrypted names of children as files in it. So we could see how many children a directory has, but we can't identify that actual directory name, we can just see it's inode number (internal representation like an id for each file) and we cannot see the actual filenames or directory or children.
-  - Each file content is saved in a separate file so we could see the size of the encrypted content, but not the actual filesize.
 
 # Stack
 
@@ -219,13 +210,22 @@ Feel free to fork it, change and use it in any way that you want. If you build s
 
 # Security
 
+- Safety on process kill (or crash): all writes to encrypted content is done in a tmp file and then using `mv` to move to destination. the `mv` operation is atomic as it's using `rename()` which is atomic as per specs, see [here](https://pubs.opengroup.org/onlinepubs/009695399/functions/rename.html) `That specification requires that the action of the function be atomic.`
+- Phantom reads: reading older content from a file, this is not possible. While writing, data is kept in a buffer and tmp file and on flushing that buffer we write the new content to the file (as per above the tmp file is moved into place with `mv`). After that we reset all opened readers so any reads after that will pickup the new content\
+  One problem that may occur is if we do a truncate we change the content of the file but the process is killed before we write the metadata with the new filesize. In this case next time we mount the system we are still using the old filesize but the content of the file could be bigger and we read until the old size offset. If content is smaller the read would stop and end-of-file of the actual content so this would not be such a big issue
+- What kind of metadata does it leak: close to none. The filename, actual file size and other file attrs (times, permissions, other flags) are kept encrypted. What it could possible leak is the following
+  - If a directory has children we keep those children in a directory with name as inode numiber with encrypted names of children as files in it. So we could see how many children a directory has, but we can't identify that actual directory name, we can just see it's inode number (internal representation like an id for each file) and we cannot see the actual filenames of directory or children. Also we cannot identify which file content correspond to a directory child
+  - Each file content is saved in a separate file so we could see the size of the encrypted content, but not the actual filesize
+  - We can also see the last time the file was accessed
 - It's always recommended to use encrypted disks for at least your sensitive data, this project is not a replacement for that
-- In order to reduce the risk of encryption key to be exposed from memory it's recommended to disable mem dumps on the OS level. Pleas see [here](https://www.cyberciti.biz/faq/disable-core-dumps-in-linux-with-systemd-sysctl/) how to do it on Linux
-- Please note that this project is not audited by any security expert. It's built with security in mind and tries to follow all the best practices, but it's not guaranteed to be secure. If you plan to use it for sensitive data, please consider auditing it or using a well-known solution
+- In order to reduce the risk of encryption key to be exposed from memory it's recommended to disable mem dumps on the OS level. Please see [here](https://www.cyberciti.biz/faq/disable-core-dumps-in-linux-with-systemd-sysctl/) how to do it on Linux
+- Cold boot attacks: in order to reduce the risk of this we keep the encryption key in memory just as long as we really need it to encrypt/decrypt data and we are zeroing it after that. We also remove it from memory after a period of inactivity
+- Please note that this project is not audited by any security expert. It's built with security in mind and tries to follow all the best practices, but it's not guaranteed to be secure
 - **Also please backup your data, the project is still in development and there might be bugs that can lead to data loss**
 
 # Considerations
 
-- Please note, this project doesn't try to reinvent the wheel or be better than already proven implementations.\
-- It started as a learning project of Rust programming language and I feel like keep building more on it.\
-- It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight" other well known implementations but it can be a project from which others can learn or build upon or why not for some to actually use it keeping in mind all the above.
+- Please note, this project doesn't try to reinvent the wheel or be better than already proven implementations
+- This project doesn't want to be a replacement in any way of already proven file encryption solutions. If you really want close to bullet proof solutions than maybe this is not the ideal one for you. But is trying to offer a simple use of an ecryption solution that should be used taking into consideration all the security concerns from above
+- It started as a learning project of Rust programming language and I feel like keep building more on it
+- It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight" other well known implementations but it can be a project from which others can learn or build upon or why not for some to actually use it keeping in mind all the above
