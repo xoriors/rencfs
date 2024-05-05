@@ -225,6 +225,6 @@ Feel free to fork it, change and use it in any way that you want. If you build s
 
 # Considerations
 
-- Please note, this project doesn't try to reinvent the wheel or be better than already proven implementations.\
-- It started as a learning project of Rust programming language and I feel like keep building more on it.\
-- It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight" other well known implementations but it can be a project from which others can learn or build upon or why not for some to actually use it keeping in mind all the above.
+- Please note, this project doesn't try to reinvent the wheel or be better than already proven implementations
+- It started as a learning project of Rust programming language and I feel like keep building more on it
+- It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight" other well known implementations but it can be a project from which others can learn or build upon or why not for some to actually use it keeping in mind all the above
