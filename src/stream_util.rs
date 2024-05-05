@@ -2,7 +2,7 @@ use std::cmp::min;
 use std::io;
 use std::io::{Read, Write};
 use num_format::{Locale, ToFormattedString};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 use crate::encryptedfs::EncryptedFs;
 
 #[cfg(test)]

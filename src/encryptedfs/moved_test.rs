@@ -119,8 +119,8 @@ async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8], han
 }
 
 #[tokio::test]
-async fn test_write_all() {
-    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_write_all") }, async {
+async fn test_write() {
+    run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_write") }, async {
         let fs = SETUP_RESULT.with(|s| Arc::clone(s));
         let mut fs = fs.lock().await;
         let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();

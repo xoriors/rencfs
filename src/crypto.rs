@@ -4,12 +4,13 @@ use std::io;
 use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::sync::Arc;
-use argon2::Argon2;
 
+use argon2::Argon2;
 use base64::DecodeError;
 use hex::FromHexError;
 use num_format::{Locale, ToFormattedString};
-use rand::thread_rng;
+use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Serialize};
@@ -18,10 +19,10 @@ use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tracing::{debug, error, instrument};
 
+use crate::{crypto, stream_util};
 use crate::crypto::reader::{CryptoReader, RingCryptoReader};
 use crate::crypto::writer::{CryptoWriter, RingCryptoWriter};
 use crate::encryptedfs::FsResult;
-use crate::stream_util;
 
 pub mod reader;
 pub mod writer;
@@ -33,7 +34,7 @@ pub enum Cipher {
     Aes256Gcm,
 }
 
-pub const ENCRYPT_FILENAME_OVERHEAD_CHARS: usize = 22;
+pub const ENCRYPT_FILENAME_OVERHEAD_CHARS: usize = 4;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -140,8 +141,25 @@ pub fn create_reader<R: Read + Seek + Send + Sync>(reader: R, cipher: &Cipher, k
 //     CryptostreamCryptoReader::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 // }
 
-pub fn encrypt_string_with_nonce_seed(s: &SecretString, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> Result<String> {
+/// `nonce_seed`: If we should include the nonce seed in the result so that it can be used when decrypting.
+pub fn encrypt_string_with_nonce_seed(s: &SecretString, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64, include_nonce_seed: bool) -> Result<String> {
     let mut cursor = io::Cursor::new(vec![]);
+    let mut writer = create_writer(cursor, cipher, key, nonce_seed);
+    writer.write_all(s.expose_secret().as_bytes())?;
+    writer.flush()?;
+    cursor = writer.finish()?.unwrap();
+    let v = cursor.into_inner();
+    if include_nonce_seed {
+        Ok(format!("{}.{}", base64::encode(v), nonce_seed))
+    } else {
+        Ok(base64::encode(v))
+    }
+}
+
+/// Encrypt a string with a random nonce seed. It will include the nonce seed in the result so that it can be used when decrypting.
+pub fn encrypt_string(s: &SecretString, cipher: &Cipher, key: Arc<SecretVec<u8>>) -> Result<String> {
+    let mut cursor = io::Cursor::new(vec![]);
+    let nonce_seed = create_rng().next_u64();
     let mut writer = create_writer(cursor, cipher, key, nonce_seed);
     writer.write_all(s.expose_secret().as_bytes())?;
     writer.flush()?;
@@ -150,6 +168,7 @@ pub fn encrypt_string_with_nonce_seed(s: &SecretString, cipher: &Cipher, key: Ar
     Ok(format!("{}.{}", base64::encode(v), nonce_seed))
 }
 
+/// Decrypt a string that was encrypted with including the nonce seed.
 pub fn decrypt_string(s: &str, cipher: &Cipher, key: Arc<SecretVec<u8>>) -> Result<SecretString> {
     // extract nonce seed
     if !s.contains(".") {
@@ -167,28 +186,40 @@ pub fn decrypt_string(s: &str, cipher: &Cipher, key: Arc<SecretVec<u8>>) -> Resu
     Ok(SecretString::new(decrypted))
 }
 
+/// Decrypt a string that was encrypted with a specific nonce seed.
+pub fn decrypt_string_with_nonce_seed(s: &str, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> Result<SecretString> {
+    let vec = base64::decode(s)?;
+    let cursor = io::Cursor::new(vec);
+
+    let mut reader = create_reader(cursor, cipher, key, nonce_seed);
+    let mut decrypted = String::new();
+    reader.read_to_string(&mut decrypted)?;
+    Ok(SecretString::new(decrypted))
+}
+
 pub fn decrypt_file_name(name: &str, cipher: &Cipher, key: Arc<SecretVec<u8>>) -> Result<SecretString> {
     let name = String::from(name).replace("|", "/");
     decrypt_string(&name, cipher, key)
 }
 
 #[instrument(skip(password, salt))]
-pub fn derive_key(password: &SecretString, cipher: &Cipher, salt: SecretVec<u8>) -> Result<SecretVec<u8>> {
+pub fn derive_key(password: &SecretString, cipher: &Cipher, salt: [u8; 32]) -> Result<SecretVec<u8>> {
     let mut dk = vec![];
     let key_len = match cipher {
         Cipher::ChaCha20 => 32,
         Cipher::Aes256Gcm => 32,
     };
     dk.resize(key_len, 0);
-    Argon2::default().hash_password_into(password.expose_secret().as_bytes(), salt.expose_secret(), &mut dk)
+    Argon2::default().hash_password_into(password.expose_secret().as_bytes(), &salt, &mut dk)
         .map_err(|err| Error::GenericString(err.to_string()))?;
     Ok(SecretVec::new(dk))
 }
 
-pub fn encrypt_file_name_with_nonce_seed(name: &SecretString, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> FsResult<String> {
+/// Encrypt a file name with provided nonce seed. It will **INCLUDE** the nonce seed in the result so that it can be used when decrypting.
+pub fn encrypt_file_name(name: &SecretString, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> FsResult<String> {
     if name.expose_secret() != "$." && name.expose_secret() != "$.." {
         let normalized_name = SecretString::new(name.expose_secret().replace("/", " ").replace("\\", " "));
-        let mut encrypted = encrypt_string_with_nonce_seed(&normalized_name, cipher, key, nonce_seed)?;
+        let mut encrypted = encrypt_string_with_nonce_seed(&normalized_name, cipher, key, nonce_seed, true)?;
         encrypted = encrypted.replace("/", "|");
         Ok(encrypted)
     } else {
@@ -205,8 +236,12 @@ pub fn hash(data: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-pub fn hash_secret(data: &SecretString) -> SecretVec<u8> {
-    SecretVec::new(hash(data.expose_secret().as_bytes()).to_vec())
+pub fn hash_secret_string(data: &SecretString) -> [u8; 32] {
+    hash(data.expose_secret().as_bytes())
+}
+
+pub fn hash_secret_vec(data: &SecretVec<u8>) -> [u8; 32] {
+    hash(data.expose_secret())
 }
 
 /// Copy from `pos` position in file `len` bytes
@@ -235,4 +270,8 @@ pub fn extract_nonce_from_encrypted_string(name: &str) -> Result<u64> {
     }
     let nonce_seed = name.split('.').last().unwrap().parse::<u64>()?;
     Ok(nonce_seed)
+}
+
+pub fn create_rng() -> impl RngCore + CryptoRng {
+    ChaCha20Rng::from_entropy()
 }

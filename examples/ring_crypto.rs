@@ -41,7 +41,7 @@ fn main() {
 
     // derive key from password
     let password = SecretString::new("password".to_string());
-    let salt = crypto::hash_secret(&password);
+    let salt = crypto::hash_secret_string(&password);
     let cipher = Cipher::ChaCha20;
     let derived_key = crypto::derive_key(&password, &cipher, salt).unwrap();
     let path = PathBuf::from("/tmp/key.enc");

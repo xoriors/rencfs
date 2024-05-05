@@ -5,7 +5,7 @@ use std::sync::Arc;
 use num_format::{Locale, ToFormattedString};
 use ring::aead::{Aad, Algorithm, BoundKey, OpeningKey, UnboundKey};
 use secrecy::{ExposeSecret, SecretVec};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
 use crate::crypto::buf_mut::BufMut;
 use crate::crypto::writer::{BUF_SIZE, RandomNonceSequence};

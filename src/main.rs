@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     let matches = get_cli_args();
 
     let log_level = if is_debug() {
-        Level::INFO
+        Level::DEBUG
     } else {
         let log_level_str = matches.get_one::<String>("log-level").unwrap().as_str();
         let log_level = Level::from_str(log_level_str);

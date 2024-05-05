@@ -113,7 +113,6 @@ impl<W: Write> RingCryptoWriter<W> {
 
 impl<W: Write + Send + Sync> CryptoWriter<W> for RingCryptoWriter<W> {
     fn finish(&mut self) -> io::Result<Option<W>> {
-        self.flush()?;
         if self.buf.available() > 0 {
             // encrypt and write last block, use as many bytes we have
             self.encrypt_and_write()?;
