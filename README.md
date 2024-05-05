@@ -217,7 +217,15 @@ cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
 
 Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing pull requests are always apporeciated.
 
+# Security
+
+- It's always recommended to use encrypted disks for at least your sensitive data, this project is not a replacement for that
+- In order to reduce the risk of encryption key to be exposed from memory it's recommended to disable mem dumps on the OS level. Pleas see [here](https://www.cyberciti.biz/faq/disable-core-dumps-in-linux-with-systemd-sysctl/) how to do it on Linux
+- Please note that this project is not audited by any security expert. It's built with security in mind and tries to follow all the best practices, but it's not guaranteed to be secure. If you plan to use it for sensitive data, please consider auditing it or using a well-known solution
+- **Also please backup your data, the project is still in development and there might be bugs that can lead to data loss**
+
 # Considerations
 
-It doesn't have any independent review from experts, but if the project gains any traction would think about doing that.
-Please note, this project doesn't try to reinvent the wheel or be better than already proven implementations. It started as a learning project of Rust programming language and I feel like keep building more on it. It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight" other well known implementations but it can be a project from which others can learn or build upon or why not for some to actually use it keeping in mind all the above.
+- Please note, this project doesn't try to reinvent the wheel or be better than already proven implementations.\
+- It started as a learning project of Rust programming language and I feel like keep building more on it.\
+- It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight" other well known implementations but it can be a project from which others can learn or build upon or why not for some to actually use it keeping in mind all the above.
