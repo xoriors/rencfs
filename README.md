@@ -216,7 +216,7 @@ Feel free to fork it, change and use it in any way that you want. If you build s
 - What kind of metadata does it leak: close to none. The filename, actual file size and other file attrs (times, permissions, other flags) are kept encrypted. What it could possible leak is the following
   - If a directory has children we keep those children in a directory with name as inode numiber with encrypted names of children as files in it. So we could see how many children a directory has, but we can't identify that actual directory name, we can just see it's inode number (internal representation like an id for each file) and we cannot see the actual filenames or directory or children
   - Each file content is saved in a separate file so we could see the size of the encrypted content, but not the actual filesize
-  - We can also see the last time the file was accessed, as when we last time wrote some encrypted content
+  - We can also see the last time the file was accessed
 - It's always recommended to use encrypted disks for at least your sensitive data, this project is not a replacement for that
 - In order to reduce the risk of encryption key to be exposed from memory it's recommended to disable mem dumps on the OS level. Pleas see [here](https://www.cyberciti.biz/faq/disable-core-dumps-in-linux-with-systemd-sysctl/) how to do it on Linux
 - Cold boot attacks: in order to reduce the risk of this we keep the encryption key in memory just as long as we really need it to encrypt/decrypt data and we are zeroing it after that. We also remove it from memory after a period of inactivity
