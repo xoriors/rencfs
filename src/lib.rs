@@ -22,17 +22,19 @@
 //! use secrecy::SecretString;
 //! use rencfs::encryptedfs::PasswordProvider;
 //! use std::str::FromStr;
+//! use std::path::Path;
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     struct PasswordProviderImpl {}
+//! struct PasswordProviderImpl {}
 //!     impl PasswordProvider for PasswordProviderImpl {
 //!         fn get_password(&self) -> Option<SecretString> {
 //!             /// dummy password, better use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
 //!             Some(SecretString::from_str("password").unwrap())
 //!         }
 //!     }
-//!     run_fuse("/tmp/rencfs", "/tmp/rencfs_data", Box::new(PasswordProviderImpl{}), Cipher::ChaCha20, false, false, false, false).await.unwrap();
+//!     run_fuse(Path::new(&"/tmp/rencfs").to_path_buf(), Path::new(&"/tmp/rencfs_data").to_path_buf(), Path::new(&"/tmp/rencfs_tmp").to_path_buf(),
+//!         Box::new(PasswordProviderImpl{}), Cipher::ChaCha20, false, false, false, false).await.unwrap();
 //! }
 //! ```
 //!
@@ -42,6 +44,7 @@
 //!
 //! ```no_run
 //! use std::ffi::OsStr;
+//! use std::path::{Path, PathBuf};
 //! use fuse3::MountOptions;
 //! use fuse3::raw::Session;
 //! use secrecy::SecretString;
@@ -49,7 +52,7 @@
 //! use rencfs::encryptedfs::{ PasswordProvider};
 //! use rencfs::encryptedfs_fuse3::EncryptedFsFuse3;
 //!
-//! async fn run_fuse(mountpoint: &str, data_dir: &str, password_provider: Box<dyn PasswordProvider>, cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
+//! async fn run_fuse(mountpoint: PathBuf, data_dir: PathBuf, tmp_dir: PathBuf, password_provider: Box<dyn PasswordProvider>, cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
 //!     let uid = unsafe { libc::getuid() };
 //!     let gid = unsafe { libc::getgid() };
 //!
@@ -59,10 +62,10 @@
 //!         .allow_root(allow_root)
 //!         .allow_other(allow_other)
 //!         .clone();
-//!     let mount_path = OsStr::new(mountpoint);
+//!     let mount_path = OsStr::new(mountpoint.to_str().unwrap());
 //!
 //!     Session::new(mount_options)
-//!         .mount_with_unprivileged(EncryptedFsFuse3::new(&data_dir, password_provider, cipher, direct_io, suid_support).await.unwrap(), mount_path)
+//!         .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, tmp_dir, password_provider, cipher, direct_io, suid_support).await.unwrap(), mount_path)
 //!         .await?
 //!         .await?;
 //!    Ok(())
@@ -93,6 +96,8 @@
 //! use rencfs::encryptedfs::{EncryptedFs, FileAttr, FileType, PasswordProvider, CreateFileAttr};
 //! use rencfs::crypto::Cipher;
 //! use anyhow::Result;
+//! use std::path::Path;
+//! use rencfs::stream_util::write_all_string_to_fs;
 //!
 //! const ROOT_INODE: u64 = 1;
 //!
@@ -106,12 +111,13 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
-//!     use rencfs::stream_util::write_all_string_to_fs;
-//! let data_dir = "/tmp/rencfs_data_test";
-//!     let  _ = fs::remove_dir_all(data_dir);
+//!     let data_dir = Path::new("/tmp/rencfs_data_test").to_path_buf();
+//!     let tmp_dir = Path::new("/tmp/rencfs_data_test_tmp").to_path_buf();
+//!     let  _ = fs::remove_dir_all(data_dir.to_str().unwrap());
+//!     let  _ = fs::remove_dir_all(tmp_dir.to_str().unwrap());
 //!     let password = SecretString::from_str("password").unwrap();
 //!     let cipher = Cipher::ChaCha20;
-//!     let mut fs = EncryptedFs::new(data_dir, Box::new(PasswordProviderImpl{}), cipher ).await?;
+//!     let mut fs = EncryptedFs::new(data_dir, tmp_dir, Box::new(PasswordProviderImpl{}), cipher ).await?;
 //!
 //!     let  file1 = SecretString::from_str("file1").unwrap();
 //!     let (fh, attr) = fs.create_nod(ROOT_INODE, &file1, file_attr(), false, true).await?;
@@ -151,7 +157,8 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     match EncryptedFs::change_password("/tmp/rencfs_data", SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20).await {
+//!     use std::path::Path;
+//! match EncryptedFs::change_password(Path::new(&"/tmp/rencfs_data").to_path_buf(), SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20).await {
 //!         Ok(_) => println!("Password changed successfully"),
 //!         Err(FsError::InvalidPassword) => println!("Invalid old password"),
 //!         Err(FsError::InvalidDataDirStructure) => println!("Invalid structure of data directory"),
@@ -173,7 +180,8 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     // read password from stdin
+//!     use std::path::Path;
+//! // read password from stdin
 //!     use rencfs::crypto::Cipher;
 //! print!("Enter old password: ");
 //!     io::stdout().flush().unwrap();
@@ -189,7 +197,7 @@
 //!         return;
 //!     }
 //!     println!("Changing password...");
-//!     match EncryptedFs::change_password("/tmp/rencfs_data", SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20).await {
+//!     match EncryptedFs::change_password(Path::new(&"/tmp/rencfs_data").to_path_buf(), SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20).await {
 //!         Ok(_) => println!("Password changed successfully"),
 //!         Err(FsError::InvalidPassword) => println!("Invalid old password"),
 //!         Err(FsError::InvalidDataDirStructure) => println!("Invalid structure of data directory"),
@@ -201,6 +209,7 @@
 use tracing::{info, instrument};
 use fuse3::MountOptions;
 use std::ffi::OsStr;
+use std::path::PathBuf;
 use fuse3::raw::Session;
 use crate::crypto::Cipher;
 use crate::encryptedfs::PasswordProvider;
@@ -222,7 +231,8 @@ pub fn is_debug() -> bool {
 }
 
 #[instrument(skip(password_provider))]
-pub async fn run_fuse(mountpoint: &str, data_dir: &str, password_provider: Box<dyn PasswordProvider>, cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
+pub async fn run_fuse(mountpoint: PathBuf, data_dir: PathBuf, tmp_dir: PathBuf, password_provider: Box<dyn PasswordProvider>, cipher: Cipher,
+                      allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
     let mut mount_options = &mut MountOptions::default();
     #[cfg(target_os = "linux")] {
         unsafe {
@@ -236,11 +246,11 @@ pub async fn run_fuse(mountpoint: &str, data_dir: &str, password_provider: Box<d
         .allow_root(allow_root)
         .allow_other(allow_other)
         .clone();
-    let mount_path = OsStr::new(mountpoint);
+    let mount_path = OsStr::new(mountpoint.to_str().unwrap());
 
     info!("Checking password and mounting FUSE filesystem");
     Session::new(mount_options)
-        .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, password_provider, cipher, direct_io, suid_support).await?, mount_path)
+        .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, tmp_dir, password_provider, cipher, direct_io, suid_support).await?, mount_path)
         .await?
         .await?;
 

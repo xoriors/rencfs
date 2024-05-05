@@ -70,9 +70,13 @@ cargo install rencfs
 A basic example of how to use the encrypted file system is shown below
 
 ```
-rencfs --mount-point MOUNT_POINT --data-dir DATA_DIR
+rencfs mount --mount-point MOUNT_POINT --data-dir DATA_DIR --tmp-dir TMP_DIR
+
 ```
-Where `MOUNT_POINT` is the directory where the encrypted file system will be mounted and `DATA_DIR` is the directory where the encrypted data will be stored.\
+- `MOUNT_POINT` act as a client, and mount FUSE at given path
+- `DATA_DIR` where to store the encrypted data
+- `TMP_DIR` where keep temp data. This should be in a different directory than `DATA_DIR` as you don't want to sync this with the sync provider. But it needs to be on the same filesystem as the data-dir
+
 It will prompt you to enter a password to encrypt/decrypt the data.
 
 ### Change Password
@@ -83,9 +87,10 @@ This is done by decrypting the key with the old password and re-encrypting it wi
 
 To change the password, you can run the following command
 ```bash
-rencfs --change-password --data-dir DATA_DIR
+rencfs change-password --data-dir DATA_DIR 
 ```
-Where `DATA_DIR` is the directory where the encrypted data is stored.\
+`DATA_DIR` where the encrypted data is stored
+
 It will prompt you to enter the old password and then the new password.
 
 ### Encryption info

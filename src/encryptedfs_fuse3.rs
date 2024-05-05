@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::iter::Skip;
 use std::num::NonZeroU32;
 use std::os::raw::c_int;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -121,18 +122,18 @@ pub struct EncryptedFsFuse3 {
 }
 
 impl EncryptedFsFuse3 {
-    pub async fn new(data_dir: &str, password_provider: Box<dyn PasswordProvider>, cipher: Cipher,
+    pub async fn new(data_dir: PathBuf, tmp_dir: PathBuf, password_provider: Box<dyn PasswordProvider>, cipher: Cipher,
                      direct_io: bool, _suid_support: bool) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")] {
             Ok(Self {
-                fs: Arc::new(EncryptedFs::new(data_dir, password_provider, cipher).await?),
+                fs: Arc::new(EncryptedFs::new(data_dir, tmp_dir, password_provider, cipher).await?),
                 direct_io,
                 suid_support: _suid_support,
             })
         }
         #[cfg(not(feature = "abi-7-26"))] {
             Ok(Self {
-                fs: Arc::new(EncryptedFs::new(data_dir, password_provider, cipher).await?),
+                fs: Arc::new(EncryptedFs::new(data_dir, tmp_dir, password_provider, cipher).await?),
                 direct_io,
                 suid_support: false,
             })

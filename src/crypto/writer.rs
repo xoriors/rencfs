@@ -12,7 +12,7 @@ use tracing::{error, instrument};
 use crate::crypto::buf_mut::BufMut;
 
 pub trait CryptoWriter<W: Write>: Write + Sync + Send {
-    fn finish(&mut self) -> io::Result<Option<W>>;
+    fn finish(&mut self) -> io::Result<W>;
 }
 
 /// cryptostream
@@ -112,12 +112,12 @@ impl<W: Write> RingCryptoWriter<W> {
 }
 
 impl<W: Write + Send + Sync> CryptoWriter<W> for RingCryptoWriter<W> {
-    fn finish(&mut self) -> io::Result<Option<W>> {
+    fn finish(&mut self) -> io::Result<W> {
         if self.buf.available() > 0 {
             // encrypt and write last block, use as many bytes we have
             self.encrypt_and_write()?;
         }
-        Ok(Some(self.out.take().unwrap().into_inner()?))
+        Ok(self.out.take().unwrap().into_inner()?)
     }
 }
 

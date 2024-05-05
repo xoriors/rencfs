@@ -3,7 +3,7 @@ use std::{fs, io};
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::ops::DerefMut;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -26,11 +26,11 @@ struct SetupResult {
 }
 
 async fn setup(setup: TestSetup) -> SetupResult {
-    let path = setup.data_path.as_str();
-    if fs::metadata(path).is_ok() {
-        fs::remove_dir_all(path).unwrap();
+    let data_dir_str = setup.data_path.as_str();
+    if fs::metadata(data_dir_str).is_ok() {
+        fs::remove_dir_all(data_dir_str).unwrap();
     }
-    fs::create_dir_all(path).unwrap();
+    let tmp = Path::new(data_dir_str).join("tmp");
 
     struct PasswordProviderImpl {}
     impl PasswordProvider for PasswordProviderImpl {
@@ -39,7 +39,7 @@ async fn setup(setup: TestSetup) -> SetupResult {
         }
     }
 
-    let fs = EncryptedFs::new(path, Box::new(PasswordProviderImpl {}), Cipher::ChaCha20).await.unwrap();
+    let fs = EncryptedFs::new(Path::new(data_dir_str).to_path_buf(), tmp, Box::new(PasswordProviderImpl {}), Cipher::ChaCha20).await.unwrap();
 
     SetupResult {
         fs: Some(fs),

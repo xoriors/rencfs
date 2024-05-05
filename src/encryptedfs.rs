@@ -19,6 +19,7 @@ use rand::thread_rng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use tempfile::NamedTempFile;
 use thiserror::Error;
 use tokio::sync::{Mutex, MutexGuard, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
@@ -630,6 +631,7 @@ pub trait PasswordProvider: Send + Sync + 'static {
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
 pub struct EncryptedFs {
     pub(crate) data_dir: PathBuf,
+    tmp_dir: PathBuf,
     write_handles: RwLock<HashMap<u64, Mutex<WriteHandleContext>>>,
     read_handles: RwLock<HashMap<u64, Mutex<ReadHandleContext>>>,
     current_handle: AtomicU64,
@@ -649,19 +651,18 @@ pub struct EncryptedFs {
 }
 
 impl EncryptedFs {
-    pub async fn new(data_dir: &str, password_provider: Box<dyn PasswordProvider>, cipher: Cipher) -> FsResult<Self> {
-        let path = PathBuf::from(&data_dir);
-
+    pub async fn new(data_dir: PathBuf, tmp_dir: PathBuf, password_provider: Box<dyn PasswordProvider>, cipher: Cipher) -> FsResult<Self> {
         let key_provider = KeyProvider {
-            path: path.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
+            path: data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
             password_provider,
             cipher: cipher.clone(),
         };
 
-        ensure_structure_created(&path.clone(), &key_provider).await?;
+        ensure_structure_created(&data_dir.clone(), &tmp_dir.clone(), &key_provider).await?;
 
         let fs = EncryptedFs {
-            data_dir: path.clone(),
+            data_dir,
+            tmp_dir,
             write_handles: RwLock::new(HashMap::new()),
             read_handles: RwLock::new(HashMap::new()),
             current_handle: AtomicU64::new(1),
@@ -787,9 +788,12 @@ impl EncryptedFs {
                 SecretString::new(name.expose_secret().to_owned())
             }
         };
-        let name = crypto::encrypt_file_name(&name, &self.cipher, self.key.get().await?, parent)?;
+        // in order not to add too much to filename length we keep just 3 digits from nonce seed
+        let nonce_seed = parent % 1000;
+        let name = crypto::encrypt_file_name(&name, &self.cipher, self.key.get().await?, nonce_seed)?;
         let file = File::open(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name))?;
-        let (inode, _): (u64, FileType) = bincode::deserialize_from(self.create_crypto_reader(file, parent).await?)?;
+        // attr are encrypted with same nonce seed as filename
+        let (inode, _): (u64, FileType) = bincode::deserialize_from(self.create_crypto_reader(file, nonce_seed).await?)?;
         Ok(Some(self.get_inode(inode).await?))
     }
 
@@ -887,6 +891,7 @@ impl EncryptedFs {
             }
         };
         let name = crypto::encrypt_file_name(&name, &self.cipher, self.key.get().await?, parent)?;
+        info!(parent = parent, name = name);
         Ok(self.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(name).exists())
     }
 
@@ -976,16 +981,12 @@ impl EncryptedFs {
         let _guard = lock.write().unwrap();
 
         let path = self.data_dir.join(INODES_DIR).join(attr.ino.to_string());
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&path)?;
-        let mut writer = crypto::create_writer(file, &self.cipher, key, attr.ino);
+        let tmp = NamedTempFile::new_in(self.tmp_dir.clone())?;
+        let mut writer = crypto::create_writer(tmp, &self.cipher, key, attr.ino);
         bincode::serialize_into(&mut writer, &attr)?;
         writer.flush()?;
-        writer.finish()?;
+        let tmp = writer.finish()?;
+        fs::rename(tmp.into_temp_path(), path)?;
         Ok(())
     }
 
@@ -1604,9 +1605,7 @@ impl EncryptedFs {
     }
 
     /// Change the password of the filesystem used to access the encryption key.
-    pub async fn change_password(data_dir: &str, old_password: SecretString, new_password: SecretString, cipher: Cipher) -> FsResult<()> {
-        let data_dir = PathBuf::from(data_dir);
-
+    pub async fn change_password(data_dir: PathBuf, old_password: SecretString, new_password: SecretString, cipher: Cipher) -> FsResult<()> {
         check_structure(&data_dir, false).await?;
 
         // decrypt key
@@ -1623,13 +1622,12 @@ impl EncryptedFs {
         // encrypt it with new key derived from new password
         let salt = crypto::hash_secret_string(&new_password);
         let new_key = crypto::derive_key(&new_password, &cipher, salt)?;
-        tokio::fs::remove_file(enc_file.clone()).await?;
-        let mut writer = crypto::create_writer(OpenOptions::new().read(true).write(true).create(true).truncate(true).open(enc_file.clone())?,
-                                               &cipher, Arc::new(new_key), 42_u64);
+        let tmp = NamedTempFile::new_in(data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME))?;
+        let mut writer = crypto::create_writer(tmp, &cipher, Arc::new(new_key), 42_u64);
         bincode::serialize_into(&mut writer, &key_store)?;
         writer.flush()?;
-        writer.finish()?;
-
+        let tmp = writer.finish()?;
+        fs::rename(tmp.into_temp_path(), enc_file)?;
         Ok(())
     }
 
@@ -1788,19 +1786,14 @@ impl EncryptedFs {
         let lock = map.get_or_insert_with(file_path.to_str().unwrap().to_string(), || std::sync::RwLock::new(false));
         let _guard = lock.write().unwrap();
 
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&file_path)?;
-
         // write inode and file type
         let entry = (entry.ino, entry.kind);
-        let mut writer = crypto::create_writer(file, &self.cipher, key, nonce_seed);
+        let tmp = NamedTempFile::new_in(self.tmp_dir.clone())?;
+        let mut writer = crypto::create_writer(tmp, &self.cipher, key, nonce_seed);
         bincode::serialize_into(&mut writer, &entry)?;
         writer.flush()?;
-        writer.finish()?;
-
+        let tmp = writer.finish()?;
+        fs::rename(tmp.into_temp_path(), file_path)?;
         Ok(())
     }
 
@@ -1868,7 +1861,7 @@ impl EncryptedFs {
     }
 }
 
-async fn ensure_structure_created(data_dir: &PathBuf, key_provider: &KeyProvider) -> FsResult<()> {
+async fn ensure_structure_created(data_dir: &PathBuf, tmp_dir: &PathBuf, key_provider: &KeyProvider) -> FsResult<()> {
     if data_dir.exists() {
         check_structure(data_dir, true).await?;
     } else {
@@ -1883,6 +1876,7 @@ async fn ensure_structure_created(data_dir: &PathBuf, key_provider: &KeyProvider
             tokio::fs::create_dir_all(path).await?;
         }
     }
+    tokio::fs::create_dir_all(tmp_dir).await?;
 
     // create encryption key
     key_provider.provide()?;

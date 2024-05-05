@@ -19,7 +19,7 @@ use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tracing::{debug, error, instrument};
 
-use crate::{crypto, stream_util};
+use crate::stream_util;
 use crate::crypto::reader::{CryptoReader, RingCryptoReader};
 use crate::crypto::writer::{CryptoWriter, RingCryptoWriter};
 use crate::encryptedfs::FsResult;
@@ -147,7 +147,7 @@ pub fn encrypt_string_with_nonce_seed(s: &SecretString, cipher: &Cipher, key: Ar
     let mut writer = create_writer(cursor, cipher, key, nonce_seed);
     writer.write_all(s.expose_secret().as_bytes())?;
     writer.flush()?;
-    cursor = writer.finish()?.unwrap();
+    cursor = writer.finish()?;
     let v = cursor.into_inner();
     if include_nonce_seed {
         Ok(format!("{}.{}", base64::encode(v), nonce_seed))
@@ -163,7 +163,7 @@ pub fn encrypt_string(s: &SecretString, cipher: &Cipher, key: Arc<SecretVec<u8>>
     let mut writer = create_writer(cursor, cipher, key, nonce_seed);
     writer.write_all(s.expose_secret().as_bytes())?;
     writer.flush()?;
-    cursor = writer.finish()?.unwrap();
+    cursor = writer.finish()?;
     let v = cursor.into_inner();
     Ok(format!("{}.{}", base64::encode(v), nonce_seed))
 }
@@ -217,6 +217,9 @@ pub fn derive_key(password: &SecretString, cipher: &Cipher, salt: [u8; 32]) -> R
 
 /// Encrypt a file name with provided nonce seed. It will **INCLUDE** the nonce seed in the result so that it can be used when decrypting.
 pub fn encrypt_file_name(name: &SecretString, cipher: &Cipher, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> FsResult<String> {
+    // in order not to add too much to filename length we keep just 3 digits from nonce seed
+    let nonce_seed = nonce_seed % 1000;
+
     if name.expose_secret() != "$." && name.expose_secret() != "$.." {
         let normalized_name = SecretString::new(name.expose_secret().replace("/", " ").replace("\\", " "));
         let mut encrypted = encrypt_string_with_nonce_seed(&normalized_name, cipher, key, nonce_seed, true)?;
