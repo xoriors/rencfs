@@ -218,7 +218,7 @@ Feel free to fork it, change and use it in any way that you want. If you build s
   - Each file content is saved in a separate file so we could see the size of the encrypted content, but not the actual filesize
   - We can also see the last time the file was accessed
 - It's always recommended to use encrypted disks for at least your sensitive data, this project is not a replacement for that
-- In order to reduce the risk of encryption key to be exposed from memory it's recommended to disable mem dumps on the OS level. Pleas see [here](https://www.cyberciti.biz/faq/disable-core-dumps-in-linux-with-systemd-sysctl/) how to do it on Linux
+- In order to reduce the risk of encryption key to be exposed from memory it's recommended to disable mem dumps on the OS level. Please see [here](https://www.cyberciti.biz/faq/disable-core-dumps-in-linux-with-systemd-sysctl/) how to do it on Linux
 - Cold boot attacks: in order to reduce the risk of this we keep the encryption key in memory just as long as we really need it to encrypt/decrypt data and we are zeroing it after that. We also remove it from memory after a period of inactivity
 - Please note that this project is not audited by any security expert. It's built with security in mind and tries to follow all the best practices, but it's not guaranteed to be secure. If you plan to use it for sensitive data, please consider auditing it or using a well-known solution
 - **Also please backup your data, the project is still in development and there might be bugs that can lead to data loss**
