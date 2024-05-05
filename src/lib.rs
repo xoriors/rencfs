@@ -117,7 +117,7 @@
 //!     let  _ = fs::remove_dir_all(tmp_dir.to_str().unwrap());
 //!     let password = SecretString::from_str("password").unwrap();
 //!     let cipher = Cipher::ChaCha20;
-//!     let mut fs = EncryptedFs::new(data_dir, tmp_dir, Box::new(PasswordProviderImpl{}), cipher ).await?;
+//!     let mut fs = EncryptedFs::new(data_dir.clone(), tmp_dir.clone(), Box::new(PasswordProviderImpl{}), cipher ).await?;
 //!
 //!     let  file1 = SecretString::from_str("file1").unwrap();
 //!     let (fh, attr) = fs.create_nod(ROOT_INODE, &file1, file_attr(), false, true).await?;
@@ -131,6 +131,7 @@
 //!     fs.release(fh).await?;
 //!     assert_eq!(data, String::from_utf8(buf)?);
 //!     fs::remove_dir_all(data_dir)?;
+//!     fs::remove_dir_all(tmp_dir)?;
 //!
 //!    Ok(())
 //! }
