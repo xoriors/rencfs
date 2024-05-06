@@ -1,10 +1,12 @@
 use std::io;
 use std::io::{BufWriter, Write};
 use std::sync::Arc;
+
 use rand_chacha::ChaCha20Rng;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
-
-use ring::aead::{Aad, Algorithm, BoundKey, Nonce, NONCE_LEN, NonceSequence, SealingKey, UnboundKey};
+use ring::aead::{
+    Aad, Algorithm, BoundKey, Nonce, NONCE_LEN, NonceSequence, SealingKey, UnboundKey,
+};
 use ring::error::Unspecified;
 use secrecy::{ExposeSecret, SecretVec};
 use tracing::{error, instrument};
@@ -59,7 +61,12 @@ pub struct RingCryptoWriter<W: Write> {
 }
 
 impl<W: Write> RingCryptoWriter<W> {
-    pub fn new<'a: 'static>(w: W, algorithm: &'a Algorithm, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> Self {
+    pub fn new<'a: 'static>(
+        w: W,
+        algorithm: &'a Algorithm,
+        key: Arc<SecretVec<u8>>,
+        nonce_seed: u64,
+    ) -> Self {
         // todo: param for start nonce sequence
         let unbound_key = UnboundKey::new(&algorithm, key.expose_secret()).unwrap();
         let nonce_sequence = RandomNonceSequence::new(nonce_seed);
@@ -99,10 +106,13 @@ impl<W: Write> Write for RingCryptoWriter<W> {
 impl<W: Write> RingCryptoWriter<W> {
     fn encrypt_and_write(&mut self) -> io::Result<()> {
         let mut data = self.buf.as_mut();
-        let tag = self.sealing_key.seal_in_place_separate_tag(Aad::empty(), &mut data).map_err(|err| {
-            error!("error sealing in place: {}", err);
-            io::Error::from(io::ErrorKind::Other)
-        })?;
+        let tag = self
+            .sealing_key
+            .seal_in_place_separate_tag(Aad::empty(), &mut data)
+            .map_err(|err| {
+                error!("error sealing in place: {}", err);
+                io::Error::from(io::ErrorKind::Other)
+            })?;
         self.out.as_mut().unwrap().write_all(&data)?;
         self.buf.clear();
         self.out.as_mut().unwrap().write_all(tag.as_ref())?;

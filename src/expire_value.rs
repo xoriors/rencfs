@@ -2,6 +2,7 @@ use std::error::Error;
 use std::string::ToString;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
+
 use retainer::Cache;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -47,7 +48,9 @@ impl<T: Send + Sync + 'static, E: Error + 'static, P: Provider<T, E>> ExpireValu
         let mut weak = self.weak.write().await;
         let value = self.provider.provide()?;
         let v = Arc::new(value);
-        self.cache.insert(KEY.to_string(), v.clone(), self.duration).await;
+        self.cache
+            .insert(KEY.to_string(), v.clone(), self.duration)
+            .await;
         *weak = Some(Arc::downgrade(&v));
 
         Ok(v)

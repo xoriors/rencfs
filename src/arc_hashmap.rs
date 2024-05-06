@@ -5,14 +5,13 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct ArcHashMap<K, V>
-    where
-        K: Eq + Hash,
+where
+    K: Eq + Hash,
 {
     map: Mutex<HashMap<K, (Arc<V>, Arc<AtomicUsize>)>>,
 }
 
-pub struct Guard<V>
-{
+pub struct Guard<V> {
     val: Arc<V>,
     rc: Arc<AtomicUsize>,
 }
@@ -52,20 +51,23 @@ impl<K: Eq + Hash, V> ArcHashMap<K, V> {
     pub fn get_internal<'a>(&self, v: Option<&(Arc<V>, Arc<AtomicUsize>)>) -> Option<Guard<V>> {
         if let Some((v, rc)) = v {
             rc.fetch_add(1, Ordering::SeqCst);
-            return Some(Guard { val: v.clone(), rc: rc.clone() });
+            return Some(Guard {
+                val: v.clone(),
+                rc: rc.clone(),
+            });
         }
         None
     }
 
     pub fn get_or_insert_with<F>(&self, key: K, f: F) -> Guard<V>
-        where
-            F: FnOnce() -> V,
+    where
+        F: FnOnce() -> V,
     {
         self.purge();
         let mut map = self.map.lock().unwrap();
-        let v = map.entry(key).or_insert_with(|| {
-            (Arc::new(f()), Arc::new(AtomicUsize::new(0)))
-        });
+        let v = map
+            .entry(key)
+            .or_insert_with(|| (Arc::new(f()), Arc::new(AtomicUsize::new(0))));
         self.get_internal(Some(v)).unwrap()
     }
 

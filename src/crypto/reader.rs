@@ -60,7 +60,12 @@ pub struct RingCryptoReader<R: Read + Seek> {
 }
 
 impl<R: Read + Seek> RingCryptoReader<R> {
-    pub fn new(r: R, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> Self {
+    pub fn new(
+        r: R,
+        algorithm: &'static Algorithm,
+        key: Arc<SecretVec<u8>>,
+        nonce_seed: u64,
+    ) -> Self {
         let opening_key = Self::create_opening_key(algorithm, key.clone(), nonce_seed);
         let buf = BufMut::new(vec![0; BUF_SIZE + algorithm.tag_len()]);
         Self {
@@ -74,7 +79,11 @@ impl<R: Read + Seek> RingCryptoReader<R> {
         }
     }
 
-    fn create_opening_key(algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>, nonce_seed: u64) -> OpeningKey<RandomNonceSequence> {
+    fn create_opening_key(
+        algorithm: &'static Algorithm,
+        key: Arc<SecretVec<u8>>,
+        nonce_seed: u64,
+    ) -> OpeningKey<RandomNonceSequence> {
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).unwrap();
         let nonce_sequence = RandomNonceSequence::new(nonce_seed);
         OpeningKey::new(unbound_key, nonce_sequence)
@@ -82,18 +91,27 @@ impl<R: Read + Seek> RingCryptoReader<R> {
 
     fn seek_from_start(&mut self, offset: u64) -> io::Result<u64> {
         if self.pos != offset {
-            debug!("seeking to offset {} from {}", offset.to_formatted_string(&Locale::en), self.pos.to_formatted_string(&Locale::en));
+            debug!(
+                "seeking to offset {} from {}",
+                offset.to_formatted_string(&Locale::en),
+                self.pos.to_formatted_string(&Locale::en)
+            );
             // in order to seek we need to read the bytes from current position until the offset
             if self.pos > offset {
                 // if we need an offset before the current position, we can't seek back, we need
                 // to read from the beginning until the desired offset
                 debug!("seeking back, recreating decryptor");
-                self.opening_key = Self::create_opening_key(self.algorithm, self.key.clone(), self.nonce_seed);
+                self.opening_key =
+                    Self::create_opening_key(self.algorithm, self.key.clone(), self.nonce_seed);
                 self.buf.clear();
                 self.pos = 0;
                 self.input.as_mut().unwrap().seek(SeekFrom::Start(0))?;
             }
-            debug!(pos = self.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), "seeking");
+            debug!(
+                pos = self.pos.to_formatted_string(&Locale::en),
+                offset = offset.to_formatted_string(&Locale::en),
+                "seeking"
+            );
             let len = offset - self.pos;
             stream_util::seek_forward(self, len)?;
         }
@@ -136,10 +154,13 @@ impl<R: Read + Seek> Read for RingCryptoReader<R> {
                 return Ok(0);
             }
             let mut data = &mut buffer[..len];
-            let plaintext = self.opening_key.open_within(Aad::empty(), &mut data, 0..).map_err(|err| {
-                error!("error opening within: {}", err);
-                io::Error::new(io::ErrorKind::Other, "error opening within")
-            })?;
+            let plaintext = self
+                .opening_key
+                .open_within(Aad::empty(), &mut data, 0..)
+                .map_err(|err| {
+                    error!("error opening within: {}", err);
+                    io::Error::new(io::ErrorKind::Other, "error opening within")
+                })?;
             plaintext.len()
         };
         self.buf.seek(SeekFrom::Start(pos as u64)).unwrap();
@@ -153,11 +174,19 @@ impl<R: Read + Seek + Send + Sync> Seek for RingCryptoReader<R> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         match pos {
             SeekFrom::Start(pos) => self.seek_from_start(pos),
-            SeekFrom::End(_) => return Err(io::Error::new(io::ErrorKind::InvalidInput, "can't seek from end")),
+            SeekFrom::End(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "can't seek from end",
+                ))
+            }
             SeekFrom::Current(pos) => {
                 let new_pos = self.pos as i64 + pos;
                 if new_pos < 0 {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "can't seek before start"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "can't seek before start",
+                    ));
                 }
                 self.seek_from_start(new_pos as u64)
             }

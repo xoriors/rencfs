@@ -3,20 +3,20 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use anyhow::Result;
 use clap::{Arg, ArgAction, ArgMatches, Command, crate_version};
 use ctrlc::set_handler;
 use rpassword::read_password;
-use tokio::{fs, task};
-use tracing::{error, info, Level, warn};
-use anyhow::Result;
 use secrecy::{ExposeSecret, SecretString};
 use strum::IntoEnumIterator;
 use thiserror::Error;
+use tokio::{fs, task};
+use tracing::{error, info, Level, warn};
 use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
-use rencfs::crypto::Cipher;
 
+use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::is_debug;
 
@@ -36,8 +36,12 @@ async fn main() -> Result<()> {
         Level::DEBUG
     } else {
         let str = match matches.subcommand() {
-            Some(("mount", matches)) => Some(matches.get_one::<String>("log-level").unwrap().as_str()),
-            Some(("change-password", matches)) => Some(matches.get_one::<String>("log-level").unwrap().as_str()),
+            Some(("mount", matches)) => {
+                Some(matches.get_one::<String>("log-level").unwrap().as_str())
+            }
+            Some(("change-password", matches)) => {
+                Some(matches.get_one::<String>("log-level").unwrap().as_str())
+            }
             _ => None,
         };
         let log_level = Level::from_str(str.unwrap());
@@ -51,18 +55,19 @@ async fn main() -> Result<()> {
     let guard = log_init(log_level);
 
     let mount_point = match matches.subcommand() {
-        Some(("mount", matches)) => Some(matches.get_one::<String>("mount-point").unwrap().as_str()),
+        Some(("mount", matches)) => {
+            Some(matches.get_one::<String>("mount-point").unwrap().as_str())
+        }
         _ => None,
     };
 
     let res = task::spawn_blocking(|| {
         panic::catch_unwind(|| {
             let handle = tokio::runtime::Handle::current();
-            handle.block_on(async {
-                async_main().await
-            })
+            handle.block_on(async { async_main().await })
         })
-    }).await;
+    })
+    .await;
     match res {
         Ok(Ok(Ok(_))) => Ok(()),
         Ok(Ok(Err(err))) => {
@@ -251,15 +256,9 @@ async fn async_main() -> Result<()> {
 }
 
 async fn run_change_password(matches: &ArgMatches) -> Result<()> {
-    let data_dir: String = matches
-        .get_one::<String>("data-dir")
-        .unwrap()
-        .to_string();
+    let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
 
-    let cipher: String = matches
-        .get_one::<String>("cipher")
-        .unwrap()
-        .to_string();
+    let cipher: String = matches.get_one::<String>("cipher").unwrap().to_string();
     let cipher = Cipher::from_str(cipher.as_str());
     if cipher.is_err() {
         error!("Invalid cipher");
@@ -282,7 +281,14 @@ async fn run_change_password(matches: &ArgMatches) -> Result<()> {
         return Err(ExitStatusError::Failure(1).into());
     }
     println!("Changing password...");
-    EncryptedFs::change_password(Path::new(&data_dir).to_path_buf(), password, new_password, cipher).await.map_err(|err| {
+    EncryptedFs::change_password(
+        Path::new(&data_dir).to_path_buf(),
+        password,
+        new_password,
+        cipher,
+    )
+    .await
+    .map_err(|err| {
         match err {
             FsError::InvalidPassword => {
                 println!("Invalid old password");
@@ -302,24 +308,16 @@ async fn run_change_password(matches: &ArgMatches) -> Result<()> {
 }
 
 async fn run_mount(matches: &ArgMatches) -> Result<()> {
-    let mountpoint: String = matches.get_one::<String>("mount-point")
+    let mountpoint: String = matches
+        .get_one::<String>("mount-point")
         .unwrap()
         .to_string();
 
-    let data_dir: String = matches
-        .get_one::<String>("data-dir")
-        .unwrap()
-        .to_string();
+    let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
 
-    let tmp_dir: String = matches
-        .get_one::<String>("tmp-dir")
-        .unwrap()
-        .to_string();
+    let tmp_dir: String = matches.get_one::<String>("tmp-dir").unwrap().to_string();
 
-    let cipher: String = matches
-        .get_one::<String>("cipher")
-        .unwrap()
-        .to_string();
+    let cipher: String = matches.get_one::<String>("cipher").unwrap().to_string();
     let cipher = Cipher::from_str(cipher.as_str());
     if cipher.is_err() {
         error!("Invalid cipher");
@@ -328,14 +326,23 @@ async fn run_mount(matches: &ArgMatches) -> Result<()> {
     let cipher = cipher.unwrap();
 
     // when running from IDE we can't read from stdin with rpassword, get it from env var
-    let mut password = SecretString::new(env::var("RENCFS_PASSWORD").unwrap_or_else(|_| "".to_string()));
+    let mut password =
+        SecretString::new(env::var("RENCFS_PASSWORD").unwrap_or_else(|_| "".to_string()));
     if password.expose_secret().is_empty() {
         // read password from stdin
         print!("Enter password: ");
         io::stdout().flush().unwrap();
         password = SecretString::new(read_password().unwrap());
 
-        if !PathBuf::new().join(data_dir.clone()).is_dir() || fs::read_dir(&data_dir).await.unwrap().next_entry().await.unwrap().is_none() {
+        if !PathBuf::new().join(data_dir.clone()).is_dir()
+            || fs::read_dir(&data_dir)
+                .await
+                .unwrap()
+                .next_entry()
+                .await
+                .unwrap()
+                .is_none()
+        {
             // first run, ask to confirm password
             print!("Confirm password: ");
             io::stdout().flush().unwrap();
@@ -366,40 +373,56 @@ async fn run_mount(matches: &ArgMatches) -> Result<()> {
         if auto_unmount {
             info!("Unmounting {}", mountpoint_kill);
         }
-        umount(mountpoint_kill.as_str()).map_err(|err| {
-            error!(err = %err);
-            status.replace(ExitStatusError::Failure(1));
-        }).ok();
+        umount(mountpoint_kill.as_str())
+            .map_err(|err| {
+                error!(err = %err);
+                status.replace(ExitStatusError::Failure(1));
+            })
+            .ok();
 
         info!("Delete key from keyring");
-        keyring::delete("password").map_err(|err| {
-            error!(err = %err);
-            status.replace(ExitStatusError::Failure(1));
-        }).ok();
+        keyring::delete("password")
+            .map_err(|err| {
+                error!(err = %err);
+                status.replace(ExitStatusError::Failure(1));
+            })
+            .ok();
 
-        process::exit(status.map_or(0, |x| match x { ExitStatusError::Failure(status) => status }));
-    }).unwrap();
+        process::exit(status.map_or(0, |x| match x {
+            ExitStatusError::Failure(status) => status,
+        }));
+    })
+    .unwrap();
 
     struct PasswordProviderImpl {}
 
     impl PasswordProvider for PasswordProviderImpl {
         fn get_password(&self) -> Option<SecretString> {
-            keyring::get("password").map_err(|err| {
-                error!(err = %err, "cannot get password from keyring");
-                err
-            }).ok()
+            keyring::get("password")
+                .map_err(|err| {
+                    error!(err = %err, "cannot get password from keyring");
+                    err
+                })
+                .ok()
         }
     }
 
-    rencfs::run_fuse(Path::new(&mountpoint).to_path_buf(), Path::new(&data_dir).to_path_buf(), Path::new(&tmp_dir).to_path_buf(), Box::new(PasswordProviderImpl {}), cipher,
-                     matches.get_flag("allow-root"), matches.get_flag("allow-other"),
-                     matches.get_flag("direct-io"), matches.get_flag("suid")).await
+    rencfs::run_fuse(
+        Path::new(&mountpoint).to_path_buf(),
+        Path::new(&data_dir).to_path_buf(),
+        Path::new(&tmp_dir).to_path_buf(),
+        Box::new(PasswordProviderImpl {}),
+        cipher,
+        matches.get_flag("allow-root"),
+        matches.get_flag("allow-other"),
+        matches.get_flag("direct-io"),
+        matches.get_flag("suid"),
+    )
+    .await
 }
 
 fn umount(mountpoint: &str) -> Result<()> {
-    let output = process::Command::new("umount")
-        .arg(mountpoint)
-        .output()?;
+    let output = process::Command::new("umount").arg(mountpoint).output()?;
 
     if !output.status.success() {
         warn!("Cannot umount, maybe it was not mounted");
@@ -412,7 +435,8 @@ pub fn log_init(level: Level) -> WorkerGuard {
     let directive = format!("rencfs={}", level.as_str()).parse().unwrap();
     let filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
-        .from_env().unwrap()
+        .from_env()
+        .unwrap()
         .add_directive(directive);
 
     let (writer, guard) = tracing_appender::non_blocking(io::stdout());
@@ -421,13 +445,9 @@ pub fn log_init(level: Level) -> WorkerGuard {
         .with_env_filter(filter);
     // .with_max_level(level);
     if is_debug() {
-        builder
-            .pretty()
-            .init()
+        builder.pretty().init()
     } else {
-        builder
-            .pretty()
-            .init()
+        builder.pretty().init()
     }
 
     guard

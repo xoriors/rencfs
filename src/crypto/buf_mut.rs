@@ -67,19 +67,30 @@ impl Seek for BufMut {
         match pos {
             SeekFrom::Start(pos) => {
                 if pos as usize > self.buf.len() {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "position is out of bounds"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "position is out of bounds",
+                    ));
                 }
                 self.pos = pos as usize;
             }
             SeekFrom::End(pos) => {
-                if (self.buf.len() as i64 + pos) < 0 || (self.buf.len() as i64 + pos) > self.buf.len() as i64 {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "position is out of bounds"));
+                if (self.buf.len() as i64 + pos) < 0
+                    || (self.buf.len() as i64 + pos) > self.buf.len() as i64
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "position is out of bounds",
+                    ));
                 }
                 self.pos = (self.buf.len() as i64 + pos) as usize;
             }
             SeekFrom::Current(pos) => {
                 if (self.pos as i64 + pos) < 0 || (self.pos as i64 + pos) > self.buf.len() as i64 {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "position is out of bounds"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "position is out of bounds",
+                    ));
                 }
                 self.pos = (self.pos as i64 + pos) as usize;
             }
