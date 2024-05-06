@@ -9,6 +9,7 @@ You can also store it in any cloud storage like Google Drive, Dropbox, etc. and 
 [![crates.io](https://img.shields.io/crates/v/rencfs.svg)](https://crates.io/crates/rencfs)
 [![docs.rs](https://img.shields.io/docsrs/rencfs?label=docs.rs)](https://docs.rs/rencfs/)
 [![test](https://github.com/radumarias/rencfs/actions/workflows/test.yml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/test.yml)
+![Discord](https://img.shields.io/discord/1236855443486277653)
 
 
 # Functionality
