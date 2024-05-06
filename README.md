@@ -15,8 +15,8 @@ You can also store it in any cloud storage like Google Drive, Dropbox, etc. and 
 
 I keeps all encrypted data and master encryption key in a dedicated directory with files structured on inodes (with meta info), files for binary content and directories with files/directories entries. All data, metadata and also filenames are encrypted. For new files it generates inode number randomly in `u64` space so it reduces the chance of conflicts when used offline and synced later.
 
-Password is collected from CLI and can be saved in OS keyring.
-Encryption key is also encrypted with another key derived from the password. This gives the ability to change the password without re-encrypting all data, we just re-encrypt the key.
+Password is collected from CLI and it's saved in OS keyring while app is running. This is because of safety reasons we clear the password from memory on inactivity and we reload it again from keyring just when needed.
+Master encryption key is also encrypted with another key derived from the password. This gives the ability to change the password without re-encrypting all data, we just re-encrypt the master key.
 
 # Stack
 
