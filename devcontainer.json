@@ -1,0 +1,6 @@
+{
+  "name": "rencfs docker development environment",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "rencfs-development-environment",
+  "shutdownAction": "stopCompose"
+}

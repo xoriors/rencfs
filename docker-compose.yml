@@ -1,0 +1,9 @@
+services:
+  rencfs-development-environment:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: local-rencfs-developer
+    user: ${USER_NAME}
+    volumes:
+      - .:/home/developer/rencfs
