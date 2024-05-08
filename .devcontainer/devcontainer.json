@@ -1,4 +1,4 @@
 {
  "name": "rencfs docker development environment",
- "dockerFile": "Dockerfile"
+ "dockerFile": "../Dockerfile"
 }
