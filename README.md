@@ -179,7 +179,7 @@ sudo pacman -Syu && sudo pacman -S openssl lib32-openssl fuse3 base-devel
 
 Ubuntu
 ```bash
-sudo apt-get update && sudo apt-get install libssl-dev openssl fuse3 build-essentials
+sudo apt-get update && sudo apt-get install libssl-dev openssl fuse3 build-essential
 ```
 
 ## Build for debug
