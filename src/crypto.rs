@@ -1,4 +1,4 @@
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Read, Seek, Write};
 use std::num::ParseIntError;
@@ -9,8 +9,8 @@ use argon2::Argon2;
 use base64::DecodeError;
 use hex::FromHexError;
 use num_format::{Locale, ToFormattedString};
-use rand_chacha::ChaCha20Rng;
 use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Serialize};
@@ -19,8 +19,10 @@ use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tracing::{debug, error, instrument};
 
-use crate::crypto::reader::{CryptoReader, RingCryptoReader};
-use crate::crypto::writer::{CryptoWriter, RingCryptoWriter};
+use crate::crypto::reader::{CryptoReader, FileCryptoReader, RingCryptoReader};
+use crate::crypto::writer::{
+    CryptoWriter, CryptoWriterSeek, FileCryptoWriter, FileCryptoWriterCallback, RingCryptoWriter,
+};
 use crate::encryptedfs::FsResult;
 use crate::stream_util;
 
@@ -28,7 +30,7 @@ pub mod buf_mut;
 pub mod reader;
 pub mod writer;
 
-#[derive(Debug, Clone, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
 pub enum Cipher {
     ChaCha20,
     Aes256Gcm,
@@ -85,6 +87,19 @@ pub fn create_writer<W: Write + Send + Sync>(
     create_ring_writer(writer, cipher, key, nonce_seed)
 }
 
+pub fn create_file_writer<Callback: FileCryptoWriterCallback + 'static>(
+    file: PathBuf,
+    tmp_dir: PathBuf,
+    cipher: Cipher,
+    key: Arc<SecretVec<u8>>,
+    nonce_seed: u64,
+    callback: Callback,
+) -> Result<Box<dyn CryptoWriterSeek<File>>> {
+    Ok(Box::new(FileCryptoWriter::new(
+        file, tmp_dir, cipher, key, nonce_seed, callback,
+    )?))
+}
+
 fn create_ring_writer<W: Write + Send + Sync>(
     writer: W,
     cipher: &Cipher,
@@ -136,6 +151,17 @@ pub fn create_reader<R: Read + Seek + Send + Sync>(
     nonce_seed: u64,
 ) -> impl CryptoReader<R> {
     create_ring_reader(reader, cipher, key, nonce_seed)
+}
+
+pub fn create_file_reader(
+    file: PathBuf,
+    cipher: Cipher,
+    key: Arc<SecretVec<u8>>,
+    nonce_seed: u64,
+) -> Result<Box<dyn CryptoReader<File>>> {
+    Ok(Box::new(FileCryptoReader::new(
+        file, cipher, key, nonce_seed,
+    )?))
 }
 
 // fn _create_cryptostream_crypto_reader(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> CryptostreamCryptoReader<File> {
@@ -301,18 +327,33 @@ pub fn hash_secret_vec(data: &SecretVec<u8>) -> [u8; 32] {
 /// Copy from `pos` position in file `len` bytes
 #[instrument(skip(w, key), fields(pos = pos.to_formatted_string(& Locale::en), len = len.to_formatted_string(& Locale::en)))]
 pub fn copy_from_file_exact(
-    w: &mut impl Write,
+    file: PathBuf,
     pos: u64,
     len: u64,
     cipher: &Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
-    file: PathBuf,
+    w: &mut impl Write,
 ) -> io::Result<()> {
+    debug!("");
+    copy_from_file(file, pos, len, cipher, key, nonce_seed, w, false)?;
+    Ok(())
+}
+#[instrument(skip(w, key), fields(pos = pos.to_formatted_string(& Locale::en), len = len.to_formatted_string(& Locale::en)))]
+pub fn copy_from_file(
+    file: PathBuf,
+    pos: u64,
+    len: u64,
+    cipher: &Cipher,
+    key: Arc<SecretVec<u8>>,
+    nonce_seed: u64,
+    w: &mut impl Write,
+    stop_on_eof: bool,
+) -> io::Result<u64> {
     debug!("");
     if len == 0 {
         // no-op
-        return Ok(());
+        return Ok(0);
     }
     // create a new reader by reading from the beginning of the file
     let mut reader = create_reader(
@@ -322,12 +363,22 @@ pub fn copy_from_file_exact(
         nonce_seed,
     );
     // move read position to the write position
-    stream_util::seek_forward(&mut reader, pos)?;
+    let pos2 = stream_util::seek_forward(&mut reader, pos, stop_on_eof)?;
+    if pos2 < pos {
+        return if stop_on_eof {
+            Ok(0)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected eof",
+            ))
+        };
+    }
 
     // copy the rest of the file
-    stream_util::copy_exact(&mut reader, w, len)?;
-    reader.finish();
-    Ok(())
+    let len = stream_util::copy(&mut reader, w, len, stop_on_eof)?;
+    reader.finish()?;
+    Ok(len)
 }
 
 pub fn extract_nonce_from_encrypted_string(name: &str) -> Result<u64> {

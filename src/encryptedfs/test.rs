@@ -1,20 +1,22 @@
-use std::{fs, io};
 use std::fs::OpenOptions;
+use std::future::Future;
 use std::io::Read;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::{fs, io};
 
 use secrecy::{ExposeSecret, SecretString};
+use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use tracing_test::traced_test;
 
+use crate::encryptedfs::{write_all_bytes_to_fs, AsyncRuntime};
 use crate::encryptedfs::{
-    Cipher, CONTENTS_DIR, CreateFileAttr, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType,
-    FsError, FsResult, PasswordProvider, ROOT_INODE,
+    Cipher, CreateFileAttr, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType, FsError,
+    FsResult, PasswordProvider, CONTENTS_DIR, ROOT_INODE,
 };
-use crate::stream_util::write_all_bytes_to_fs;
 
 const TESTS_DATA_DIR: &str = "/tmp/rencfs-test-data/";
 
@@ -24,7 +26,7 @@ struct TestSetup {
 }
 
 struct SetupResult {
-    fs: Option<EncryptedFs>,
+    fs: Option<Arc<EncryptedFs>>,
     setup: TestSetup,
 }
 
@@ -162,7 +164,7 @@ async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8], han
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_write() {
     run_test(
         TestSetup {
@@ -337,7 +339,7 @@ async fn test_write() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_read() {
     run_test(
         TestSetup {
@@ -516,7 +518,7 @@ async fn test_read() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_truncate() {
     run_test(
         TestSetup {
@@ -613,7 +615,7 @@ async fn test_truncate() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
 async fn test_copy_file_range() {
     run_test(
@@ -700,7 +702,7 @@ async fn test_copy_file_range() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_read_dir() {
     run_test(
         TestSetup {
@@ -878,7 +880,7 @@ async fn test_read_dir() {
     .await
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_read_dir_plus() {
     run_test(
         TestSetup {

@@ -10,23 +10,23 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use fuse3::{Errno, Inode, Result, SetAttr, Timestamp};
-use fuse3::raw::{Filesystem, Request};
 use fuse3::raw::prelude::{
     DirectoryEntry, DirectoryEntryPlus, ReplyAttr, ReplyCopyFileRange, ReplyCreated, ReplyData,
     ReplyDirectory, ReplyDirectoryPlus, ReplyEntry, ReplyInit, ReplyOpen, ReplyStatFs, ReplyWrite,
 };
+use fuse3::raw::{Filesystem, Request};
+use fuse3::{Errno, Inode, Result, SetAttr, Timestamp};
 use futures_util::stream;
 use futures_util::stream::Iter;
 use libc::{EACCES, EEXIST, EIO, EISDIR, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
-use tracing::{debug, error, instrument, trace, warn};
 use tracing::Level;
+use tracing::{debug, error, instrument, trace, warn};
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
-    CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult, PasswordProvider,
-    SetFileAttr,
+    AsyncRuntime, CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult,
+    PasswordProvider, SetFileAttr,
 };
 
 const TTL: Duration = Duration::from_secs(1);
@@ -139,7 +139,7 @@ impl EncryptedFsFuse3 {
         #[cfg(feature = "abi-7-26")]
         {
             Ok(Self {
-                fs: Arc::new(EncryptedFs::new(data_dir, tmp_dir, password_provider, cipher).await?),
+                fs: EncryptedFs::new(data_dir, tmp_dir, password_provider, cipher).await?,
                 direct_io,
                 suid_support: _suid_support,
             })
@@ -147,7 +147,7 @@ impl EncryptedFsFuse3 {
         #[cfg(not(feature = "abi-7-26"))]
         {
             Ok(Self {
-                fs: Arc::new(EncryptedFs::new(data_dir, tmp_dir, password_provider, cipher).await?),
+                fs: EncryptedFs::new(data_dir, tmp_dir, password_provider, cipher).await?,
                 direct_io,
                 suid_support: false,
             })

@@ -97,7 +97,7 @@
 //! use rencfs::crypto::Cipher;
 //! use anyhow::Result;
 //! use std::path::Path;
-//! use rencfs::stream_util::write_all_string_to_fs;
+//! use rencfs::encryptedfs::write_all_string_to_fs;
 //!
 //! const ROOT_INODE: u64 = 1;
 //!
@@ -207,39 +207,49 @@
 //!     println!("Password changed successfully");
 //! }
 //! ```
-use tracing::{info, instrument};
+use crate::crypto::Cipher;
+use crate::encryptedfs::{AsyncRuntime, PasswordProvider};
+use crate::encryptedfs_fuse3::EncryptedFsFuse3;
+use fuse3::raw::Session;
 use fuse3::MountOptions;
 use std::ffi::OsStr;
 use std::path::PathBuf;
-use fuse3::raw::Session;
-use crate::crypto::Cipher;
-use crate::encryptedfs::PasswordProvider;
-use crate::encryptedfs_fuse3::EncryptedFsFuse3;
+use std::sync::Arc;
+use tracing::{info, instrument};
 
+pub mod arc_hashmap;
+pub mod crypto;
 pub mod encryptedfs;
 pub mod encryptedfs_fuse3;
 pub mod expire_value;
-pub mod arc_hashmap;
 pub mod stream_util;
-pub mod crypto;
 
 #[allow(unreachable_code)]
 pub fn is_debug() -> bool {
-    #[cfg(debug_assertions)] {
+    #[cfg(debug_assertions)]
+    {
         return true;
     }
     return false;
 }
 
 #[instrument(skip(password_provider))]
-pub async fn run_fuse(mountpoint: PathBuf, data_dir: PathBuf, tmp_dir: PathBuf, password_provider: Box<dyn PasswordProvider>, cipher: Cipher,
-                      allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
+pub async fn run_fuse(
+    mountpoint: PathBuf,
+    data_dir: PathBuf,
+    tmp_dir: PathBuf,
+    password_provider: Box<dyn PasswordProvider>,
+    cipher: Cipher,
+    allow_root: bool,
+    allow_other: bool,
+    direct_io: bool,
+    suid_support: bool,
+) -> anyhow::Result<()> {
     let mut mount_options = &mut MountOptions::default();
-    #[cfg(target_os = "linux")] {
+    #[cfg(target_os = "linux")]
+    {
         unsafe {
-            mount_options = mount_options
-                .uid(libc::getuid())
-                .gid(libc::getgid());
+            mount_options = mount_options.uid(libc::getuid()).gid(libc::getgid());
         }
     }
     let mount_options = mount_options
@@ -251,7 +261,18 @@ pub async fn run_fuse(mountpoint: PathBuf, data_dir: PathBuf, tmp_dir: PathBuf, 
 
     info!("Checking password and mounting FUSE filesystem");
     Session::new(mount_options)
-        .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, tmp_dir, password_provider, cipher, direct_io, suid_support).await?, mount_path)
+        .mount_with_unprivileged(
+            EncryptedFsFuse3::new(
+                data_dir,
+                tmp_dir,
+                password_provider,
+                cipher,
+                direct_io,
+                suid_support,
+            )
+            .await?,
+            mount_path,
+        )
         .await?
         .await?;
 

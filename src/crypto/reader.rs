@@ -1,5 +1,7 @@
+use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use num_format::{Locale, ToFormattedString};
@@ -8,11 +10,14 @@ use secrecy::{ExposeSecret, SecretVec};
 use tracing::{debug, error, instrument, warn};
 
 use crate::crypto::buf_mut::BufMut;
-use crate::crypto::writer::{BUF_SIZE, RandomNonceSequence};
-use crate::stream_util;
+use crate::crypto::writer::{
+    CryptoWriter, FileCryptoWriterCallback, RandomNonceSequence, BUF_SIZE,
+};
+use crate::crypto::Cipher;
+use crate::{crypto, stream_util};
 
 pub trait CryptoReader<R: Read + Seek>: Read + Seek + Send + Sync {
-    fn finish(&mut self) -> Option<R>;
+    fn finish(&mut self) -> io::Result<R>;
 }
 
 /// cryptostream
@@ -113,7 +118,7 @@ impl<R: Read + Seek> RingCryptoReader<R> {
                 "seeking"
             );
             let len = offset - self.pos;
-            stream_util::seek_forward(self, len)?;
+            stream_util::seek_forward(self, len, true)?;
         }
 
         Ok(self.pos)
@@ -195,7 +200,94 @@ impl<R: Read + Seek + Send + Sync> Seek for RingCryptoReader<R> {
 }
 
 impl<R: Read + Seek + Send + Sync> CryptoReader<R> for RingCryptoReader<R> {
-    fn finish(&mut self) -> Option<R> {
-        Some(self.input.take().unwrap())
+    fn finish(&mut self) -> io::Result<R> {
+        Ok(self.input.take().unwrap())
+    }
+}
+
+/// file reader
+
+pub struct FileCryptoReader {
+    file: PathBuf,
+    reader: Box<dyn CryptoReader<File>>,
+    cipher: Cipher,
+    key: Arc<SecretVec<u8>>,
+    nonce_seed: u64,
+    pos: u64,
+}
+
+impl FileCryptoReader {
+    pub fn new(
+        file: PathBuf,
+        cipher: Cipher,
+        key: Arc<SecretVec<u8>>,
+        nonce_seed: u64,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            file: file.clone(),
+            reader: Box::new(crypto::create_reader(
+                File::open(&file)?,
+                &cipher,
+                key.clone(),
+                nonce_seed,
+            )),
+            cipher,
+            key,
+            nonce_seed,
+            pos: 0,
+        })
+    }
+}
+
+impl Read for FileCryptoReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let len = self.reader.read(buf)?;
+        self.pos += len as u64;
+        Ok(len)
+    }
+}
+
+impl Seek for FileCryptoReader {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let pos = match pos {
+            SeekFrom::Start(pos) => pos,
+            SeekFrom::End(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "can't seek from end",
+                ))
+            }
+            SeekFrom::Current(pos) => {
+                let new_pos = self.pos as i64 + pos;
+                if new_pos < 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "can't seek before start",
+                    ));
+                }
+                new_pos as u64
+            }
+        };
+        if self.pos != pos {
+            if self.pos > pos {
+                self.reader.finish()?;
+                self.reader = Box::new(crypto::create_reader(
+                    File::open(&self.file).unwrap(),
+                    &self.cipher,
+                    self.key.clone(),
+                    self.nonce_seed,
+                ));
+                self.pos = 0;
+            }
+            stream_util::seek_forward(self, pos - self.pos, true)?;
+        }
+
+        Ok(self.pos)
+    }
+}
+
+impl CryptoReader<File> for FileCryptoReader {
+    fn finish(&mut self) -> io::Result<File> {
+        self.reader.finish()
     }
 }

@@ -1,19 +1,20 @@
-use std::{fs, io};
 use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions, ReadDir};
+use std::io::ErrorKind::Other;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::ParseIntError;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime};
+use std::{fs, io};
 
 use argon2::password_hash::rand_core::RngCore;
-use futures_util::TryStreamExt;
+use futures_util::{TryFutureExt, TryStreamExt};
 use num_format::{Locale, ToFormattedString};
 use rand::thread_rng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
@@ -21,16 +22,17 @@ use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tempfile::NamedTempFile;
 use thiserror::Error;
-use tokio::sync::{Mutex, MutexGuard, RwLock};
+use tokio::sync::mpsc::Sender;
+use tokio::sync::{Mutex, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
 use tracing::{debug, error, info, instrument, warn};
 
-use crate::{crypto, stream_util};
 use crate::arc_hashmap::{ArcHashMap, Guard};
-use crate::crypto::{Cipher, extract_nonce_from_encrypted_string};
 use crate::crypto::reader::CryptoReader;
-use crate::crypto::writer::CryptoWriter;
+use crate::crypto::writer::{CryptoWriter, CryptoWriterSeek, FileCryptoWriterCallback};
+use crate::crypto::{extract_nonce_from_encrypted_string, Cipher};
 use crate::expire_value::{ExpireValue, Provider};
+use crate::{crypto, stream_util};
 
 #[cfg(test)]
 mod test;
@@ -603,46 +605,30 @@ impl KeyStore {
 struct ReadHandleContext {
     ino: u64,
     attr: TimeAndSizeFileAttr,
-    pos: u64,
     reader: Option<Box<dyn CryptoReader<File>>>,
-    _lock: Guard<Mutex<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
+    _lock: Guard<RwLock<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
 }
 
-enum ReadHandleContextOperation<'a> {
-    Create {
-        ino: u64,
-        lock: Guard<Mutex<bool>>,
-    },
-    RecreateReader {
-        existing: MutexGuard<'a, ReadHandleContext>,
-    },
+enum ReadHandleContextOperation {
+    Create { ino: u64, lock: Guard<RwLock<bool>> },
 }
 
-impl ReadHandleContextOperation<'_> {
+impl ReadHandleContextOperation {
     fn get_ino(&self) -> u64 {
         match *self {
             ReadHandleContextOperation::Create { ino, .. } => ino,
-            ReadHandleContextOperation::RecreateReader { ref existing } => existing.ino,
         }
     }
 }
 
-enum WriteHandleContextOperation<'a> {
-    Create {
-        ino: u64,
-        lock: Guard<Mutex<bool>>,
-    },
-    RecreateWriter {
-        existing: MutexGuard<'a, WriteHandleContext>,
-        reset_size: bool,
-    },
+enum WriteHandleContextOperation {
+    Create { ino: u64, lock: Guard<RwLock<bool>> },
 }
 
-impl WriteHandleContextOperation<'_> {
+impl WriteHandleContextOperation {
     fn get_ino(&self) -> u64 {
         match *self {
             WriteHandleContextOperation::Create { ino, .. } => ino,
-            WriteHandleContextOperation::RecreateWriter { ref existing, .. } => existing.ino,
         }
     }
 }
@@ -650,10 +636,8 @@ impl WriteHandleContextOperation<'_> {
 struct WriteHandleContext {
     ino: u64,
     attr: TimeAndSizeFileAttr,
-    path: PathBuf,
-    pos: u64,
-    writer: Option<Box<dyn CryptoWriter<File>>>,
-    _lock: Guard<Mutex<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
+    writer: Option<Box<dyn CryptoWriterSeek<File>>>,
+    _lock: Guard<RwLock<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
 }
 
 struct KeyProvider {
@@ -668,12 +652,18 @@ impl Provider<SecretVec<u8>, FsError> for KeyProvider {
             .password_provider
             .get_password()
             .ok_or(FsError::InvalidPassword)?;
-        EncryptedFs::read_or_create_key(&self.path, &password, &self.cipher)
+        read_or_create_key(&self.path, &password, &self.cipher)
     }
 }
 
 pub trait PasswordProvider: Send + Sync + 'static {
     fn get_password(&self) -> Option<SecretString>;
+}
+
+pub trait AsyncRuntime: Send + Sync + 'static {
+    fn block_on<F, Output, Error>(&self, future: F) -> F::Output
+    where
+        F: std::future::Future<Output = Result<Output, Error>> + Send + 'static;
 }
 
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
@@ -689,14 +679,19 @@ pub struct EncryptedFs {
     opened_files_for_write: RwLock<HashMap<u64, u64>>,
     // used for rw ops of actual serialization
     // use std::sync::RwLock instead of tokio::sync::RwLock because we need to use it also in sync code in `DirectoryEntryIterator` and `DirectoryEntryPlusIterator`
+    // todo: remove external std::sync::RwLock, ArcHashMap is thread safe
     serialize_inode_locks: Arc<std::sync::RwLock<ArcHashMap<u64, std::sync::RwLock<bool>>>>,
     // used for the update op
+    // todo: remove external Mutex, ArcHashMap is thread safe
     serialize_update_inode_locks: Mutex<ArcHashMap<u64, Mutex<bool>>>,
     // use std::sync::RwLock instead of tokio::sync::RwLock because we need to use it also in sync code in `DirectoryEntryIterator` and `DirectoryEntryPlusIterator`
+    // todo: remove external std::sync::RwLock, ArcHashMap is thread safe
     serialize_dir_entries_locks:
         Arc<std::sync::RwLock<ArcHashMap<String, std::sync::RwLock<bool>>>>,
-    read_write_inode_locks: Mutex<ArcHashMap<u64, Mutex<bool>>>,
+    // todo: remove external Mutex, ArcHashMap is thread safe
+    read_write_inode_locks: Mutex<ArcHashMap<u64, RwLock<bool>>>,
     key: ExpireValue<SecretVec<u8>, FsError, KeyProvider>,
+    self_weak: std::sync::Mutex<Option<Weak<Self>>>,
 }
 
 impl EncryptedFs {
@@ -705,7 +700,7 @@ impl EncryptedFs {
         tmp_dir: PathBuf,
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
-    ) -> FsResult<Self> {
+    ) -> FsResult<Arc<Self>> {
         let key_provider = KeyProvider {
             path: data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
             password_provider,
@@ -714,7 +709,7 @@ impl EncryptedFs {
 
         ensure_structure_created(&data_dir.clone(), &tmp_dir.clone(), &key_provider).await?;
 
-        let fs = EncryptedFs {
+        let mut fs = EncryptedFs {
             data_dir,
             tmp_dir,
             write_handles: RwLock::new(HashMap::new()),
@@ -729,11 +724,14 @@ impl EncryptedFs {
             serialize_dir_entries_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::new())),
             // todo: take duration from param
             key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)).await,
+            self_weak: std::sync::Mutex::new(None),
         };
 
         fs.ensure_root_exists().await?;
 
-        Ok(fs)
+        let arc = Arc::new(fs);
+        arc.self_weak.lock().unwrap().replace(Arc::downgrade(&arc));
+        Ok(arc)
     }
 
     pub fn node_exists(&self, ino: u64) -> bool {
@@ -1165,9 +1163,9 @@ impl EncryptedFs {
         // lock for reading
         let lock = {
             let map_guard = self.read_write_inode_locks.lock().await;
-            map_guard.get_or_insert_with(ino, || Mutex::new(false))
+            map_guard.get_or_insert_with(ino, || RwLock::new(false))
         };
-        let _guard = lock.lock().await;
+        let _guard = lock.read().await;
 
         if !self.node_exists(ino) {
             return Err(FsError::InodeNotFound);
@@ -1192,20 +1190,14 @@ impl EncryptedFs {
             // no-op
             return Ok(0);
         }
-        if offset >= ctx.attr.size {
-            // if we need an offset after file size we don't read anything
-            return Ok(0);
-        }
 
-        ctx.reader.as_mut().unwrap().seek(SeekFrom::Start(offset)).map_err(|err| {
-            error!(err = %err, pos = ctx.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), file_size = ctx.attr.size.to_formatted_string(&Locale::en), "seeking");
-            err
-        })?;
-        let len = ctx.reader.as_mut().unwrap().read(&mut buf).map_err(|err| {
-            error!(err = %err, pos = ctx.pos.to_formatted_string(&Locale::en), offset = offset.to_formatted_string(&Locale::en), file_size = ctx.attr.size.to_formatted_string(&Locale::en), "reading from reader");
-            err
-        })?;
-        ctx.pos += len as u64;
+        // read data
+        let len = {
+            let reader = ctx.reader.as_mut().unwrap();
+            reader.seek(SeekFrom::Start(offset))?;
+            let len = reader.read(&mut buf)?;
+            len
+        };
 
         ctx.attr.atime = SystemTime::now();
 
@@ -1243,7 +1235,7 @@ impl EncryptedFs {
             attr.size.take();
             self.update_inode(ctx.ino, attr).await?;
 
-            ctx.reader.take().unwrap().finish();
+            ctx.reader.take().unwrap().finish()?;
 
             valid_fh = true;
         }
@@ -1253,62 +1245,21 @@ impl EncryptedFs {
         if let Some(ctx) = ctx {
             let mut ctx = ctx.lock().await;
 
-            // if we have dirty content (ctx.pos > 0) and position is before file end we copy the rest of the file from position to the end
-            if ctx.pos > 0 && ctx.pos < ctx.attr.size {
-                debug!("dirty content, copying remaining of file");
-                let ino = ctx.ino;
-                let ino_str = ino.to_string();
-                let file_size = ctx.attr.size;
-                let pos = ctx.pos;
-                let len = file_size - pos;
-                crypto::copy_from_file_exact(
-                    &mut ctx.writer.as_mut().unwrap(),
-                    pos,
-                    len,
-                    &self.cipher,
-                    self.key.get().await?,
-                    ino,
-                    self.data_dir.join(CONTENTS_DIR).join(ino_str),
-                )?;
-                ctx.pos += len;
-            }
-
             debug!("finishing writer");
             ctx.writer.take().unwrap().finish()?;
-            // if we are in tmp file move it to actual file
-            let mut recreate_readers = false;
-            if ctx.path.to_str().unwrap().ends_with(".tmp") {
-                debug!("renaming file");
-                tokio::fs::rename(
-                    ctx.path.clone(),
-                    self.data_dir.join(CONTENTS_DIR).join(ctx.ino.to_string()),
-                )
-                .await?;
 
-                // also recreate readers because the file has changed
-                recreate_readers = true;
-            }
             self.opened_files_for_write.write().await.remove(&ctx.ino);
 
             // write attr only here to avoid serializing it multiple times while writing
             // it will merge time fields with existing data because it might got change while we kept the handle
             self.update_inode(ctx.ino, ctx.attr.clone().into()).await?;
 
-            if recreate_readers {
-                self.recreate_handles(ctx.ino, None).await?;
-            }
-
             valid_fh = true;
         }
+
         if !valid_fh {
             return Err(FsError::InvalidFileHandle);
         }
-        debug!(serialize_inode_locks.size = self.serialize_inode_locks.read().unwrap().len());
-        debug!(
-            serialize_update_inode_locks.size =
-                self.serialize_update_inode_locks.lock().await.len()
-        );
-        debug!(read_write_inode_locks.size = self.read_write_inode_locks.lock().await.len());
         Ok(())
     }
 
@@ -1333,11 +1284,12 @@ impl EncryptedFs {
     pub async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
         debug!("");
         // lock for writing
+        // todo: give this to the writer to only use it when is actually changing the file
         let lock = {
             let map_guard = self.read_write_inode_locks.lock().await;
-            map_guard.get_or_insert_with(ino, || Mutex::new(false))
+            map_guard.get_or_insert_with(ino, || RwLock::new(false))
         };
-        let _guard = lock.lock().await;
+        let _guard = lock.write().await;
         debug!("ptr {:p}", lock.deref());
 
         if !self.node_exists(ino) {
@@ -1351,12 +1303,6 @@ impl EncryptedFs {
                 return Err(FsError::InvalidFileHandle);
             }
         }
-
-        // write lock to avoid writing from multiple threads
-        // let binding = self.get_read_write_inode_lock(ino).await;
-        // let _guard = binding.write();
-        debug!("after lock");
-
         if self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
@@ -1372,156 +1318,28 @@ impl EncryptedFs {
             return Ok(0);
         }
 
-        let (path, pos, ino, size) = {
-            let guard = self.write_handles.read().await;
-            let ctx = guard.get(&handle).unwrap().lock().await;
-            (ctx.path.clone(), ctx.pos, ctx.ino, ctx.attr.size)
-        };
-        if size == 0 {
-            debug!("file size is 0");
-        }
-        if pos != offset {
-            debug!(
-                "seeking to offset {} from pos {}",
-                offset.to_formatted_string(&Locale::en),
-                pos.to_formatted_string(&Locale::en)
-            );
-            if pos < offset && pos > 0 {
-                debug!("seeking forward");
-                // we can seek forward only if we have dirty writer
-                // we do that by copying the rest of the file from current position to the desired offset
-                let guard = self.write_handles.read().await;
-                let mut ctx = guard.get(&handle).unwrap().lock().await;
-                let ino_str = ino.to_string();
-                let offset_in_bounds = offset.min(size);
-                let len = offset_in_bounds - pos;
-                crypto::copy_from_file_exact(
-                    &mut ctx.writer.as_mut().unwrap(),
-                    pos,
-                    len,
-                    &self.cipher,
-                    self.key.get().await?,
-                    ino,
-                    self.data_dir.join(CONTENTS_DIR).join(ino_str),
-                )?;
-                ctx.pos += len;
-            } else {
-                debug!("seeking backward or from the beginning of the file");
-                // we need to seek backward, or we can't seek forward, but we cannot do that, we need to recreate all stream from the beginning until the desired offset
-                // for that we create a new writer into a tmp file reading from original file and writing to tmp one
-                // when we release the handle we will move this tmp file to the actual file
-
-                // if we have dirty content (ctx.pos > 0) and position is before file end we copy the rest of the file from position to the end
-                if pos > 0 && pos < size {
-                    debug!("dirty content, copying remaining of file");
-                    let ino_str = ino.to_string();
-                    let file_size = size;
-                    let guard = self.write_handles.read().await;
-                    let mut ctx = guard.get(&handle).unwrap().lock().await;
-                    let len = file_size - pos;
-                    crypto::copy_from_file_exact(
-                        &mut ctx.writer.as_mut().unwrap(),
-                        pos,
-                        len,
-                        &self.cipher,
-                        self.key.get().await?,
-                        ino,
-                        self.data_dir.join(CONTENTS_DIR).join(ino_str),
-                    )?;
-                    ctx.pos += len;
-                }
-                {
-                    let guard = self.write_handles.read().await;
-                    let mut ctx = guard.get(&handle).unwrap().lock().await;
-                    // finish the current writer so we flush all data to the file
-                    debug!("finishing current writer");
-                    ctx.writer.take().unwrap().finish()?;
-                }
-
-                // if we are already in the tmp file first copy tmp to actual file
-                if path.to_str().unwrap().ends_with(".tmp") {
-                    debug!("renaming tmp file to actual file");
-                    tokio::fs::rename(
-                        path.clone(),
-                        self.data_dir.join(CONTENTS_DIR).join(ino.to_string()),
-                    )
-                    .await?;
-
-                    // update metadata
-                    let (ino, attr) = {
-                        let guard = self.write_handles.read().await;
-                        let ctx = guard.get(&handle).unwrap().lock().await;
-                        (ctx.ino, ctx.attr.clone())
-                    };
-                    self.update_inode(ino, attr.into()).await?;
-
-                    // also recreate readers because the file has changed
-                    self.recreate_handles(ino, Some(HashSet::from([handle])))
-                        .await?;
-                }
-
-                let guard = self.write_handles.read().await;
-                let mut ctx = guard.get(&handle).unwrap().lock().await;
-
-                let tmp_path_str = format!("{}.{}.tmp", ctx.ino.to_string(), &handle.to_string());
-                let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
-                let tmp_file = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(tmp_path.clone())?;
-
-                let writer = self.create_crypto_writer(tmp_file, ino).await?;
-                debug!("recreating writer");
-                ctx.writer.replace(Box::new(writer));
-                ctx.pos = 0;
-                ctx.path = tmp_path;
-                let ino_str = ctx.ino.to_string();
-                let offset_in_bounds = offset.min(size);
-                crypto::copy_from_file_exact(
-                    &mut ctx.writer.as_mut().unwrap(),
-                    0,
-                    offset_in_bounds,
-                    &self.cipher,
-                    self.key.get().await?,
-                    ino,
-                    self.data_dir.join(CONTENTS_DIR).join(ino_str),
-                )?;
-                ctx.pos += offset_in_bounds;
-            }
-
-            let guard = self.write_handles.read().await;
-            let mut ctx = guard.get(&handle).unwrap().lock().await;
-            // if offset is after current position (max file size) we fill up with zeros until offset
-            if offset > ctx.pos {
-                debug!(
-                    "filling up with zeros from {} until offset {}",
-                    ctx.pos.to_formatted_string(&Locale::en),
-                    offset.to_formatted_string(&Locale::en)
-                );
-                let pos = ctx.pos;
-                stream_util::fill_zeros(&mut ctx.writer.as_mut().unwrap(), offset - pos)?;
-            }
-        }
-
         let guard = self.write_handles.read().await;
         let mut ctx = guard.get(&handle).unwrap().lock().await;
 
-        // now write the new data
-        debug!("writing new data");
-        let len = ctx.writer.as_mut().unwrap().write(buf)?;
-        ctx.pos += len as u64;
+        // write new data
+        let (pos, len) = {
+            let writer = ctx.writer.as_mut().unwrap();
+            writer.seek(SeekFrom::Start(offset))?;
 
-        if ctx.pos > ctx.attr.size {
+            debug!("writing new data");
+            let len = writer.write(buf)?;
+
+            (writer.stream_position()?, len)
+        };
+
+        if pos > ctx.attr.size {
             // if we write pass file size set the new size
-            debug!("setting new file size {}", ctx.pos);
-            ctx.attr.size = ctx.pos;
+            debug!("setting new file size {}", pos);
+            ctx.attr.size = pos;
         }
-        let actual_file_size = fs::metadata(ctx.path.clone())?.len();
         debug!(
-            "new file size {} actual size {}",
+            "new file size {}",
             ctx.attr.size.to_formatted_string(&Locale::en),
-            actual_file_size.to_formatted_string(&Locale::en)
         );
         ctx.attr.mtime = SystemTime::now();
         ctx.attr.ctime = SystemTime::now();
@@ -1594,7 +1412,7 @@ impl EncryptedFs {
         let map_guard = self.read_write_inode_locks.lock().await;
         let mut handle: Option<u64> = None;
         if read {
-            let lock = map_guard.get_or_insert_with(ino, || Mutex::new(false));
+            let lock = map_guard.get_or_insert_with(ino, || RwLock::new(false));
             handle = Some(self.allocate_next_handle());
             self.do_with_read_handle(
                 *handle.as_ref().unwrap(),
@@ -1603,7 +1421,7 @@ impl EncryptedFs {
             .await?;
         }
         if write {
-            let lock = map_guard.get_or_insert_with(ino, || Mutex::new(false));
+            let lock = map_guard.get_or_insert_with(ino, || RwLock::new(false));
             if let None = handle {
                 handle = Some(self.allocate_next_handle());
             }
@@ -1630,9 +1448,9 @@ impl EncryptedFs {
     pub async fn truncate(&self, ino: u64, size: u64) -> FsResult<()> {
         let lock = {
             let map_guard = self.read_write_inode_locks.lock().await;
-            map_guard.get_or_insert_with(ino, || Mutex::new(false))
+            map_guard.get_or_insert_with(ino, || RwLock::new(false))
         };
-        let _guard = lock.lock().await;
+        let _guard = lock.write().await;
 
         let attr = self.get_inode(ino).await?;
         if matches!(attr.kind, FileType::Directory) {
@@ -1657,7 +1475,7 @@ impl EncryptedFs {
             );
             // decrease size, copy from beginning until size as offset
 
-            // if we have opened writers before the truncated size, flush those
+            // if we have opened writers, flush those
             self.flush_writers(ino).await?;
 
             let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
@@ -1745,86 +1563,25 @@ impl EncryptedFs {
         self.update_inode(ino, set_attr).await?;
 
         // also recreate handles because the file has changed
-        self.recreate_handles(attr.ino, None).await?;
+        self.reset_handles(attr.ino, 0, None).await?;
 
         Ok(())
     }
 
-    /// This will write any dirty data to the file and recreate handles.
+    /// This will write any dirty data to the file.
     /// > ⚠️ **Warning**
     /// > Need to be called in a context with write lock on `self.read_write_inode_locks.lock().await.get(ino)`.
     async fn flush_writers(&self, ino: u64) -> FsResult<()> {
         debug!("flush_writers");
-        let keys: Vec<u64> = self.write_handles.read().await.keys().cloned().collect();
-        for key in keys {
-            let should_process = {
-                let guard = self.write_handles.read().await;
-                let v = guard.get(&key);
-                if let None = v {
-                    false
-                } else {
-                    let ctx = v.unwrap().lock().await;
-                    ctx.ino == ino
-                }
-            };
-            if !should_process {
-                continue;
-            }
-            {
-                let guard = self.write_handles.read().await;
-                let mut ctx = guard.get(&key).unwrap().lock().await;
-                // if we have dirty content (ctx.pos > 0) and position is before file end we copy the rest of the file from position to the end
-                if ctx.pos > 0 && ctx.pos < ctx.attr.size {
-                    debug!("dirty content, copying remaining of file");
-                    let ino = ctx.ino;
-                    let ino_str = ino.to_string();
-                    let file_size = ctx.attr.size;
-                    let pos = ctx.pos;
-                    let len = file_size - pos;
-                    crypto::copy_from_file_exact(
-                        &mut ctx.writer.as_mut().unwrap(),
-                        pos,
-                        len,
-                        &self.cipher,
-                        self.key.get().await?,
-                        ino,
-                        self.data_dir.join(CONTENTS_DIR).join(ino_str),
-                    )?;
-                    ctx.pos += len;
-                }
-            }
-            {
-                let guard = self.write_handles.read().await;
-                let mut ctx = guard.get(&key).unwrap().lock().await;
-                debug!("finishing current writer");
-                ctx.writer.as_mut().unwrap().finish()?;
-            }
-            // if we are in tmp file move it to actual file
-            let (path, ino) = {
-                let guard = self.write_handles.read().await;
-                let ctx = guard.get(&key).unwrap().lock().await;
-                (ctx.path.clone(), ctx.ino)
-            };
-            if path.to_str().unwrap().ends_with(".tmp") {
-                debug!("renaming tmp file to actual file");
-                tokio::fs::rename(path, self.data_dir.join(CONTENTS_DIR).join(ino.to_string()))
-                    .await?;
-                // also recreate handles because the file has changed
-                self.recreate_handles(ino, Some(HashSet::from([key])))
-                    .await?;
-            }
-            // recreate the write handle so opened handle can continue writing
-            {
-                let guard = self.write_handles.read().await;
-                let ctx = guard.get(&key).unwrap().lock().await;
-                self.do_with_write_handle(
-                    key,
-                    WriteHandleContextOperation::RecreateWriter {
-                        existing: ctx,
-                        reset_size: true,
-                    },
-                )
-                .await?;
+        let map = self.opened_files_for_write.read().await;
+        let handle = map.get(&ino);
+        if let Some(handle) = handle {
+            let guard = self.write_handles.read().await;
+            if let Some(lock) = guard.get(handle) {
+                let mut ctx = lock.lock().await;
+                let writer = ctx.writer.as_mut().unwrap();
+                writer.flush()?;
+                writer.seek(SeekFrom::Start(0))?;
             }
         }
 
@@ -1923,6 +1680,37 @@ impl EncryptedFs {
         ))
     }
 
+    /// Create a crypto writer to file using internal encryption info.
+    pub async fn create_crypto_file_writer<Callback: FileCryptoWriterCallback + 'static>(
+        &self,
+        file: PathBuf,
+        nonce_seed: u64,
+        callback: Callback,
+    ) -> FsResult<Box<dyn CryptoWriterSeek<File>>> {
+        Ok(crypto::create_file_writer(
+            file,
+            self.tmp_dir.clone(),
+            self.cipher,
+            self.key.get().await?,
+            nonce_seed,
+            callback,
+        )?)
+    }
+
+    /// Create a crypto reader from file using internal encryption info.
+    pub async fn create_crypto_file_reader(
+        &self,
+        file: PathBuf,
+        nonce_seed: u64,
+    ) -> FsResult<Box<dyn CryptoReader<File>>> {
+        Ok(crypto::create_file_reader(
+            file,
+            self.cipher,
+            self.key.get().await?,
+            nonce_seed,
+        )?)
+    }
+
     /// Create a crypto reader using internal encryption info.
     pub async fn create_crypto_reader(
         &self,
@@ -1989,75 +1777,40 @@ impl EncryptedFs {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
-    async fn recreate_handles(&self, ino: u64, skip: Option<HashSet<u64>>) -> FsResult<()> {
+    async fn reset_handles(&self, ino: u64, pos: u64, skip_fh: Option<u64>) -> FsResult<()> {
         debug!("recreate_handles");
-        let keys: Vec<u64> = self
-            .read_handles
-            .read()
-            .await
-            .keys()
-            .cloned()
-            .filter(|k| {
-                if let Some(ref skip) = skip {
-                    !skip.contains(k)
-                } else {
-                    true
-                }
-            })
-            .collect();
-        for key in keys {
-            {
-                // using if let to skip if the key was removed from another thread
-                if let Some(ctx) = self.read_handles.read().await.get(&key) {
-                    if ctx.lock().await.ino != ino {
-                        continue;
-                    }
-                }
-            }
-            {
-                if let Some(ctx) = self.read_handles.read().await.get(&key) {
-                    debug!("recreating read handle");
-                    self.do_with_read_handle(
-                        key,
-                        ReadHandleContextOperation::RecreateReader {
-                            existing: ctx.lock().await,
-                        },
-                    )
-                    .await?;
+
+        // read
+        if let Some(set) = self.opened_files_for_read.read().await.get(&ino) {
+            for handle in set.iter().filter(|h| match skip_fh {
+                None => true,
+                Some(fh) => **h != fh,
+            }) {
+                let map = self.read_handles.read().await;
+                let mut ctx = map.get(handle).unwrap().lock().await;
+                let reader = ctx.reader.as_mut().unwrap();
+                if reader.stream_position()? > pos {
+                    reader.seek(SeekFrom::Start(0)).unwrap();
                 }
             }
         }
 
         // write
-        let keys: Vec<u64> = self
-            .write_handles
-            .read()
-            .await
-            .keys()
-            .cloned()
-            .filter(|k| {
-                if let Some(ref skip) = skip {
-                    !skip.contains(k)
-                } else {
-                    true
+        if let Some(fh) = self.opened_files_for_write.read().await.get(&ino) {
+            if let Some(handle) = skip_fh {
+                if *fh == handle {
+                    return Ok(());
                 }
-            })
-            .collect();
-        for key in keys {
-            // using if let to skip if the key was removed from another thread
-            if let Some(ctx) = self.write_handles.read().await.get(&key) {
-                if ctx.lock().await.ino != ino {
-                    continue;
-                }
-                debug!("recreating write handle");
-                self.do_with_write_handle(
-                    key,
-                    WriteHandleContextOperation::RecreateWriter {
-                        existing: ctx.lock().await,
-                        reset_size: true,
-                    },
-                )
-                .await?;
+            }
+            if let Some(ctx) = self.write_handles.read().await.get(fh) {
+                let mut ctx = ctx.lock().await;
+                let writer = ctx.writer.as_mut().unwrap();
+                writer.flush()?;
+                writer.seek(SeekFrom::Start(0))?;
+                let attr = self
+                    .get_inode_from_storage(ino, self.key.get().await?)
+                    .await?;
+                ctx.attr.size = attr.size;
             }
         }
 
@@ -2067,12 +1820,11 @@ impl EncryptedFs {
     async fn do_with_read_handle(
         &self,
         handle: u64,
-        op: ReadHandleContextOperation<'_>,
+        op: ReadHandleContextOperation,
     ) -> FsResult<()> {
         let ino = op.get_ino();
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
-        let file = OpenOptions::new().read(true).write(true).open(path)?;
-        let reader = self.create_crypto_reader(file, op.get_ino()).await?;
+        let reader = self.create_crypto_file_reader(path, op.get_ino()).await?;
         let attr = self
             .get_inode_from_storage(ino, self.key.get().await?)
             .await?;
@@ -2082,8 +1834,7 @@ impl EncryptedFs {
                 let ctx = ReadHandleContext {
                     ino,
                     attr,
-                    pos: 0,
-                    reader: Some(Box::new(reader)),
+                    reader: Some(reader),
                     _lock: lock,
                 };
                 self.read_handles
@@ -2097,11 +1848,6 @@ impl EncryptedFs {
                     .or_insert_with(|| HashSet::new())
                     .insert(handle);
             }
-            ReadHandleContextOperation::RecreateReader { mut existing } => {
-                existing.pos = 0;
-                existing.reader.replace(Box::new(reader));
-                existing.attr.size = attr.size;
-            }
         }
         Ok(())
     }
@@ -2109,15 +1855,18 @@ impl EncryptedFs {
     async fn do_with_write_handle(
         &self,
         handle: u64,
-        op: WriteHandleContextOperation<'_>,
+        op: WriteHandleContextOperation,
     ) -> FsResult<()> {
         let ino = op.get_ino();
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path.clone())?;
-        let writer = self.create_crypto_writer(file, op.get_ino()).await?;
+        let callback = LocalFileCryptoWriterCallback(
+            (*self.self_weak.lock().unwrap().as_ref().unwrap()).clone(),
+            ino,
+            handle,
+        );
+        let writer = self
+            .create_crypto_file_writer(path.clone(), ino, callback)
+            .await?;
         match op {
             WriteHandleContextOperation::Create { ino, lock } => {
                 debug!("creating write handle");
@@ -2125,9 +1874,7 @@ impl EncryptedFs {
                 let ctx = WriteHandleContext {
                     ino,
                     attr,
-                    path,
-                    pos: 0,
-                    writer: Some(Box::new(writer)),
+                    writer: Some(writer),
                     _lock: lock,
                 };
                 self.write_handles
@@ -2138,25 +1885,6 @@ impl EncryptedFs {
                     .write()
                     .await
                     .insert(ino, handle);
-            }
-            WriteHandleContextOperation::RecreateWriter {
-                mut existing,
-                reset_size,
-            } => {
-                debug!("recreating writer");
-                existing.pos = 0;
-                existing.writer.replace(Box::new(writer));
-                existing.path = path.clone();
-                if reset_size {
-                    let attr = self
-                        .get_inode_from_storage(ino, self.key.get().await?)
-                        .await?;
-                    existing.attr.size = attr.size;
-                    debug!(
-                        "resetting size to {}",
-                        attr.size.to_formatted_string(&Locale::en)
-                    );
-                }
             }
         }
 
@@ -2266,54 +1994,54 @@ impl EncryptedFs {
             return ino;
         }
     }
+}
 
-    fn read_or_create_key(
-        path: &PathBuf,
-        password: &SecretString,
-        cipher: &Cipher,
-    ) -> FsResult<SecretVec<u8>> {
-        // derive key from password
-        let salt = crypto::hash_secret_string(&password);
-        let derived_key = crypto::derive_key(&password, cipher, salt)?;
-        if path.exists() {
-            // read key
+fn read_or_create_key(
+    path: &PathBuf,
+    password: &SecretString,
+    cipher: &Cipher,
+) -> FsResult<SecretVec<u8>> {
+    // derive key from password
+    let salt = crypto::hash_secret_string(&password);
+    let derived_key = crypto::derive_key(&password, cipher, salt)?;
+    if path.exists() {
+        // read key
 
-            let reader =
-                crypto::create_reader(File::open(path)?, cipher, Arc::new(derived_key), 42_u64);
-            let key_store: KeyStore =
-                bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
-            // check hash
-            if key_store.hash != crypto::hash(key_store.key.expose_secret()) {
-                return Err(FsError::InvalidPassword);
-            }
-            Ok(key_store.key)
-        } else {
-            // first time, create a random key and encrypt it with the derived key from password
-
-            let mut key: Vec<u8> = vec![];
-            let key_len = match cipher {
-                Cipher::ChaCha20 => CHACHA20_POLY1305.key_len(),
-                Cipher::Aes256Gcm => AES_256_GCM.key_len(),
-            };
-            key.resize(key_len, 0);
-            crypto::create_rng().fill_bytes(&mut key);
-            let key = SecretVec::new(key);
-            let key_store = KeyStore::new(key);
-            let mut writer = crypto::create_writer(
-                OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .open(path)?,
-                cipher,
-                Arc::new(derived_key),
-                42_u64,
-            );
-            bincode::serialize_into(&mut writer, &key_store)?;
-            writer.flush()?;
-            writer.finish()?;
-            Ok(key_store.key)
+        let reader =
+            crypto::create_reader(File::open(path)?, cipher, Arc::new(derived_key), 42_u64);
+        let key_store: KeyStore =
+            bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
+        // check hash
+        if key_store.hash != crypto::hash(key_store.key.expose_secret()) {
+            return Err(FsError::InvalidPassword);
         }
+        Ok(key_store.key)
+    } else {
+        // first time, create a random key and encrypt it with the derived key from password
+
+        let mut key: Vec<u8> = vec![];
+        let key_len = match cipher {
+            Cipher::ChaCha20 => CHACHA20_POLY1305.key_len(),
+            Cipher::Aes256Gcm => AES_256_GCM.key_len(),
+        };
+        key.resize(key_len, 0);
+        crypto::create_rng().fill_bytes(&mut key);
+        let key = SecretVec::new(key);
+        let key_store = KeyStore::new(key);
+        let mut writer = crypto::create_writer(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(path)?,
+            cipher,
+            Arc::new(derived_key),
+            42_u64,
+        );
+        bincode::serialize_into(&mut writer, &key_store)?;
+        writer.flush()?;
+        writer.finish()?;
+        Ok(key_store.key)
     }
 }
 
@@ -2399,4 +2127,59 @@ fn merge_attr(attr: &mut FileAttr, set_attr: SetFileAttr) {
     if let Some(flags) = set_attr.flags {
         attr.flags = flags;
     }
+}
+
+struct LocalFileCryptoWriterCallback(Weak<EncryptedFs>, u64, u64);
+
+impl FileCryptoWriterCallback for LocalFileCryptoWriterCallback {
+    fn on_file_content_changed(&self, pos: u64) -> io::Result<()> {
+        if let Some(fs) = self.0.upgrade() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let fs = fs.clone();
+            let ino = self.1;
+            let fh = self.2;
+            tokio::spawn(async move {
+                fs.reset_handles(ino, pos, Some(fh)).await.map_err(|err| {
+                    error!(%err, "reset_handles error");
+                    err
+                })?;
+
+                tx.send(()).unwrap();
+
+                Ok::<(), FsError>(())
+            });
+            rx.recv()
+                .map_err(|_| io::Error::new(Other, "receive error"))?;
+        }
+
+        Ok(())
+    }
+}
+
+pub async fn write_all_string_to_fs(
+    fs: &EncryptedFs,
+    ino: u64,
+    offset: u64,
+    s: &str,
+    fh: u64,
+) -> anyhow::Result<()> {
+    write_all_bytes_to_fs(fs, ino, offset, s.as_bytes(), fh).await
+}
+
+pub async fn write_all_bytes_to_fs(
+    fs: &EncryptedFs,
+    ino: u64,
+    offset: u64,
+    buf: &[u8],
+    fh: u64,
+) -> anyhow::Result<()> {
+    let mut pos = 0_usize;
+    loop {
+        let len = fs.write(ino, offset, &buf[pos..], fh).await.unwrap();
+        pos += len;
+        if pos == buf.len() {
+            break;
+        }
+    }
+    Ok(())
 }

@@ -1,23 +1,26 @@
-use std::{env, io, panic, process};
+use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
+use std::{env, io, panic, process};
 
 use anyhow::Result;
-use clap::{Arg, ArgAction, ArgMatches, Command, crate_version};
+use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
 use ctrlc::set_handler;
 use rpassword::read_password;
 use secrecy::{ExposeSecret, SecretString};
 use strum::IntoEnumIterator;
 use thiserror::Error;
+use tokio::runtime::Runtime;
 use tokio::{fs, task};
-use tracing::{error, info, Level, warn};
 use tracing::level_filters::LevelFilter;
+use tracing::{error, info, warn, Level};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
 use rencfs::crypto::Cipher;
-use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
+use rencfs::encryptedfs::{AsyncRuntime, EncryptedFs, FsError, PasswordProvider};
 use rencfs::is_debug;
 
 mod keyring;
