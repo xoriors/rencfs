@@ -1304,11 +1304,11 @@ fn as_file_kind(mut mode: u32) -> FileType {
     mode &= libc::S_IFMT as u32;
 
     if mode == libc::S_IFREG as u32 {
-        return FileType::RegularFile;
+        FileType::RegularFile
         // } else if mode == libc::S_IFLNK as u32 {
         //     return FileType::Symlink;
     } else if mode == libc::S_IFDIR as u32 {
-        return FileType::Directory;
+        FileType::Directory
     } else {
         unimplemented!("{mode}");
     }
@@ -1368,7 +1368,7 @@ fn check_access(
         access_mask -= access_mask & file_mode;
     }
 
-    return access_mask == 0;
+    access_mask == 0
 }
 
 fn system_time_from_timestamp(t: Timestamp) -> SystemTime {

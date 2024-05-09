@@ -299,7 +299,6 @@ impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
                 .into_temp_path()
                 .to_path_buf();
             let tmp_file = File::create(tmp_path.clone())?;
-            let cipher = cipher;
             self.writer = Box::new(crypto::create_writer(
                 tmp_file,
                 &cipher,

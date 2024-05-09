@@ -231,7 +231,7 @@ pub fn is_debug() -> bool {
     {
         return true;
     }
-    return false;
+    false
 }
 
 #[instrument(skip(password_provider))]
