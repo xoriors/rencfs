@@ -136,14 +136,14 @@ impl EncryptedFsFuse3 {
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
         direct_io: bool,
-        #[allow(clippy::no_effect_underscore_binding)] _suid_support: bool,
+        #[allow(unused_variables)] suid_support: bool,
     ) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")]
         {
             Ok(Self {
                 fs: EncryptedFs::new(data_dir, tmp_dir, password_provider, cipher).await?,
                 direct_io,
-                suid_support: _suid_support,
+                suid_support,
             })
         }
         #[cfg(not(feature = "abi-7-26"))]
