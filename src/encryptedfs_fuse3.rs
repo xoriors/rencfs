@@ -130,6 +130,7 @@ pub struct EncryptedFsFuse3 {
 }
 
 impl EncryptedFsFuse3 {
+    #[allow(clippy::no_effect_underscore_binding)]
     pub async fn new(
         data_dir: PathBuf,
         tmp_dir: PathBuf,
