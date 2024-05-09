@@ -81,11 +81,6 @@ pub fn copy(r: &mut impl Read, w: &mut impl Write, len: u64, stop_on_eof: bool) 
     loop {
         #[allow(clippy::cast_possible_truncation)]
         let buf_len = min(buffer.len(), (len - read_pos) as usize);
-        debug!(
-            "reading from file pos {} buf_len {}",
-            read_pos.to_formatted_string(&Locale::en),
-            buf_len.to_formatted_string(&Locale::en)
-        );
         let read = r.read(&mut buffer[..buf_len]).map_err(|err| {
             error!(
                 "error reading from file pos {} len {}",

@@ -26,7 +26,7 @@ use thiserror::Error;
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::{ArcHashMap, Guard};
 use crate::crypto::reader::CryptoReader;
@@ -626,7 +626,6 @@ impl Iterator for DirectoryEntryPlusIterator {
                 name.unwrap()
             }
         };
-        debug!(name = %name.expose_secret(), "decrypted file name");
 
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(
             crypto::create_reader(file, self.2, self.3.clone(), nonce_seed),
@@ -1174,7 +1173,6 @@ impl EncryptedFs {
 
     #[allow(clippy::missing_errors_doc)]
     pub async fn get_inode(&self, ino: u64) -> FsResult<FileAttr> {
-        debug!("get inode");
         let mut attr = self.get_inode_from_storage(ino, self.key.get().await?)?;
 
         // merge time info and size with any open read handles
@@ -1261,7 +1259,6 @@ impl EncryptedFs {
         buf: &mut [u8],
         handle: u64,
     ) -> FsResult<usize> {
-        debug!("read");
         // lock for reading
         let lock = {
             let map_guard = self.read_write_inode_locks.lock().await;
@@ -1298,13 +1295,6 @@ impl EncryptedFs {
             let size = ctx.attr.size;
             let reader = ctx.reader.as_mut().unwrap();
 
-            info!(
-                "read offset {} pos {} size {}",
-                offset.to_formatted_string(&Locale::en),
-                reader.stream_position()?.to_formatted_string(&Locale::en),
-                buf.len().to_formatted_string(&Locale::en)
-            );
-
             reader.seek(SeekFrom::Start(offset))?;
             let read_len = if reader.stream_position()? + buf.len() as u64 > size {
                 (size - reader.stream_position()?) as usize
@@ -1323,7 +1313,6 @@ impl EncryptedFs {
 
     #[allow(clippy::missing_panics_doc)]
     pub async fn release(&self, handle: u64) -> FsResult<()> {
-        debug!("release");
         if handle == 0 {
             // in case of directory or if the file was crated without being opened we don't use handle
             return Ok(());
@@ -1367,7 +1356,6 @@ impl EncryptedFs {
         if let Some(ctx) = ctx {
             let mut ctx = ctx.lock().await;
 
-            debug!("finishing writer");
             ctx.writer.take().unwrap().finish()?;
 
             self.opened_files_for_write.write().await.remove(&ctx.ino);
@@ -1405,7 +1393,6 @@ impl EncryptedFs {
     /// If the file is not opened for write, it will return an error of type ['FsError::InvalidFileHandle'].
     #[instrument(skip(self, buf))]
     pub async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
-        debug!("");
         // lock for writing
         // todo: give this to the writer to only use it when is actually changing the file
         let lock = {
@@ -1448,7 +1435,6 @@ impl EncryptedFs {
             let writer = ctx.writer.as_mut().unwrap();
             writer.seek(SeekFrom::Start(offset))?;
 
-            debug!("writing new data");
             let len = writer.write(buf)?;
 
             (writer.stream_position()?, len)
@@ -1459,10 +1445,6 @@ impl EncryptedFs {
             debug!("setting new file size {}", pos);
             ctx.attr.size = pos;
         }
-        debug!(
-            "new file size {}",
-            ctx.attr.size.to_formatted_string(&Locale::en),
-        );
         ctx.attr.mtime = SystemTime::now();
         ctx.attr.ctime = SystemTime::now();
         drop(ctx);
@@ -1638,11 +1620,9 @@ impl EncryptedFs {
                 .await?;
 
             // copy existing data until new size
-            debug!("copying data until new size");
             stream_util::copy_exact(&mut reader, &mut writer, size)?;
             writer.flush()?;
             writer.finish()?;
-            debug!("rename from tmp file");
             tokio::fs::rename(
                 tmp_path,
                 self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
@@ -1665,15 +1645,12 @@ impl EncryptedFs {
                 .await?;
 
             // copy existing data
-            debug!("copying existing data");
             stream_util::copy_exact(&mut reader, &mut writer, attr.size)?;
 
             // seek to new size, this will fill up with zeros
-            debug!("filling up with zeros until new size");
             writer.seek(SeekFrom::Start(size))?;
 
             writer.finish()?;
-            debug!("rename from tmp file");
             tokio::fs::rename(
                 tmp_path,
                 self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
@@ -1685,14 +1662,6 @@ impl EncryptedFs {
             .with_size(size)
             .with_mtime(SystemTime::now())
             .with_ctime(SystemTime::now());
-        debug!(
-            "new file size {}",
-            set_attr
-                .size
-                .as_ref()
-                .unwrap()
-                .to_formatted_string(&Locale::en)
-        );
         self.update_inode(ino, set_attr).await?;
 
         // also recreate handles because the file has changed
@@ -1705,7 +1674,6 @@ impl EncryptedFs {
     /// > ⚠️ **Warning**
     /// > Need to be called in a context with write lock on `self.read_write_inode_locks.lock().await.get(ino)`.
     async fn flush_and_reset_writers(&self, ino: u64) -> FsResult<()> {
-        debug!("flush_writers");
         let map = self.opened_files_for_write.read().await;
         let handle = map.get(&ino);
         if let Some(handle) = handle {
@@ -1918,8 +1886,6 @@ impl EncryptedFs {
         pos: u64,
         skip_fh: Option<u64>,
     ) -> FsResult<()> {
-        debug!("recreate_handles");
-
         // read
         if let Some(set) = self.opened_files_for_read.read().await.get(&ino) {
             for handle in set.iter().filter(|h| skip_fh.map_or(true, |fh| **h != fh)) {
@@ -2000,7 +1966,6 @@ impl EncryptedFs {
         let writer = self.create_crypto_file_writer(&path, ino, callback).await?;
         match op {
             WriteHandleContextOperation::Create { ino, lock } => {
-                debug!("creating write handle");
                 let attr = self.get_inode(ino).await?.into();
                 let ctx = WriteHandleContext {
                     ino,

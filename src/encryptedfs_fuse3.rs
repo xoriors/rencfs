@@ -330,16 +330,9 @@ impl Filesystem for EncryptedFsFuse3 {
                 return Err(ENOENT.into());
             }
             _ => {
-                debug!(name = name.to_str().unwrap(), "not found");
                 return Err(ENOENT.into());
             }
         };
-
-        if attr.kind == FileType::Directory {
-            debug!("dir {}", attr.ino);
-        } else {
-            debug!("file {}", attr.ino);
-        }
 
         Ok(ReplyEntry {
             ttl: TTL,
@@ -368,17 +361,10 @@ impl Filesystem for EncryptedFsFuse3 {
                 error!(err = %err);
                 return Err(ENOENT.into());
             }
-            Ok(attr) => {
-                if attr.kind == FileType::Directory {
-                    debug!(inode, "dir");
-                } else {
-                    debug!(inode, "file");
-                }
-                Ok(ReplyAttr {
-                    ttl: TTL,
-                    attr: attr.into(),
-                })
-            }
+            Ok(attr) => Ok(ReplyAttr {
+                ttl: TTL,
+                attr: attr.into(),
+            }),
         }
     }
 
@@ -953,7 +939,6 @@ impl Filesystem for EncryptedFsFuse3 {
                     error!(err = %err);
                     EIO
                 })?;
-            debug!(fh, "opened handle");
             Ok(ReplyOpen {
                 fh,
                 flags: open_flags,
@@ -1202,7 +1187,6 @@ impl Filesystem for EncryptedFsFuse3 {
                 error!(err = %err);
                 Errno::from(ENOENT)
             })?;
-        debug!(handle, "created handle");
         Ok(ReplyCreated {
             ttl: TTL,
             attr: attr.into(),
