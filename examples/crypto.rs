@@ -1,3 +1,4 @@
+use std::env::args;
 use std::fs::File;
 use std::io;
 use std::path::Path;
@@ -15,16 +16,16 @@ fn main() -> anyhow::Result<()> {
     let cipher = Cipher::ChaCha20;
     let key = Arc::new(crypto::derive_key(&password, &cipher, salt).unwrap());
 
-    let path_in = "/home/gnome/Downloads/jetbrains-toolbox-2.2.1.19765.tar.gz";
-    let path_out = "/tmp/jetbrains-toolbox-2.2.1.19765.tar.gz";
-    // let path_in = "/home/gnome/tmp/1";
-    // let path_out = "/tmp/1";
+    let mut args = args();
+    let path_in = args.next().expect("path_in is missing");
+    let path_out = format!(
+        "/tmp/{}.enc",
+        Path::new(&path_in).file_name().unwrap().to_str().unwrap()
+    );
     let out = Path::new(&path_out).to_path_buf();
     if out.exists() {
         std::fs::remove_file(&out)?;
     }
-    // let path_in = "/home/gnome/Downloads/99cff0fd-d05a-43f1-a214-e0512ae2576b.jpeg";
-    // let path_out = "/tmp/99cff0fd-d05a-43f1-a214-e0512ae2576b.jpeg";
 
     struct CallbackImpl {}
     impl FileCryptoWriterCallback for CallbackImpl {
@@ -36,13 +37,13 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
     }
-    let mut file = File::open(path_in).unwrap();
+    let mut file = File::open(path_in.clone()).unwrap();
     let mut writer = crypto::create_file_writer(
         Path::new(&path_out).to_path_buf(),
         Path::new(&"/tmp").to_path_buf(),
         cipher,
         key.clone(),
-        274004967328880354,
+        42_u64,
         CallbackImpl {},
     )?;
     io::copy(&mut file, &mut writer).unwrap();
@@ -53,7 +54,7 @@ fn main() -> anyhow::Result<()> {
         Path::new(&path_out).to_path_buf(),
         cipher,
         key.clone(),
-        274004967328880354,
+        42_u64,
     )?;
     let hash1 = crypto::hash_reader(File::open(path_in).unwrap());
     let hash2 = crypto::hash_reader(&mut reader);
