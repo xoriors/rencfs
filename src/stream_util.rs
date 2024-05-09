@@ -28,6 +28,7 @@ pub fn seek_forward(r: &mut impl Read, len: u64, stop_on_eof: bool) -> io::Resul
     let mut buffer = vec![0; BUF_SIZE];
     let mut pos = 0_u64;
     loop {
+        #[allow(clippy::cast_possible_truncation)]
         let read_len = if pos + buffer.len() as u64 > len {
             (len - pos) as usize
         } else {
@@ -51,12 +52,11 @@ pub fn seek_forward(r: &mut impl Read, len: u64, stop_on_eof: bool) -> io::Resul
         } else if read == 0 {
             if stop_on_eof {
                 break;
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "unexpected eof",
-                ))?;
             }
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected eof",
+            ));
         }
     }
 
@@ -79,6 +79,7 @@ pub fn copy(r: &mut impl Read, w: &mut impl Write, len: u64, stop_on_eof: bool) 
     let mut buffer = vec![0; BUF_SIZE];
     let mut read_pos = 0_u64;
     loop {
+        #[allow(clippy::cast_possible_truncation)]
         let buf_len = min(buffer.len(), (len - read_pos) as usize);
         debug!(
             "reading from file pos {} buf_len {}",
@@ -100,12 +101,11 @@ pub fn copy(r: &mut impl Read, w: &mut impl Write, len: u64, stop_on_eof: bool) 
         } else if read == 0 {
             if stop_on_eof {
                 break;
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "unexpected eof",
-                ))?;
             }
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected eof",
+            ));
         }
     }
     Ok(read_pos)
@@ -120,6 +120,7 @@ pub fn fill_zeros(w: &mut impl Write, len: u64) -> io::Result<()> {
     let buffer = vec![0; BUF_SIZE];
     let mut written = 0_u64;
     loop {
+        #[allow(clippy::cast_possible_truncation)]
         let buf_len = min(buffer.len(), (len - written) as usize);
         w.write_all(&buffer[..buf_len])?;
         written += buf_len as u64;

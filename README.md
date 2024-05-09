@@ -124,7 +124,7 @@ You can specify the log level adding the `--log-level` argument to the command l
 values: `TRACE`, `DEBUG`, `INFO` (default), `WARN`, `ERROR`.
 
 ```bash
---log-level LEVEL
+rencfs --log-level LEVEL ...
 ```
 
 ## Start it in docker
@@ -228,6 +228,14 @@ cargo build --release
 ```bash
 cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
 ```
+
+## Developing inside a Container
+
+See here how to configure for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers)\
+And here for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html)
+
+You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build
+and run the app.
 
 # Future
 

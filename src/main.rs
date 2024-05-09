@@ -35,16 +35,8 @@ async fn main() -> Result<()> {
     let log_level = if is_debug() {
         Level::DEBUG
     } else {
-        let str = match matches.subcommand() {
-            Some(("mount", matches)) => {
-                Some(matches.get_one::<String>("log-level").unwrap().as_str())
-            }
-            Some(("change-password", matches)) => {
-                Some(matches.get_one::<String>("log-level").unwrap().as_str())
-            }
-            _ => None,
-        };
-        let log_level = Level::from_str(str.unwrap());
+        let str = matches.get_one::<String>("log-level").unwrap().as_str();
+        let log_level = Level::from_str(str);
         if log_level.is_err() {
             error!("Invalid log level");
             return Err(ExitStatusError::Failure(1).into());
@@ -69,7 +61,7 @@ async fn main() -> Result<()> {
     })
     .await;
     match res {
-        Ok(Ok(Ok(_))) => Ok(()),
+        Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(err))) => {
             let err2 = err.downcast_ref::<ExitStatusError>();
             if let Some(ExitStatusError::Failure(code)) = err2 {
@@ -101,12 +93,21 @@ async fn main() -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn get_cli_args() -> ArgMatches {
-    let matches = Command::new("RencFs")
+    Command::new("RencFs")
         .version(crate_version!())
         .author("Radu Marias")
-        .subcommand_required(true)
         .arg_required_else_help(true)
+        .arg(
+            Arg::new("log-level")
+                .long("log-level")
+                .short('l')
+                .value_name("log-level")
+                .default_value("INFO")
+                .help("Log level, possible values: TRACE, DEBUG, INFO, WARN, ERROR"),
+        )
+        .subcommand_required(true)
         .subcommand(
             Command::new("mount")
                 .about("Mount the filesystem exposing decrypted content from data dir")
@@ -186,18 +187,10 @@ fn get_cli_args() -> ArgMatches {
                         .default_value("ChaCha20")
                         .help(format!("Cipher used for encryption, possible values: {}",
                                       Cipher::iter().fold(String::new(), |mut acc, x| {
-                                          acc.push_str(format!("{acc}{}{x}", if acc.len() != 0 { ", " } else { "" }).as_str());
+                                          acc.push_str(format!("{acc}{}{x}", if acc.is_empty() { "" } else { ", " }).as_str());
                                           acc
                                       }).as_str()),
                         )
-                )
-                .arg(
-                    Arg::new("log-level")
-                        .long("log-level")
-                        .short('l')
-                        .value_name("log-level")
-                        .default_value("INFO")
-                        .help("Log level, possible values: TRACE, DEBUG, INFO, WARN, ERROR"),
                 )
         ).subcommand(
         Command::new("change-password")
@@ -218,30 +211,21 @@ fn get_cli_args() -> ArgMatches {
                     .default_value("ChaCha20")
                     .help(format!("Cipher used for encryption, possible values: {}",
                                   Cipher::iter().fold(String::new(), |mut acc, x| {
-                                      acc.push_str(format!("{acc}{}{x}", if acc.len() != 0 { ", " } else { "" }).as_str());
+                                      acc.push_str(format!("{acc}{}{x}", if acc.is_empty() { "" } else { ", " }).as_str());
                                       acc
                                   }).as_str()),
                     )
             )
-            .arg(
-                Arg::new("log-level")
-                    .long("log-level")
-                    .short('l')
-                    .value_name("log-level")
-                    .default_value("INFO")
-                    .help("Log level, possible values: TRACE, DEBUG, INFO, WARN, ERROR"),
-            )
     )
-        .get_matches();
-    matches
+        .get_matches()
 }
 
 async fn async_main() -> Result<()> {
     let matches = get_cli_args();
 
     match matches.subcommand() {
-        Some(("change-password", matches)) => run_change_password(&matches).await?,
-        Some(("mount", matches)) => run_mount(&matches).await?,
+        Some(("change-password", matches)) => run_change_password(matches).await?,
+        Some(("mount", matches)) => run_mount(matches).await?,
         None => {
             error!("No subcommand provided");
             return Err(ExitStatusError::Failure(1).into());
@@ -327,7 +311,7 @@ async fn run_mount(matches: &ArgMatches) -> Result<()> {
 
     // when running from IDE we can't read from stdin with rpassword, get it from env var
     let mut password =
-        SecretString::new(env::var("RENCFS_PASSWORD").unwrap_or_else(|_| "".to_string()));
+        SecretString::new(env::var("RENCFS_PASSWORD").unwrap_or_else(|_| String::new()));
     if password.expose_secret().is_empty() {
         // read password from stdin
         print!("Enter password: ");
@@ -354,9 +338,9 @@ async fn run_mount(matches: &ArgMatches) -> Result<()> {
         }
     }
     // save password in keyring
-    keyring::save(password.clone(), "password").map_err(|err| {
+    keyring::save(&password, "password").map_err(|err| {
         error!(err = %err);
-        ExitStatusError::from(ExitStatusError::Failure(1))
+        ExitStatusError::Failure(1)
     })?;
 
     if matches.get_flag("umount-on-start") {
@@ -394,8 +378,9 @@ async fn run_mount(matches: &ArgMatches) -> Result<()> {
     })
     .unwrap();
 
+    #[allow(clippy::items_after_statements)]
     struct PasswordProviderImpl {}
-
+    #[allow(clippy::items_after_statements)]
     impl PasswordProvider for PasswordProviderImpl {
         fn get_password(&self) -> Option<SecretString> {
             keyring::get("password")
@@ -431,8 +416,11 @@ fn umount(mountpoint: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::missing_panics_doc)]
 pub fn log_init(level: Level) -> WorkerGuard {
-    let directive = format!("rencfs={}", level.as_str()).parse().unwrap();
+    let directive = format!("rencfs={}", level.as_str())
+        .parse()
+        .expect("cannot parse log directive");
     let filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
         .from_env()
@@ -445,9 +433,9 @@ pub fn log_init(level: Level) -> WorkerGuard {
         .with_env_filter(filter);
     // .with_max_level(level);
     if is_debug() {
-        builder.pretty().init()
+        builder.pretty().init();
     } else {
-        builder.pretty().init()
+        builder.init();
     }
 
     guard

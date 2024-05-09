@@ -67,6 +67,7 @@ impl Iterator for DirectoryEntryIterator {
                     inode: entry.ino,
                     kind,
                     name: OsString::from(entry.name.expose_secret()),
+                    #[allow(clippy::cast_possible_wrap)]
                     offset: self.1 as i64,
                 }))
             }
@@ -102,6 +103,7 @@ impl Iterator for DirectoryEntryPlusIterator {
                     generation: 0,
                     kind,
                     name: OsString::from(entry.name.expose_secret()),
+                    #[allow(clippy::cast_possible_wrap)]
                     offset: self.1 as i64,
                     attr: entry.attr.into(),
                     entry_ttl: TTL,
@@ -158,7 +160,8 @@ impl EncryptedFsFuse3 {
         self.fs.clone()
     }
 
-    fn creation_mode(&self, mode: u32) -> u16 {
+    #[allow(clippy::cast_possible_truncation)]
+    const fn creation_mode(&self, mode: u32) -> u16 {
         if self.suid_support {
             mode as u16
         } else {
@@ -237,7 +240,8 @@ impl EncryptedFsFuse3 {
     }
 }
 
-fn creation_gid(parent: &FileAttr, gid: u32) -> u32 {
+#[allow(clippy::cast_possible_truncation)]
+const fn creation_gid(parent: &FileAttr, gid: u32) -> u32 {
     if parent.perm & libc::S_ISGID as u16 != 0 {
         return parent.gid;
     }
@@ -247,7 +251,7 @@ fn creation_gid(parent: &FileAttr, gid: u32) -> u32 {
 
 impl From<FileAttr> for fuse3::raw::prelude::FileAttr {
     fn from(from: FileAttr) -> Self {
-        fuse3::raw::prelude::FileAttr {
+        Self {
             ino: from.ino,
             size: from.size,
             blocks: from.blocks,
@@ -271,7 +275,7 @@ impl From<FileAttr> for fuse3::raw::prelude::FileAttr {
 
 impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
-    async fn init(&self, _req: Request) -> Result<ReplyInit> {
+    async fn init(&self, req: Request) -> Result<ReplyInit> {
         trace!("");
 
         Ok(ReplyInit {
@@ -280,7 +284,7 @@ impl Filesystem for EncryptedFsFuse3 {
     }
 
     #[instrument(skip(self))]
-    async fn destroy(&self, _req: Request) {
+    async fn destroy(&self, req: Request) {
         trace!("");
     }
 
@@ -352,10 +356,10 @@ impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn getattr(
         &self,
-        _req: Request,
+        req: Request,
         inode: u64,
-        _fh: Option<u64>,
-        _flags: u32,
+        fh: Option<u64>,
+        flags: u32,
     ) -> Result<ReplyAttr> {
         trace!("");
 
@@ -379,11 +383,12 @@ impl Filesystem for EncryptedFsFuse3 {
     }
 
     #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
+    #[allow(clippy::cast_possible_truncation)]
     async fn setattr(
         &self,
         req: Request,
         inode: Inode,
-        _fh: Option<u64>,
+        fh: Option<u64>,
         set_attr: SetAttr,
     ) -> Result<ReplyAttr> {
         trace!("");
@@ -394,18 +399,18 @@ impl Filesystem for EncryptedFsFuse3 {
             Errno::from(ENOENT)
         })?;
 
-        let mut set_attr2: SetFileAttr = Default::default();
+        let mut set_attr2 = SetFileAttr::default();
 
         if let Some(mode) = set_attr.mode {
             debug!("chmod mode={mode:o}");
-            let mut set_attr2: SetFileAttr = Default::default();
+            let mut set_attr2 = SetFileAttr::default();
             if req.uid != 0 && req.uid != attr.uid {
                 return Err(EPERM.into());
             }
             if req.uid != 0 && req.gid != attr.gid && !get_groups(req.pid).contains(&attr.gid) {
                 // If SGID is set and the file belongs to a group that the caller is not part of
                 // then the SGID bit is suppose to be cleared during chmod
-                set_attr2 = set_attr2.with_perm((mode & !libc::S_ISGID as u32) as u16);
+                set_attr2 = set_attr2.with_perm((mode & !libc::S_ISGID) as u16);
             } else {
                 set_attr2 = set_attr2.with_perm(mode as u16);
             }
@@ -430,7 +435,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         if set_attr.uid.is_some() || set_attr.gid.is_some() {
             debug!(?set_attr.uid, ?set_attr.gid, "chown");
-            let mut set_attr2: SetFileAttr = Default::default();
+            let mut set_attr2 = SetFileAttr::default();
             if let Some(gid) = set_attr2.gid {
                 // Non-root users can only change gid to a group they're in
                 if req.uid != 0 && !get_groups(req.pid).contains(&gid) {
@@ -459,14 +464,14 @@ impl Filesystem for EncryptedFsFuse3 {
             if let Some(uid) = set_attr2.uid {
                 set_attr2 = set_attr2.with_uid(uid);
                 // Clear SETUID on owner change
-                let perm = set_attr2.perm.as_ref().unwrap().clone();
+                let perm = *set_attr2.perm.as_ref().unwrap();
                 set_attr2 = set_attr2.with_perm(perm & !(libc::S_ISUID as u16));
             }
             if let Some(gid) = set_attr2.gid {
                 set_attr2 = set_attr2.with_gid(gid);
                 // Clear SETGID unless user is root
                 if req.uid != 0 {
-                    let perm = set_attr2.perm.as_ref().unwrap().clone();
+                    let perm = *set_attr2.perm.as_ref().unwrap();
                     set_attr2 = set_attr2.with_perm(perm & !(libc::S_ISGID as u16));
                 }
             }
@@ -554,16 +559,16 @@ impl Filesystem for EncryptedFsFuse3 {
         parent: Inode,
         name: &OsStr,
         mode: u32,
-        _rdev: u32,
+        rdev: u32,
     ) -> Result<ReplyEntry> {
         trace!("");
         debug!("mode={mode:o}");
 
-        let file_type = mode & libc::S_IFMT as u32;
+        let file_type = mode & libc::S_IFMT;
 
-        if file_type != libc::S_IFREG as u32
+        if file_type != libc::S_IFREG
             // && file_type != libc::S_IFLNK as u32
-            && file_type != libc::S_IFDIR as u32
+            && file_type != libc::S_IFDIR
         {
             // TODO
             warn!("implementation is incomplete. Only supports regular files and directories. Got mode={mode:o}");
@@ -626,8 +631,9 @@ impl Filesystem for EncryptedFsFuse3 {
         if req.uid != 0 {
             mode &= !(libc::S_ISUID | libc::S_ISGID);
         }
+        #[allow(clippy::cast_possible_truncation)]
         if parent_attr.perm & libc::S_ISGID as u16 != 0 {
-            mode |= libc::S_ISGID as u32;
+            mode |= libc::S_ISGID;
         }
         attr.perm = self.creation_mode(mode);
 
@@ -696,6 +702,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         let uid = req.uid;
         // "Sticky bit" handling
+        #[allow(clippy::cast_possible_truncation)]
         if parent_attr.perm & libc::S_ISVTX as u16 != 0
             && uid != 0
             && uid != parent_attr.uid
@@ -723,9 +730,7 @@ impl Filesystem for EncryptedFsFuse3 {
     async fn rmdir(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         trace!("");
 
-        let parent_attr = if let Ok(attr) = self.get_fs().get_inode(parent).await {
-            attr
-        } else {
+        let Ok(parent_attr) = self.get_fs().get_inode(parent).await else {
             error!(parent, "not found");
             return Err(ENOENT.into());
         };
@@ -741,19 +746,16 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(EACCES.into());
         }
 
-        let attr = match self
+        let Ok(Some(attr)) = self
             .get_fs()
             .find_by_name(
                 parent,
                 &SecretString::from_str(name.to_str().unwrap()).unwrap(),
             )
             .await
-        {
-            Ok(Some(attr)) => attr,
-            _ => {
-                error!(parent, name = name.to_str().unwrap());
-                return Err(ENOENT.into());
-            }
+        else {
+            error!(parent, name = name.to_str().unwrap());
+            return Err(ENOENT.into());
         };
 
         if attr.kind != FileType::Directory {
@@ -762,6 +764,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         let uid = req.uid;
         // "Sticky bit" handling
+        #[allow(clippy::cast_possible_truncation)]
         if parent_attr.perm & libc::S_ISVTX as u16 != 0
             && uid != 0
             && uid != parent_attr.uid
@@ -799,16 +802,14 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<()> {
         trace!("");
 
-        let attr = if let Ok(Some(attr)) = self
+        let Ok(Some(attr)) = self
             .get_fs()
             .find_by_name(
                 parent,
                 &SecretString::from_str(name.to_str().unwrap()).unwrap(),
             )
             .await
-        {
-            attr
-        } else {
+        else {
             error!(
                 parent,
                 name = name.to_str().unwrap(),
@@ -817,9 +818,7 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(ENOENT.into());
         };
 
-        let parent_attr = if let Ok(attr) = self.get_fs().get_inode(parent).await {
-            attr
-        } else {
+        let Ok(parent_attr) = self.get_fs().get_inode(parent).await else {
             error!(parent, "parent not found");
             return Err(ENOENT.into());
         };
@@ -836,6 +835,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         // "Sticky bit" handling
+        #[allow(clippy::cast_possible_truncation)]
         if parent_attr.perm & libc::S_ISVTX as u16 != 0
             && req.uid != 0
             && req.uid != parent_attr.uid
@@ -844,9 +844,7 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(EACCES.into());
         }
 
-        let new_parent_attr = if let Ok(attr) = self.get_fs().get_inode(new_parent).await {
-            attr
-        } else {
+        let Ok(new_parent_attr) = self.get_fs().get_inode(new_parent).await else {
             error!(new_parent, "not found");
             return Err(ENOENT.into());
         };
@@ -863,6 +861,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         // "Sticky bit" handling in new_parent
+        #[allow(clippy::cast_possible_truncation)]
         if new_parent_attr.perm & libc::S_ISVTX as u16 != 0 {
             if let Ok(Some(new_attrs)) = self
                 .get_fs()
@@ -897,7 +896,7 @@ impl Filesystem for EncryptedFsFuse3 {
             )
             .await
         {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(FsError::NotEmpty) => Err(ENOTEMPTY.into()),
             _ => Err(ENOENT.into()),
         }
@@ -907,6 +906,7 @@ impl Filesystem for EncryptedFsFuse3 {
     async fn open(&self, req: Request, inode: Inode, flags: u32) -> Result<ReplyOpen> {
         trace!("");
 
+        #[allow(clippy::cast_possible_wrap)]
         let (access_mask, read, write) = match flags as i32 & libc::O_ACCMODE {
             libc::O_RDONLY => {
                 // Behavior is undefined, but most filesystems return EACCES
@@ -928,9 +928,9 @@ impl Filesystem for EncryptedFsFuse3 {
             }
         };
 
-        let _create = flags & libc::O_CREAT as u32 != 0;
+        // let _create = flags & libc::O_CREAT as u32 != 0;
         let truncate = flags & libc::O_TRUNC as u32 != 0;
-        let _append = flags & libc::O_APPEND as u32 != 0;
+        // let _append = flags & libc::O_APPEND as u32 != 0;
 
         let attr = self.get_fs().get_inode(inode).await.map_err(|err| {
             error!(err = %err);
@@ -966,7 +966,7 @@ impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self), err(level = Level::INFO))]
     async fn read(
         &self,
-        _req: Request,
+        req: Request,
         inode: u64,
         fh: u64,
         offset: u64,
@@ -989,13 +989,13 @@ impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self, data), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn write(
         &self,
-        _req: Request,
+        req: Request,
         inode: Inode,
         fh: u64,
         offset: u64,
         data: &[u8],
-        _write_flags: u32,
-        _flags: u32,
+        write_flags: u32,
+        flags: u32,
     ) -> Result<ReplyWrite> {
         trace!("");
         debug!(size = data.len());
@@ -1005,18 +1005,18 @@ impl Filesystem for EncryptedFsFuse3 {
             .write(inode, offset, data, fh)
             .await
             .map_err(|err| {
-                error!("{err:#?}");
                 error!(err = %err);
                 EIO
             })?;
 
         Ok(ReplyWrite {
+            #[allow(clippy::cast_possible_truncation)]
             written: len as u32,
         })
     }
 
     #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
-    async fn statfs(&self, _req: Request, inode: u64) -> Result<ReplyStatFs> {
+    async fn statfs(&self, req: Request, inode: u64) -> Result<ReplyStatFs> {
         trace!("");
         warn!("implementation is a stub");
         Ok(STATFS)
@@ -1055,7 +1055,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 error!(err = %err);
                 Errno::from(ENOENT)
             })?;
-            let mut set_attr: SetFileAttr = Default::default();
+            let mut set_attr = SetFileAttr::default();
 
             // XXX: In theory we should only need to do this when WRITE_KILL_PRIV is set for 7.31+
             // However, xfstests fail in that case
@@ -1082,6 +1082,7 @@ impl Filesystem for EncryptedFsFuse3 {
     }
 
     #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
+    #[allow(clippy::cast_possible_wrap)]
     async fn opendir(&self, req: Request, inode: Inode, flags: u32) -> Result<ReplyOpen> {
         trace!("");
 
@@ -1125,7 +1126,7 @@ impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self), err(level = Level::INFO))]
     async fn readdir(
         &self,
-        _req: Request,
+        req: Request,
         inode: u64,
         fh: u64,
         offset: i64,
@@ -1142,6 +1143,8 @@ impl Filesystem for EncryptedFsFuse3 {
         let iter = DirectoryEntryIterator(iter, 0);
 
         Ok(ReplyDirectory {
+            #[allow(clippy::cast_possible_truncation)]
+            #[allow(clippy::cast_sign_loss)]
             entries: stream::iter(iter.skip(offset as usize)),
         })
     }
@@ -1157,16 +1160,17 @@ impl Filesystem for EncryptedFsFuse3 {
     async fn access(&self, req: Request, inode: u64, mask: u32) -> Result<()> {
         trace!("");
 
-        match self.get_fs().get_inode(inode).await {
-            Ok(attr) => {
+        self.get_fs().get_inode(inode).await.map_or_else(
+            |_| Err(ENOENT.into()),
+            |attr| {
+                #[allow(clippy::cast_possible_wrap)]
                 if check_access(attr.uid, attr.gid, attr.perm, req.uid, req.gid, mask as i32) {
                     Ok(())
                 } else {
                     Err(EACCES.into())
                 }
-            }
-            _ => Err(ENOENT.into()),
-        }
+            },
+        )
     }
 
     #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::DEBUG))]
@@ -1180,6 +1184,7 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyCreated> {
         trace!("");
 
+        #[allow(clippy::cast_possible_wrap)]
         let (read, write) = match flags as i32 & libc::O_ACCMODE {
             libc::O_RDONLY => (true, false),
             libc::O_WRONLY => (false, true),
@@ -1212,11 +1217,11 @@ impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self), err(level = Level::INFO))]
     async fn readdirplus(
         &self,
-        _req: Request,
+        req: Request,
         parent: u64,
-        _fh: u64,
+        fh: u64,
         offset: u64,
-        _lock_owner: u64,
+        lock_owner: u64,
     ) -> Result<ReplyDirectoryPlus<Self::DirEntryPlusStream<'_>>> {
         trace!("");
 
@@ -1230,6 +1235,7 @@ impl Filesystem for EncryptedFsFuse3 {
         let iter = DirectoryEntryPlusIterator(iter, 0);
 
         Ok(ReplyDirectoryPlus {
+            #[allow(clippy::cast_possible_truncation)]
             entries: stream::iter(iter.skip(offset as usize)),
         })
     }
@@ -1249,6 +1255,7 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyCopyFileRange> {
         trace!("");
 
+        #[allow(clippy::cast_possible_truncation)]
         match self
             .get_fs()
             .copy_file_range(
@@ -1291,7 +1298,8 @@ fn get_groups(pid: u32) -> Vec<u32> {
     vec![]
 }
 
-fn clear_suid_sgid(mut perm: u16) -> u16 {
+#[allow(clippy::cast_possible_truncation)]
+const fn clear_suid_sgid(mut perm: u16) -> u16 {
     perm &= !libc::S_ISUID as u16;
     // SGID is only suppose to be cleared if XGRP is set
     if perm & libc::S_IXGRP as u16 != 0 {
@@ -1301,20 +1309,20 @@ fn clear_suid_sgid(mut perm: u16) -> u16 {
 }
 
 fn as_file_kind(mut mode: u32) -> FileType {
-    mode &= libc::S_IFMT as u32;
+    mode &= libc::S_IFMT;
 
-    if mode == libc::S_IFREG as u32 {
+    if mode == libc::S_IFREG {
         FileType::RegularFile
         // } else if mode == libc::S_IFLNK as u32 {
         //     return FileType::Symlink;
-    } else if mode == libc::S_IFDIR as u32 {
+    } else if mode == libc::S_IFDIR {
         FileType::Directory
     } else {
         unimplemented!("{mode}");
     }
 }
 
-fn dir_attr() -> CreateFileAttr {
+const fn dir_attr() -> CreateFileAttr {
     CreateFileAttr {
         kind: FileType::Directory,
         perm: 0o777,
@@ -1325,7 +1333,7 @@ fn dir_attr() -> CreateFileAttr {
     }
 }
 
-fn file_attr() -> CreateFileAttr {
+const fn file_attr() -> CreateFileAttr {
     CreateFileAttr {
         kind: FileType::RegularFile,
         perm: 0o644,
@@ -1337,8 +1345,8 @@ fn file_attr() -> CreateFileAttr {
 }
 
 fn check_access(
-    file_uid: u32,
-    file_gid: u32,
+    #[allow(clippy::similar_names)] file_uid: u32,
+    #[allow(clippy::similar_names)] file_gid: u32,
     file_mode: u16,
     uid: u32,
     gid: u32,
@@ -1371,6 +1379,7 @@ fn check_access(
     access_mask == 0
 }
 
+#[allow(clippy::cast_sign_loss)]
 fn system_time_from_timestamp(t: Timestamp) -> SystemTime {
     UNIX_EPOCH + Duration::new(t.sec as u64, t.nsec)
 }

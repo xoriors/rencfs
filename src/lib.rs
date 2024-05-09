@@ -1,4 +1,14 @@
 // #![feature(error_generic_member_access)]
+#![deny(clippy::all)]
+#![deny(clippy::pedantic)]
+#![deny(clippy::nursery)]
+#![deny(clippy::cargo)]
+// #![deny(missing_docs)]
+#![allow(clippy::similar_names)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::significant_drop_tightening)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::missing_errors_doc)]
 //! # Encrypted File System
 //!
 //! An encrypted file system that mounts with FUSE on Linux. It can be used to create encrypted directories.
@@ -12,7 +22,7 @@
 //!
 //! In the following example, we will see how we can use the library.
 //!
-//! ## Calling (run_fuse)[run_fuse]
+//! ## Calling (`run_fuse`)[`run_fuse`]
 //!
 //! ### Example
 //!
@@ -226,7 +236,8 @@ pub mod expire_value;
 pub mod stream_util;
 
 #[allow(unreachable_code)]
-pub fn is_debug() -> bool {
+#[must_use]
+pub const fn is_debug() -> bool {
     #[cfg(debug_assertions)]
     {
         return true;

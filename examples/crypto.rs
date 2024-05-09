@@ -7,14 +7,14 @@ use std::sync::Arc;
 use secrecy::SecretString;
 
 use rencfs::crypto;
-use rencfs::crypto::writer::{CryptoWriter, FileCryptoWriterCallback};
+use rencfs::crypto::writer::FileCryptoWriterCallback;
 use rencfs::crypto::Cipher;
 
 fn main() -> anyhow::Result<()> {
     let password = SecretString::new("password".to_string());
     let salt = crypto::hash_secret_string(&password);
     let cipher = Cipher::ChaCha20;
-    let key = Arc::new(crypto::derive_key(&password, &cipher, salt).unwrap());
+    let key = Arc::new(crypto::derive_key(&password, cipher, salt).unwrap());
 
     let mut args = args();
     let path_in = args.next().expect("path_in is missing");
@@ -39,8 +39,8 @@ fn main() -> anyhow::Result<()> {
     }
     let mut file = File::open(path_in.clone()).unwrap();
     let mut writer = crypto::create_file_writer(
-        Path::new(&path_out).to_path_buf(),
-        Path::new(&"/tmp").to_path_buf(),
+        &Path::new(&path_out).to_path_buf(),
+        &Path::new(&"/tmp").to_path_buf(),
         cipher,
         key.clone(),
         42_u64,
@@ -51,7 +51,7 @@ fn main() -> anyhow::Result<()> {
     writer.finish().unwrap();
 
     let mut reader = crypto::create_file_reader(
-        Path::new(&path_out).to_path_buf(),
+        &Path::new(&path_out).to_path_buf(),
         cipher,
         key.clone(),
         42_u64,

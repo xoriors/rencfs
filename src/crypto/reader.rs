@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use num_format::{Locale, ToFormattedString};
@@ -14,7 +14,9 @@ use crate::crypto::writer::{RandomNonceSequence, BUF_SIZE};
 use crate::crypto::Cipher;
 use crate::{crypto, stream_util};
 
+#[allow(clippy::module_name_repetitions)]
 pub trait CryptoReader<R: Read + Seek>: Read + Seek + Send + Sync {
+    #[allow(clippy::missing_errors_doc)]
     fn finish(&mut self) -> io::Result<R>;
 }
 
@@ -52,6 +54,7 @@ pub trait CryptoReader<R: Read + Seek>: Read + Seek + Send + Sync {
 
 /// ring
 
+#[allow(clippy::module_name_repetitions)]
 pub struct RingCryptoReader<R: Read + Seek + Send + Sync> {
     input: Option<R>,
     opening_key: OpeningKey<RandomNonceSequence>,
@@ -69,7 +72,7 @@ impl<R: Read + Seek + Send + Sync> RingCryptoReader<R> {
         key: Arc<SecretVec<u8>>,
         nonce_seed: u64,
     ) -> Self {
-        let opening_key = Self::create_opening_key(algorithm, key.clone(), nonce_seed);
+        let opening_key = Self::create_opening_key(algorithm, &key, nonce_seed);
         let buf = BufMut::new(vec![0; BUF_SIZE + algorithm.tag_len()]);
         Self {
             input: Some(r),
@@ -84,7 +87,7 @@ impl<R: Read + Seek + Send + Sync> RingCryptoReader<R> {
 
     fn create_opening_key(
         algorithm: &'static Algorithm,
-        key: Arc<SecretVec<u8>>,
+        key: &Arc<SecretVec<u8>>,
         nonce_seed: u64,
     ) -> OpeningKey<RandomNonceSequence> {
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).unwrap();
@@ -100,7 +103,7 @@ impl<R: Read + Seek + Send + Sync> RingCryptoReader<R> {
                 // to read from the beginning until the desired offset
                 debug!("seeking back, recreating decryptor");
                 self.opening_key =
-                    Self::create_opening_key(self.algorithm, self.key.clone(), self.nonce_seed);
+                    Self::create_opening_key(self.algorithm, &self.key, self.nonce_seed);
                 self.buf.clear();
                 self.pos = 0;
                 self.input.as_mut().unwrap().seek(SeekFrom::Start(0))?;
@@ -151,10 +154,10 @@ impl<R: Read + Seek + Send + Sync> Read for RingCryptoReader<R> {
             if len == 0 {
                 return Ok(0);
             }
-            let mut data = &mut buffer[..len];
+            let data = &mut buffer[..len];
             let plaintext = self
                 .opening_key
-                .open_within(Aad::empty(), &mut data, 0..)
+                .open_within(Aad::empty(), data, 0..)
                 .map_err(|err| {
                     error!("error opening within: {}", err);
                     io::Error::new(io::ErrorKind::Other, "error opening within")
@@ -169,15 +172,15 @@ impl<R: Read + Seek + Send + Sync> Read for RingCryptoReader<R> {
 }
 
 impl<R: Read + Seek + Send + Sync> Seek for RingCryptoReader<R> {
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         match pos {
             SeekFrom::Start(pos) => self.seek_from_start(pos),
-            SeekFrom::End(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "can't seek from end",
-                ))
-            }
+            SeekFrom::End(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "can't seek from end",
+            )),
             SeekFrom::Current(pos) => {
                 let new_pos = self.pos as i64 + pos;
                 if new_pos < 0 {
@@ -194,7 +197,7 @@ impl<R: Read + Seek + Send + Sync> Seek for RingCryptoReader<R> {
 
 impl<R: Read + Seek + Send + Sync> CryptoReader<R> for RingCryptoReader<R> {
     fn finish(&mut self) -> io::Result<R> {
-        if let None = self.input {
+        if self.input.is_none() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 "RingCryptoReader already finished",
@@ -212,6 +215,7 @@ impl<R: Read + Seek + Send + Sync> Drop for RingCryptoReader<R> {
 
 /// file reader
 
+#[allow(clippy::module_name_repetitions)]
 pub struct FileCryptoReader {
     file: PathBuf,
     reader: Box<dyn CryptoReader<File>>,
@@ -221,17 +225,18 @@ pub struct FileCryptoReader {
 }
 
 impl FileCryptoReader {
+    #[allow(clippy::missing_errors_doc)]
     pub fn new(
-        file: PathBuf,
+        file: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
         nonce_seed: u64,
     ) -> io::Result<Self> {
         Ok(Self {
-            file: file.clone(),
+            file: file.to_owned(),
             reader: Box::new(crypto::create_reader(
-                File::open(&file)?,
-                &cipher,
+                File::open(file)?,
+                cipher,
                 key.clone(),
                 nonce_seed,
             )),
@@ -250,6 +255,8 @@ impl Read for FileCryptoReader {
 }
 
 impl Seek for FileCryptoReader {
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let pos = match pos {
             SeekFrom::Start(pos) => pos,
@@ -275,14 +282,14 @@ impl Seek for FileCryptoReader {
                 self.reader.finish()?;
                 self.reader = Box::new(crypto::create_reader(
                     File::open(&self.file).unwrap(),
-                    &self.cipher,
+                    self.cipher,
                     self.key.clone(),
                     self.nonce_seed,
                 ));
             }
             self.reader.seek(SeekFrom::Start(pos))?;
         }
-        Ok(self.reader.stream_position()?)
+        self.reader.stream_position()
     }
 }
 

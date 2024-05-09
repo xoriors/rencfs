@@ -5,7 +5,7 @@ use std::fs::{File, OpenOptions, ReadDir};
 use std::io::ErrorKind::Other;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::ParseIntError;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{Receiver, Sender};
@@ -108,13 +108,12 @@ async fn recreate_handles(
     fh: u64,
 ) -> FsResult<()> {
     fs.reset_handles(ino, changed_from_pos, Some(fh)).await?;
-    let mut attr = fs.get_inode_from_storage(ino, fs.key.get().await?).await?;
+    let mut attr = fs.get_inode_from_storage(ino, fs.key.get().await?)?;
     let _guard = fs.serialize_update_inode_locks.lock().await;
     // if we wrote pass the filesize we need to update the filesize
     if last_write_pos > attr.size {
         attr.size = last_write_pos;
-        fs.write_inode_to_storage(&attr, fs.key.get().await?)
-            .await?;
+        fs.write_inode_to_storage(&attr, &fs.key.get().await?)?;
     }
 
     Ok(())
@@ -139,7 +138,7 @@ pub struct FileAttr {
     pub ctime: SystemTime,
     /// Time of creation (macOS only)
     pub crtime: SystemTime,
-    /// Kind of file (directory, file, pipe, etc)
+    /// Kind of file (directory, file, pipe, etc.)
     pub kind: FileType,
     /// Permissions
     pub perm: u16,
@@ -166,9 +165,9 @@ pub enum FileType {
     // CharDevice,
     // /// Block device (S_IFBLK)
     // BlockDevice,
-    /// Directory (S_IFDIR)
+    /// Directory (`S_IFDIR`)
     Directory,
-    /// Regular file (S_IFREG)
+    /// Regular file (`S_IFREG`)
     RegularFile,
     // /// Symbolic link (S_IFLNK)
     // Symlink,
@@ -176,7 +175,7 @@ pub enum FileType {
     // Socket,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SetFileAttr {
     /// Size in bytes
     pub size: Option<u64>,
@@ -201,52 +200,62 @@ pub struct SetFileAttr {
 }
 
 impl SetFileAttr {
-    pub fn with_size(mut self, size: u64) -> Self {
+    #[must_use]
+    pub const fn with_size(mut self, size: u64) -> Self {
         self.size = Some(size);
         self
     }
 
-    pub fn with_atime(mut self, atime: SystemTime) -> Self {
+    #[must_use]
+    pub const fn with_atime(mut self, atime: SystemTime) -> Self {
         self.atime = Some(atime);
         self
     }
 
-    pub fn with_mtime(mut self, mtime: SystemTime) -> Self {
+    #[must_use]
+    pub const fn with_mtime(mut self, mtime: SystemTime) -> Self {
         self.mtime = Some(mtime);
         self
     }
 
-    pub fn with_ctime(mut self, ctime: SystemTime) -> Self {
+    #[must_use]
+    pub const fn with_ctime(mut self, ctime: SystemTime) -> Self {
         self.ctime = Some(ctime);
         self
     }
 
-    pub fn with_crtime(mut self, crtime: SystemTime) -> Self {
+    #[must_use]
+    pub const fn with_crtime(mut self, crtime: SystemTime) -> Self {
         self.crtime = Some(crtime);
         self
     }
 
-    pub fn with_perm(mut self, perm: u16) -> Self {
+    #[must_use]
+    pub const fn with_perm(mut self, perm: u16) -> Self {
         self.perm = Some(perm);
         self
     }
 
-    pub fn with_uid(mut self, uid: u32) -> Self {
+    #[must_use]
+    pub const fn with_uid(mut self, uid: u32) -> Self {
         self.uid = Some(uid);
         self
     }
 
-    pub fn with_gid(mut self, gid: u32) -> Self {
+    #[must_use]
+    pub const fn with_gid(mut self, gid: u32) -> Self {
         self.gid = Some(gid);
         self
     }
 
-    pub fn with_rdev(mut self, rdev: u32) -> Self {
+    #[must_use]
+    pub const fn with_rdev(mut self, rdev: u32) -> Self {
         self.rdev = Some(rdev);
         self
     }
 
-    pub fn with_flags(mut self, flags: u32) -> Self {
+    #[must_use]
+    pub const fn with_flags(mut self, flags: u32) -> Self {
         self.rdev = Some(flags);
         self
     }
@@ -254,7 +263,7 @@ impl SetFileAttr {
 
 #[derive(Debug, Clone)]
 pub struct CreateFileAttr {
-    /// Kind of file (directory, file, pipe, etc)
+    /// Kind of file (directory, file, pipe, etc.)
     pub kind: FileType,
     /// Permissions
     pub perm: u16,
@@ -361,7 +370,7 @@ struct TimeAndSizeFileAttr {
 
 impl TimeAndSizeFileAttr {
     #[allow(dead_code)]
-    fn new(
+    const fn new(
         atime: SystemTime,
         mtime: SystemTime,
         ctime: SystemTime,
@@ -392,7 +401,7 @@ impl From<FileAttr> for TimeAndSizeFileAttr {
 
 impl From<TimeAndSizeFileAttr> for SetFileAttr {
     fn from(value: TimeAndSizeFileAttr) -> Self {
-        SetFileAttr::default()
+        Self::default()
             .with_atime(value.atime)
             .with_mtime(value.mtime)
             .with_ctime(value.ctime)
@@ -416,7 +425,7 @@ impl PartialEq for DirectoryEntry {
     }
 }
 
-/// Like [`DirectoryEntry`] but with ['FileAttr'].
+/// Like [`DirectoryEntry`] but with [`FileAttr`].
 #[derive(Debug)]
 pub struct DirectoryEntryPlus {
     pub ino: u64,
@@ -453,10 +462,13 @@ impl Iterator for DirectoryEntryIterator {
         }
         let entry = entry.unwrap();
 
-        let map = self.3.read().unwrap();
-        let lock = map.get_or_insert_with(entry.path().to_str().unwrap().to_string(), || {
-            std::sync::RwLock::new(false)
-        });
+        let lock = self
+            .3
+            .read()
+            .unwrap()
+            .get_or_insert_with(entry.path().to_str().unwrap().to_string(), || {
+                std::sync::RwLock::new(false)
+            });
         let _guard = lock.read().unwrap();
 
         let file = File::open(entry.path());
@@ -489,7 +501,7 @@ impl Iterator for DirectoryEntryIterator {
                         "nonce seed is missing from filename",
                     )));
                 }
-                let res = name.split(".").last().unwrap().parse::<u64>();
+                let res = name.split('.').last().unwrap().parse::<u64>();
                 if let Err(err) = res {
                     error!(err = %err, "parsing nonce seed");
                     return Some(Err(err.into()));
@@ -505,7 +517,7 @@ impl Iterator for DirectoryEntryIterator {
                 }
                 nonce_seed = res.unwrap();
                 let name =
-                    crypto::decrypt_file_name(&name, &self.1, self.2.clone()).map_err(|err| {
+                    crypto::decrypt_file_name(&name, self.1, self.2.clone()).map_err(|err| {
                         error!(err = %err, "decrypting file name");
                         err
                     });
@@ -517,7 +529,7 @@ impl Iterator for DirectoryEntryIterator {
         };
 
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(
-            crypto::create_reader(file, &self.1, self.2.clone(), nonce_seed),
+            crypto::create_reader(file, self.1, self.2.clone(), nonce_seed),
         );
         if let Err(e) = res {
             return Some(Err(e.into()));
@@ -548,10 +560,13 @@ impl Iterator for DirectoryEntryPlusIterator {
         }
         let entry = entry.unwrap();
 
-        let map = self.4.read().unwrap();
-        let lock = map.get_or_insert_with(entry.path().to_str().unwrap().to_string(), || {
-            std::sync::RwLock::new(false)
-        });
+        let lock = self
+            .4
+            .read()
+            .unwrap()
+            .get_or_insert_with(entry.path().to_str().unwrap().to_string(), || {
+                std::sync::RwLock::new(false)
+            });
         let _guard = lock.read().unwrap();
 
         let file = File::open(entry.path());
@@ -585,7 +600,7 @@ impl Iterator for DirectoryEntryPlusIterator {
                         "nonce seed is missing from filename",
                     )));
                 }
-                let res = name.split(".").last().unwrap().parse::<u64>();
+                let res = name.split('.').last().unwrap().parse::<u64>();
                 if let Err(err) = res {
                     error!(err = %err, "parsing nonce seed");
                     return Some(Err(err.into()));
@@ -601,7 +616,7 @@ impl Iterator for DirectoryEntryPlusIterator {
                 }
                 nonce_seed = res.unwrap();
                 let name =
-                    crypto::decrypt_file_name(&name, &self.2, self.3.clone()).map_err(|err| {
+                    crypto::decrypt_file_name(&name, self.2, self.3.clone()).map_err(|err| {
                         error!(err = %err, "decrypting file name");
                         err
                     });
@@ -614,7 +629,7 @@ impl Iterator for DirectoryEntryPlusIterator {
         debug!(name = %name.expose_secret(), "decrypted file name");
 
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(
-            crypto::create_reader(file, &self.2, self.3.clone(), nonce_seed),
+            crypto::create_reader(file, self.2, self.3.clone(), nonce_seed),
         );
         if let Err(e) = res {
             error!(err = %e, "deserializing directory entry");
@@ -622,18 +637,21 @@ impl Iterator for DirectoryEntryPlusIterator {
         }
         let (ino, kind): (u64, FileType) = res.unwrap();
 
-        let map_guard_ino = self.5.read().unwrap();
-        let lock_ino = map_guard_ino.get_or_insert_with(ino, || std::sync::RwLock::new(false));
+        let lock_ino = self
+            .5
+            .read()
+            .unwrap()
+            .get_or_insert_with(ino, || std::sync::RwLock::new(false));
         let _guard_ino = lock_ino.read().unwrap();
 
-        let file = File::open(&self.1.join(ino.to_string()));
+        let file = File::open(self.1.join(ino.to_string()));
         if let Err(e) = file {
             error!(err = %e, "opening file");
             return Some(Err(e.into()));
         }
         let file = file.unwrap();
         let attr =
-            bincode::deserialize_from(crypto::create_reader(file, &self.2, self.3.clone(), ino));
+            bincode::deserialize_from(crypto::create_reader(file, self.2, self.3.clone(), ino));
         if let Err(e) = attr {
             error!(err = %e, "deserializing file attr");
             return Some(Err(e.into()));
@@ -690,9 +708,9 @@ enum ReadHandleContextOperation {
 }
 
 impl ReadHandleContextOperation {
-    fn get_ino(&self) -> u64 {
+    const fn get_ino(&self) -> u64 {
         match *self {
-            ReadHandleContextOperation::Create { ino, .. } => ino,
+            Self::Create { ino, .. } => ino,
         }
     }
 }
@@ -702,9 +720,9 @@ enum WriteHandleContextOperation {
 }
 
 impl WriteHandleContextOperation {
-    fn get_ino(&self) -> u64 {
+    const fn get_ino(&self) -> u64 {
         match *self {
-            WriteHandleContextOperation::Create { ino, .. } => ino,
+            Self::Create { ino, .. } => ino,
         }
     }
 }
@@ -728,7 +746,7 @@ impl Provider<SecretVec<u8>, FsError> for KeyProvider {
             .password_provider
             .get_password()
             .ok_or(FsError::InvalidPassword)?;
-        read_or_create_key(&self.path, &password, &self.cipher)
+        read_or_create_key(&self.path, &password, self.cipher)
     }
 }
 
@@ -765,6 +783,8 @@ pub struct EncryptedFs {
 }
 
 impl EncryptedFs {
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::missing_errors_doc)]
     pub async fn new(
         data_dir: PathBuf,
         tmp_dir: PathBuf,
@@ -776,12 +796,12 @@ impl EncryptedFs {
         let key_provider = KeyProvider {
             path: data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
             password_provider,
-            cipher: cipher.clone(),
+            cipher,
         };
 
         ensure_structure_created(&data_dir.clone(), &tmp_dir.clone(), &key_provider).await?;
 
-        let fs = EncryptedFs {
+        let fs = Self {
             data_dir,
             tmp_dir,
             write_handles: RwLock::new(HashMap::new()),
@@ -790,19 +810,22 @@ impl EncryptedFs {
             cipher,
             opened_files_for_read: RwLock::new(HashMap::new()),
             opened_files_for_write: RwLock::new(HashMap::new()),
-            read_write_inode_locks: Mutex::new(ArcHashMap::new()),
-            serialize_inode_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::new())),
-            serialize_update_inode_locks: Mutex::new(ArcHashMap::new()),
-            serialize_dir_entries_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::new())),
+            read_write_inode_locks: Mutex::new(ArcHashMap::default()),
+            serialize_inode_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::default())),
+            serialize_update_inode_locks: Mutex::new(ArcHashMap::default()),
+            serialize_dir_entries_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::default())),
             // todo: take duration from param
-            key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)).await,
+            key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)),
             self_weak: std::sync::Mutex::new(None),
         };
 
         fs.ensure_root_exists().await?;
 
         let arc = Arc::new(fs);
-        arc.self_weak.lock().unwrap().replace(Arc::downgrade(&arc));
+        arc.self_weak
+            .lock()
+            .expect("cannot obtain lock")
+            .replace(Arc::downgrade(&arc));
         Ok(arc)
     }
 
@@ -822,6 +845,8 @@ impl EncryptedFs {
     }
 
     /// Create a new node in the filesystem
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::missing_errors_doc)]
     pub async fn create_nod(
         &self,
         parent: u64,
@@ -844,8 +869,7 @@ impl EncryptedFs {
         attr.ino = self.generate_next_inode();
 
         // write inode
-        self.write_inode_to_storage(&attr, self.key.get().await?)
-            .await?;
+        self.write_inode_to_storage(&attr, &self.key.get().await?)?;
 
         // create in contents directory
         match attr.kind {
@@ -856,7 +880,7 @@ impl EncryptedFs {
                     .write(true)
                     .create(true)
                     .truncate(true)
-                    .open(&path)?;
+                    .open(path)?;
             }
             FileType::Directory => {
                 // create the directory
@@ -866,38 +890,35 @@ impl EncryptedFs {
                 // add "." and ".." entries
                 self.insert_directory_entry(
                     attr.ino,
-                    DirectoryEntry {
+                    &DirectoryEntry {
                         ino: attr.ino,
-                        name: SecretString::from_str("$.").unwrap(),
+                        name: SecretString::from_str("$.").expect("cannot parse"),
                         kind: FileType::Directory,
                     },
-                    self.key.get().await?,
-                )
-                .await?;
+                    &self.key.get().await?,
+                )?;
                 self.insert_directory_entry(
                     attr.ino,
-                    DirectoryEntry {
+                    &DirectoryEntry {
                         ino: parent,
-                        name: SecretString::from_str("$..").unwrap(),
+                        name: SecretString::from_str("$..").expect("cannot parse"),
                         kind: FileType::Directory,
                     },
-                    self.key.get().await?,
-                )
-                .await?;
+                    &self.key.get().await?,
+                )?;
             }
         }
 
         // edd entry in parent directory, used for listing
         self.insert_directory_entry(
             parent,
-            DirectoryEntry {
+            &DirectoryEntry {
                 ino: attr.ino,
                 name: SecretString::new(name.expose_secret().to_owned()),
                 kind: attr.kind,
             },
-            self.key.get().await?,
-        )
-        .await?;
+            &self.key.get().await?,
+        )?;
         self.update_inode(
             parent,
             SetFileAttr::default()
@@ -921,6 +942,8 @@ impl EncryptedFs {
         Ok((handle, attr))
     }
 
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::missing_errors_doc)]
     pub async fn find_by_name(
         &self,
         parent: u64,
@@ -937,9 +960,9 @@ impl EncryptedFs {
         }
         let name = {
             if name.expose_secret() == "." {
-                SecretString::from_str("$.").unwrap()
+                SecretString::from_str("$.").expect("cannot parse")
             } else if name.expose_secret() == ".." {
-                SecretString::from_str("$..").unwrap()
+                SecretString::from_str("$..").expect("cannot parse")
             } else {
                 SecretString::new(name.expose_secret().to_owned())
             }
@@ -947,7 +970,7 @@ impl EncryptedFs {
         // in order not to add too much to filename length we keep just 3 digits from nonce seed
         let nonce_seed = parent % 1000;
         let name =
-            crypto::encrypt_file_name(&name, &self.cipher, self.key.get().await?, nonce_seed)?;
+            crypto::encrypt_file_name(&name, self.cipher, &self.key.get().await?, nonce_seed)?;
         let file = File::open(
             self.data_dir
                 .join(CONTENTS_DIR)
@@ -961,11 +984,14 @@ impl EncryptedFs {
     }
 
     /// Count children of a directory. This includes also `.` and `..`.
+    #[allow(clippy::missing_errors_doc)]
     pub async fn children_count(&self, ino: u64) -> FsResult<usize> {
         let iter = self.read_dir(ino).await?;
         Ok(iter.into_iter().count())
     }
 
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::missing_errors_doc)]
     pub async fn remove_dir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
@@ -993,8 +1019,11 @@ impl EncryptedFs {
 
         // remove inode file
         {
-            let map = self.serialize_inode_locks.write().unwrap();
-            let lock = map.get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
+            let lock = self
+                .serialize_inode_locks
+                .write()
+                .expect("cannot obtain lock")
+                .get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
             let _guard = lock.write().unwrap();
             fs::remove_file(self.data_dir.join(INODES_DIR).join(&ino_str))?;
         }
@@ -1015,6 +1044,8 @@ impl EncryptedFs {
         Ok(())
     }
 
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::missing_errors_doc)]
     pub async fn remove_file(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
@@ -1034,8 +1065,11 @@ impl EncryptedFs {
 
         // remove inode file
         {
-            let map = self.serialize_inode_locks.write().unwrap();
-            let lock = map.get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
+            let lock = self
+                .serialize_inode_locks
+                .write()
+                .expect("cannot obtain lock")
+                .get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
             let _guard = lock.write().unwrap();
             fs::remove_file(self.data_dir.join(INODES_DIR).join(&ino_str))?;
         }
@@ -1057,17 +1091,19 @@ impl EncryptedFs {
         Ok(())
     }
 
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::missing_errors_doc)]
     pub async fn exists_by_name(&self, parent: u64, name: &SecretString) -> FsResult<bool> {
         let name = {
             if name.expose_secret() == "." {
-                SecretString::from_str("$.").unwrap()
+                SecretString::from_str("$.").expect("cannot parse")
             } else if name.expose_secret() == ".." {
-                SecretString::from_str("$..").unwrap()
+                SecretString::from_str("$..").expect("cannot parse")
             } else {
                 SecretString::new(name.expose_secret().to_owned())
             }
         };
-        let name = crypto::encrypt_file_name(&name, &self.cipher, self.key.get().await?, parent)?;
+        let name = crypto::encrypt_file_name(&name, self.cipher, &self.key.get().await?, parent)?;
         Ok(self
             .data_dir
             .join(CONTENTS_DIR)
@@ -1076,6 +1112,7 @@ impl EncryptedFs {
             .exists())
     }
 
+    #[allow(clippy::missing_errors_doc)]
     pub async fn read_dir(&self, ino: u64) -> FsResult<DirectoryEntryIterator> {
         let contents_dir = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         if !contents_dir.is_dir() {
@@ -1085,13 +1122,13 @@ impl EncryptedFs {
         let iter = fs::read_dir(contents_dir)?;
         Ok(DirectoryEntryIterator(
             iter.into_iter(),
-            self.cipher.clone(),
+            self.cipher,
             self.key.get().await?,
             self.serialize_dir_entries_locks.clone(),
         ))
     }
 
-    /// Like [read_dir](EncryptedFs::read_dir) but with [FileAttr] so we don't need to query again for those.
+    /// Like [`read_dir`](EncryptedFs::read_dir) but with [`FileAttr`] so we don't need to query again for those.
     pub async fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
         let contents_dir = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         if !contents_dir.is_dir() {
@@ -1102,20 +1139,20 @@ impl EncryptedFs {
         Ok(DirectoryEntryPlusIterator(
             iter.into_iter(),
             self.data_dir.join(INODES_DIR),
-            self.cipher.clone(),
+            self.cipher,
             self.key.get().await?,
             self.serialize_dir_entries_locks.clone(),
             self.serialize_inode_locks.clone(),
         ))
     }
 
-    async fn get_inode_from_storage(
-        &self,
-        ino: u64,
-        key: Arc<SecretVec<u8>>,
-    ) -> FsResult<FileAttr> {
-        let map_guard = self.serialize_inode_locks.read().unwrap();
-        let lock = map_guard.get_or_insert_with(ino, || std::sync::RwLock::new(false));
+    #[allow(clippy::missing_errors_doc)]
+    fn get_inode_from_storage(&self, ino: u64, key: Arc<SecretVec<u8>>) -> FsResult<FileAttr> {
+        let lock = self
+            .serialize_inode_locks
+            .read()
+            .unwrap()
+            .get_or_insert_with(ino, || std::sync::RwLock::new(false));
         let _guard = lock.read().unwrap();
 
         let path = self.data_dir.join(INODES_DIR).join(ino.to_string());
@@ -1129,35 +1166,28 @@ impl EncryptedFs {
             FileAttr,
         >(Box::new(crypto::create_reader(
             file,
-            &self.cipher,
+            self.cipher,
             key,
             ino,
         )))?)
     }
 
+    #[allow(clippy::missing_errors_doc)]
     pub async fn get_inode(&self, ino: u64) -> FsResult<FileAttr> {
         debug!("get inode");
-        let mut attr = self
-            .get_inode_from_storage(ino, self.key.get().await?)
-            .await?;
+        let mut attr = self.get_inode_from_storage(ino, self.key.get().await?)?;
 
         // merge time info and size with any open read handles
         let open_reads = { self.opened_files_for_read.read().await.contains_key(&ino) };
         if open_reads {
-            let fhs = self
-                .opened_files_for_read
-                .read()
-                .await
-                .get(&ino)
-                .map(|v| v.clone());
+            let fhs = self.opened_files_for_read.read().await.get(&ino).cloned();
             if let Some(fhs) = fhs {
                 for fh in fhs {
                     if let Some(ctx) = self.read_handles.read().await.get(&fh) {
-                        let ctx = ctx.lock().await;
-                        let mut attr1: SetFileAttr = ctx.attr.clone().into();
-                        // we don't want to set size because readers don't change the size and we might have an older version
+                        let mut attr1: SetFileAttr = ctx.lock().await.attr.clone().into();
+                        // we don't want to set size because readers don't change the size, and we might have an older version
                         attr1.size.take();
-                        merge_attr(&mut attr, attr1);
+                        merge_attr(&mut attr, &attr1);
                     }
                 }
             }
@@ -1166,16 +1196,11 @@ impl EncryptedFs {
         // merge time info and size with any open write handles
         let open_writes = { self.opened_files_for_write.read().await.contains_key(&ino) };
         if open_writes {
-            let fh = self
-                .opened_files_for_write
-                .read()
-                .await
-                .get(&ino)
-                .map(|v| *v);
+            let fh = self.opened_files_for_write.read().await.get(&ino).copied();
             if let Some(fh) = fh {
                 if let Some(ctx) = self.write_handles.read().await.get(&fh) {
                     let ctx = ctx.lock().await;
-                    merge_attr(&mut attr, ctx.attr.clone().into());
+                    merge_attr(&mut attr, &ctx.attr.clone().into());
                 }
             }
         }
@@ -1184,31 +1209,35 @@ impl EncryptedFs {
     }
 
     pub async fn update_inode(&self, ino: u64, set_attr: SetFileAttr) -> FsResult<()> {
-        let map_serialize_update = self.serialize_update_inode_locks.lock().await;
-        let lock_serialize_update =
-            map_serialize_update.get_or_insert_with(ino, || Mutex::new(false));
+        let lock_serialize_update = self
+            .serialize_update_inode_locks
+            .lock()
+            .await
+            .get_or_insert_with(ino, || Mutex::new(false));
         let _guard_serialize_update = lock_serialize_update.lock().await;
 
         let mut attr = self.get_inode(ino).await?;
-        merge_attr(&mut attr, set_attr);
+        merge_attr(&mut attr, &set_attr);
 
-        self.write_inode_to_storage(&attr, self.key.get().await?)
-            .await?;
+        self.write_inode_to_storage(&attr, &self.key.get().await?)?;
         Ok(())
     }
 
-    async fn write_inode_to_storage(
+    fn write_inode_to_storage(
         &self,
         attr: &FileAttr,
-        key: Arc<SecretVec<u8>>,
+        key: &Arc<SecretVec<u8>>,
     ) -> Result<(), FsError> {
-        let map = self.serialize_inode_locks.write().unwrap();
-        let lock = map.get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
+        let lock = self
+            .serialize_inode_locks
+            .write()
+            .unwrap()
+            .get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
         let _guard = lock.write().unwrap();
 
         let path = self.data_dir.join(INODES_DIR).join(attr.ino.to_string());
         let tmp = NamedTempFile::new_in(self.tmp_dir.clone())?;
-        let mut writer = crypto::create_writer(tmp, &self.cipher, key, attr.ino);
+        let mut writer = crypto::create_writer(tmp, self.cipher, key, attr.ino);
         bincode::serialize_into(&mut writer, &attr)?;
         writer.flush()?;
         let tmp = writer.finish()?;
@@ -1223,6 +1252,8 @@ impl EncryptedFs {
     /// The most speed is obtained when we read sequentially from the beginning of the file.
     /// If the file is not opened for read, it will return an error of type ['FsError::InvalidFileHandle'].
     #[instrument(skip(self, buf))]
+    #[allow(clippy::missing_errors_doc)]
+    #[allow(clippy::cast_possible_truncation)]
     pub async fn read(
         &self,
         ino: u64,
@@ -1257,7 +1288,7 @@ impl EncryptedFs {
         if self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
-        if buf.len() == 0 {
+        if buf.is_empty() {
             // no-op
             return Ok(0);
         }
@@ -1285,10 +1316,12 @@ impl EncryptedFs {
         };
 
         ctx.attr.atime = SystemTime::now();
+        drop(ctx);
 
         Ok(len)
     }
 
+    #[allow(clippy::missing_panics_doc)]
     pub async fn release(&self, handle: u64) -> FsResult<()> {
         debug!("release");
         if handle == 0 {
@@ -1304,11 +1337,15 @@ impl EncryptedFs {
 
             {
                 let mut opened_files_for_read = self.opened_files_for_read.write().await;
-                opened_files_for_read.get_mut(&ctx.ino).and_then(|set| {
-                    set.remove(&handle);
-                    Some(())
-                });
-                if opened_files_for_read.get(&ctx.ino).unwrap().is_empty() {
+                opened_files_for_read
+                    .get_mut(&ctx.ino)
+                    .expect("handle is missing")
+                    .remove(&handle);
+                if opened_files_for_read
+                    .get(&ctx.ino)
+                    .expect("handle is missing")
+                    .is_empty()
+                {
                     opened_files_for_read.remove(&ctx.ino);
                 }
             }
@@ -1316,12 +1353,12 @@ impl EncryptedFs {
             // write attr only here to avoid serializing it multiple times while reading
             // it will merge time fields with existing data because it might got change while we kept the handle
             let mut attr: SetFileAttr = ctx.attr.clone().into();
-            // we don't want to set size because readers don't change the size and we might have an older version
+            // we don't want to set size because readers don't change the size, and we might have an older version
             attr.size.take();
             self.update_inode(ctx.ino, attr).await?;
 
             ctx.reader.take().unwrap().finish()?;
-
+            drop(ctx);
             valid_fh = true;
         }
 
@@ -1338,6 +1375,7 @@ impl EncryptedFs {
             // write attr only here to avoid serializing it multiple times while writing
             // it will merge time fields with existing data because it might got change while we kept the handle
             self.update_inode(ctx.ino, ctx.attr.clone().into()).await?;
+            drop(ctx);
 
             valid_fh = true;
         }
@@ -1397,7 +1435,7 @@ impl EncryptedFs {
                 return Err(FsError::InvalidFileHandle);
             }
         }
-        if buf.len() == 0 {
+        if buf.is_empty() {
             // no-op
             return Ok(0);
         }
@@ -1427,22 +1465,26 @@ impl EncryptedFs {
         );
         ctx.attr.mtime = SystemTime::now();
         ctx.attr.ctime = SystemTime::now();
+        drop(ctx);
 
         Ok(len)
     }
 
     /// Flush the data to the underlying storage.
+    #[allow(clippy::missing_panics_doc)]
     pub async fn flush(&self, handle: u64) -> FsResult<()> {
         if handle == 0 {
             // in case of directory or if the file was crated without being opened we don't use handle
             return Ok(());
         }
-        let mut valid_fh = false;
-        if let Some(_) = self.read_handles.read().await.get(&handle) {
-            valid_fh = true;
-        }
+        let mut valid_fh = self.read_handles.read().await.get(&handle).is_some();
         if let Some(ctx) = self.write_handles.read().await.get(&handle) {
-            ctx.lock().await.writer.as_mut().unwrap().flush()?;
+            ctx.lock()
+                .await
+                .writer
+                .as_mut()
+                .expect("writer is missing")
+                .flush()?;
             valid_fh = true;
         }
 
@@ -1488,6 +1530,7 @@ impl EncryptedFs {
     }
 
     /// Open a file. We can open multiple times for read but only one for write at a time.
+    #[allow(clippy::missing_panics_doc)]
     pub async fn open(&self, ino: u64, read: bool, write: bool) -> FsResult<u64> {
         if !read && !write {
             return Err(FsError::InvalidInput(
@@ -1511,12 +1554,12 @@ impl EncryptedFs {
         }
         if write {
             let lock = map_guard.get_or_insert_with(ino, || RwLock::new(false));
-            if let None = handle {
+            if handle.is_none() {
                 handle = Some(self.allocate_next_handle());
             }
             let res = self
                 .do_with_write_handle(
-                    *handle.as_ref().unwrap(),
+                    *handle.as_ref().expect("handle is missing"),
                     WriteHandleContextOperation::Create { ino, lock },
                 )
                 .await;
@@ -1526,7 +1569,7 @@ impl EncryptedFs {
                 self.read_handles
                     .write()
                     .await
-                    .remove(&handle.as_ref().unwrap());
+                    .remove(handle.as_ref().unwrap());
                 return Err(FsError::AlreadyOpenForWrite);
             }
             res?;
@@ -1534,6 +1577,8 @@ impl EncryptedFs {
         Ok(handle.unwrap())
     }
 
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::too_many_lines)]
     pub async fn truncate(&self, ino: u64, size: u64) -> FsResult<()> {
         let lock = {
             let map_guard = self.read_write_inode_locks.lock().await;
@@ -1549,9 +1594,28 @@ impl EncryptedFs {
         if size == attr.size {
             // no-op
             return Ok(());
-        } else if size == 0 {
+        }
+
+        #[allow(clippy::items_after_statements)]
+        struct Callback {}
+        #[allow(clippy::items_after_statements)]
+        impl FileCryptoWriterCallback for Callback {
+            fn on_file_content_changed(
+                &self,
+                _changed_from_pos: u64,
+                _last_write_pos: u64,
+            ) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        // flush writers
+        self.flush_and_reset_writers(ino).await?;
+
+        if size == 0 {
             debug!("truncate to zero");
             // truncate to zero
+
             OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -1564,24 +1628,14 @@ impl EncryptedFs {
             );
             // decrease size, copy from beginning until size as offset
 
-            // if we have opened writers, flush those
-            self.flush_writers(ino).await?;
-
             let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
-            let in_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(in_path.clone())?;
-            let mut reader = self.create_crypto_reader(in_file, ino).await?;
+            let mut reader = self.create_crypto_file_reader(&in_path, ino).await?;
 
-            let tmp_path_str = format!("{}.truncate.tmp", attr.ino.to_string());
-            let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
-            let tmp_file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(tmp_path.clone())?;
-            let mut writer = self.create_crypto_writer(tmp_file, ino).await?;
+            let tmp = NamedTempFile::new_in(self.tmp_dir.clone())?;
+            let tmp_path = tmp.into_temp_path().to_path_buf();
+            let mut writer = self
+                .create_crypto_file_writer(&tmp_path, ino, Callback {})
+                .await?;
 
             // copy existing data until new size
             debug!("copying data until new size");
@@ -1601,32 +1655,22 @@ impl EncryptedFs {
             );
             // increase size, write zeros from actual size to new size
 
-            // if we have opened writers, flush those
-            self.flush_writers(ino).await?;
-
             let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
-            let in_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(in_path.clone())?;
-            let mut reader = self.create_crypto_reader(in_file, ino).await?;
+            let mut reader = self.create_crypto_file_reader(&in_path, ino).await?;
 
-            let tmp_path_str = format!("{}.truncate.tmp", attr.ino.to_string());
-            let tmp_path = self.data_dir.join(CONTENTS_DIR).join(tmp_path_str);
-            let tmp_file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(tmp_path.clone())?;
-            let mut writer = self.create_crypto_writer(tmp_file, ino).await?;
+            let tmp = NamedTempFile::new_in(self.tmp_dir.clone())?;
+            let tmp_path = tmp.into_temp_path().to_path_buf();
+            let mut writer = self
+                .create_crypto_file_writer(&tmp_path, ino, Callback {})
+                .await?;
 
             // copy existing data
             debug!("copying existing data");
             stream_util::copy_exact(&mut reader, &mut writer, attr.size)?;
 
-            // now fill up with zeros until new size
+            // seek to new size, this will fill up with zeros
             debug!("filling up with zeros until new size");
-            stream_util::fill_zeros(&mut writer, size - attr.size)?;
+            writer.seek(SeekFrom::Start(size))?;
 
             writer.finish()?;
             debug!("rename from tmp file");
@@ -1657,10 +1701,10 @@ impl EncryptedFs {
         Ok(())
     }
 
-    /// This will write any dirty data to the file.
+    /// This will write any dirty data to the file and seek to start
     /// > ⚠️ **Warning**
     /// > Need to be called in a context with write lock on `self.read_write_inode_locks.lock().await.get(ino)`.
-    async fn flush_writers(&self, ino: u64) -> FsResult<()> {
+    async fn flush_and_reset_writers(&self, ino: u64) -> FsResult<()> {
         debug!("flush_writers");
         let map = self.opened_files_for_write.read().await;
         let handle = map.get(&ino);
@@ -1677,6 +1721,7 @@ impl EncryptedFs {
         Ok(())
     }
 
+    #[allow(clippy::missing_panics_doc)]
     pub async fn rename(
         &self,
         parent: u64,
@@ -1713,20 +1758,22 @@ impl EncryptedFs {
             }
         }
 
-        let mut attr = self.find_by_name(parent, name).await?.unwrap();
+        let mut attr = self
+            .find_by_name(parent, name)
+            .await?
+            .ok_or(FsError::NotFound("name not found"))?;
         // remove from parent contents
         self.remove_directory_entry(parent, name).await?;
         // add to new parent contents
         self.insert_directory_entry(
             new_parent,
-            DirectoryEntry {
+            &DirectoryEntry {
                 ino: attr.ino,
                 name: SecretString::new(new_name.expose_secret().to_owned()),
                 kind: attr.kind,
             },
-            self.key.get().await?,
-        )
-        .await?;
+            &self.key.get().await?,
+        )?;
 
         let mut parent_attr = self.get_inode(parent).await?;
         parent_attr.mtime = SystemTime::now();
@@ -1742,14 +1789,13 @@ impl EncryptedFs {
             // add parent link to new directory
             self.insert_directory_entry(
                 attr.ino,
-                DirectoryEntry {
+                &DirectoryEntry {
                     ino: new_parent,
-                    name: SecretString::from_str("$..").unwrap(),
+                    name: SecretString::from_str("$..").expect("cannot parse"),
                     kind: FileType::Directory,
                 },
-                self.key.get().await?,
-            )
-            .await?;
+                &self.key.get().await?,
+            )?;
         }
 
         Ok(())
@@ -1763,8 +1809,8 @@ impl EncryptedFs {
     ) -> FsResult<impl CryptoWriter<File>> {
         Ok(crypto::create_writer(
             file,
-            &self.cipher,
-            self.key.get().await?,
+            self.cipher,
+            &self.key.get().await?,
             nonce_seed,
         ))
     }
@@ -1772,13 +1818,13 @@ impl EncryptedFs {
     /// Create a crypto writer to file using internal encryption info.
     pub async fn create_crypto_file_writer<Callback: FileCryptoWriterCallback + 'static>(
         &self,
-        file: PathBuf,
+        file: &Path,
         nonce_seed: u64,
         callback: Callback,
     ) -> FsResult<Box<dyn CryptoWriterSeek<File>>> {
         Ok(crypto::create_file_writer(
             file,
-            self.tmp_dir.clone(),
+            &self.tmp_dir,
             self.cipher,
             self.key.get().await?,
             nonce_seed,
@@ -1789,7 +1835,7 @@ impl EncryptedFs {
     /// Create a crypto reader from file using internal encryption info.
     pub async fn create_crypto_file_reader(
         &self,
-        file: PathBuf,
+        file: &Path,
         nonce_seed: u64,
     ) -> FsResult<Box<dyn CryptoReader<File>>> {
         Ok(crypto::create_file_reader(
@@ -1808,7 +1854,7 @@ impl EncryptedFs {
     ) -> FsResult<impl CryptoReader<File>> {
         Ok(crypto::create_reader(
             file,
-            &self.cipher,
+            self.cipher,
             self.key.get().await?,
             nonce_seed,
         ))
@@ -1818,7 +1864,7 @@ impl EncryptedFs {
     pub async fn decrypt_string(&self, s: &str) -> FsResult<SecretString> {
         Ok(crypto::decrypt_string(
             s,
-            &self.cipher,
+            self.cipher,
             self.key.get().await?,
         )?)
     }
@@ -1834,11 +1880,11 @@ impl EncryptedFs {
 
         // decrypt key
         let salt = crypto::hash_secret_string(&old_password);
-        let initial_key = crypto::derive_key(&old_password, &cipher, salt)?;
+        let initial_key = crypto::derive_key(&old_password, cipher, salt)?;
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
         let reader = crypto::create_reader(
             File::open(enc_file.clone())?,
-            &cipher,
+            cipher,
             Arc::new(initial_key),
             42_u64,
         );
@@ -1851,9 +1897,9 @@ impl EncryptedFs {
 
         // encrypt it with new key derived from new password
         let salt = crypto::hash_secret_string(&new_password);
-        let new_key = crypto::derive_key(&new_password, &cipher, salt)?;
+        let new_key = crypto::derive_key(&new_password, cipher, salt)?;
         let tmp = NamedTempFile::new_in(data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME))?;
-        let mut writer = crypto::create_writer(tmp, &cipher, Arc::new(new_key), 42_u64);
+        let mut writer = crypto::create_writer(tmp, cipher, &Arc::new(new_key), 42_u64);
         bincode::serialize_into(&mut writer, &key_store)?;
         writer.flush()?;
         let tmp = writer.finish()?;
@@ -1876,10 +1922,7 @@ impl EncryptedFs {
 
         // read
         if let Some(set) = self.opened_files_for_read.read().await.get(&ino) {
-            for handle in set.iter().filter(|h| match skip_fh {
-                None => true,
-                Some(fh) => **h != fh,
-            }) {
+            for handle in set.iter().filter(|h| skip_fh.map_or(true, |fh| **h != fh)) {
                 let map = self.read_handles.read().await;
                 let mut ctx = map.get(handle).unwrap().lock().await;
                 let reader = ctx.reader.as_mut().unwrap();
@@ -1901,9 +1944,7 @@ impl EncryptedFs {
                 let writer = ctx.writer.as_mut().unwrap();
                 writer.flush()?;
                 writer.seek(SeekFrom::Start(0))?;
-                let attr = self
-                    .get_inode_from_storage(ino, self.key.get().await?)
-                    .await?;
+                let attr = self.get_inode_from_storage(ino, self.key.get().await?)?;
                 ctx.attr.size = attr.size;
             }
         }
@@ -1918,10 +1959,8 @@ impl EncryptedFs {
     ) -> FsResult<()> {
         let ino = op.get_ino();
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
-        let reader = self.create_crypto_file_reader(path, op.get_ino()).await?;
-        let attr = self
-            .get_inode_from_storage(ino, self.key.get().await?)
-            .await?;
+        let reader = self.create_crypto_file_reader(&path, op.get_ino()).await?;
+        let attr = self.get_inode_from_storage(ino, self.key.get().await?)?;
         match op {
             ReadHandleContextOperation::Create { ino, lock } => {
                 let attr: TimeAndSizeFileAttr = attr.into();
@@ -1958,9 +1997,7 @@ impl EncryptedFs {
             ino,
             handle,
         );
-        let writer = self
-            .create_crypto_file_writer(path.clone(), ino, callback)
-            .await?;
+        let writer = self.create_crypto_file_writer(&path, ino, callback).await?;
         match op {
             WriteHandleContextOperation::Create { ino, lock } => {
                 debug!("creating write handle");
@@ -2003,8 +2040,7 @@ impl EncryptedFs {
                 attr.gid = libc::getgid();
             }
 
-            self.write_inode_to_storage(&attr, self.key.get().await?)
-                .await?;
+            self.write_inode_to_storage(&attr, &self.key.get().await?)?;
 
             // create the directory
             tokio::fs::create_dir(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()))
@@ -2013,24 +2049,23 @@ impl EncryptedFs {
             // add "." entry
             self.insert_directory_entry(
                 attr.ino,
-                DirectoryEntry {
+                &DirectoryEntry {
                     ino: attr.ino,
                     name: SecretString::from_str("$.").unwrap(),
                     kind: FileType::Directory,
                 },
-                self.key.get().await?,
-            )
-            .await?;
+                &self.key.get().await?,
+            )?;
         }
 
         Ok(())
     }
 
-    async fn insert_directory_entry(
+    fn insert_directory_entry(
         &self,
         ino_contents_dir: u64,
-        entry: DirectoryEntry,
-        key: Arc<SecretVec<u8>>,
+        entry: &DirectoryEntry,
+        key: &Arc<SecretVec<u8>>,
     ) -> FsResult<()> {
         // in order not to add too much to filename length we keep just 3 digits from nonce seed
         let nonce_seed = ino_contents_dir % 1000;
@@ -2039,7 +2074,7 @@ impl EncryptedFs {
             .data_dir
             .join(CONTENTS_DIR)
             .join(ino_contents_dir.to_string());
-        let name = crypto::encrypt_file_name(&entry.name, &self.cipher, key.clone(), nonce_seed)?;
+        let name = crypto::encrypt_file_name(&entry.name, self.cipher, key, nonce_seed)?;
         let file_path = parent_path.join(name);
 
         let map = self.serialize_dir_entries_locks.write().unwrap();
@@ -2051,7 +2086,7 @@ impl EncryptedFs {
         // write inode and file type
         let entry = (entry.ino, entry.kind);
         let tmp = NamedTempFile::new_in(self.tmp_dir.clone())?;
-        let mut writer = crypto::create_writer(tmp, &self.cipher, key, nonce_seed);
+        let mut writer = crypto::create_writer(tmp, self.cipher, key, nonce_seed);
         bincode::serialize_into(&mut writer, &entry)?;
         writer.flush()?;
         let tmp = writer.finish()?;
@@ -2061,7 +2096,7 @@ impl EncryptedFs {
 
     async fn remove_directory_entry(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         let parent_path = self.data_dir.join(CONTENTS_DIR).join(parent.to_string());
-        let name = crypto::encrypt_file_name(name, &self.cipher, self.key.get().await?, parent)?;
+        let name = crypto::encrypt_file_name(name, self.cipher, &self.key.get().await?, parent)?;
         let file_path = parent_path.join(name);
 
         let map = self.serialize_dir_entries_locks.write().unwrap();
@@ -2093,11 +2128,11 @@ impl EncryptedFs {
 fn read_or_create_key(
     path: &PathBuf,
     password: &SecretString,
-    cipher: &Cipher,
+    cipher: Cipher,
 ) -> FsResult<SecretVec<u8>> {
     // derive key from password
-    let salt = crypto::hash_secret_string(&password);
-    let derived_key = crypto::derive_key(&password, cipher, salt)?;
+    let salt = crypto::hash_secret_string(password);
+    let derived_key = crypto::derive_key(password, cipher, salt)?;
     if path.exists() {
         // read key
 
@@ -2127,9 +2162,10 @@ fn read_or_create_key(
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(true)
                 .open(path)?,
             cipher,
-            Arc::new(derived_key),
+            &Arc::new(derived_key),
             42_u64,
         );
         bincode::serialize_into(&mut writer, &key_store)?;
@@ -2176,16 +2212,16 @@ async fn check_structure(data_dir: &PathBuf, ignore_empty: bool) -> FsResult<()>
         .iter()
         .map(|dir| dir.file_name().to_string_lossy().to_string())
         .collect::<Vec<String>>();
-    if vec.len() == 0 && ignore_empty {
+    if vec.is_empty() && ignore_empty {
         return Ok(());
     }
     if vec.len() != 3 {
         return Err(FsError::InvalidDataDirStructure);
     }
     // make sure existing structure is ok
-    vec.sort();
+    vec.sort_unstable();
     let mut vec2 = vec![INODES_DIR, CONTENTS_DIR, SECURITY_DIR];
-    vec2.sort();
+    vec2.sort_unstable();
     if vec != vec2 || !data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME).is_file() {
         return Err(FsError::InvalidDataDirStructure);
     }
@@ -2193,7 +2229,7 @@ async fn check_structure(data_dir: &PathBuf, ignore_empty: bool) -> FsResult<()>
     Ok(())
 }
 
-fn merge_attr(attr: &mut FileAttr, set_attr: SetFileAttr) {
+fn merge_attr(attr: &mut FileAttr, set_attr: &SetFileAttr) {
     if let Some(size) = set_attr.size {
         attr.size = size;
     }
@@ -2233,7 +2269,6 @@ impl FileCryptoWriterCallback for LocalFileCryptoWriterCallback {
     ) -> io::Result<()> {
         if let Some(fs) = self.0.upgrade() {
             let (tx, rx) = std::sync::mpsc::channel::<FsResult<()>>();
-            let fs = fs.clone();
             let ino = self.1;
             let fh = self.2;
             TX.lock()
@@ -2265,20 +2300,21 @@ pub async fn write_all_string_to_fs(
     offset: u64,
     s: &str,
     fh: u64,
-) -> anyhow::Result<()> {
+) -> FsResult<()> {
     write_all_bytes_to_fs(fs, ino, offset, s.as_bytes(), fh).await
 }
 
+#[allow(clippy::missing_panics_doc)]
 pub async fn write_all_bytes_to_fs(
     fs: &EncryptedFs,
     ino: u64,
     offset: u64,
     buf: &[u8],
     fh: u64,
-) -> anyhow::Result<()> {
+) -> FsResult<()> {
     let mut pos = 0_usize;
     loop {
-        let len = fs.write(ino, offset, &buf[pos..], fh).await.unwrap();
+        let len = fs.write(ino, offset, &buf[pos..], fh).await?;
         pos += len;
         if pos == buf.len() {
             break;

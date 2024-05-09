@@ -2,7 +2,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Read, Seek, Write};
 use std::num::ParseIntError;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use argon2::Argon2;
@@ -35,7 +35,9 @@ pub mod writer;
 
 pub static BASE64: GeneralPurpose = GeneralPurpose::new(&STANDARD, NO_PAD);
 
-#[derive(Debug, Clone, Copy, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Debug, Clone, Copy, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq, Eq,
+)]
 pub enum Cipher {
     ChaCha20,
     Aes256Gcm,
@@ -85,16 +87,16 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 pub fn create_writer<W: Write + Send + Sync>(
     writer: W,
-    cipher: &Cipher,
-    key: Arc<SecretVec<u8>>,
+    cipher: Cipher,
+    key: &Arc<SecretVec<u8>>,
     nonce_seed: u64,
 ) -> impl CryptoWriter<W> {
     create_ring_writer(writer, cipher, key, nonce_seed)
 }
-
+#[allow(clippy::missing_errors_doc)]
 pub fn create_file_writer<Callback: FileCryptoWriterCallback + 'static>(
-    file: PathBuf,
-    tmp_dir: PathBuf,
+    file: &Path,
+    tmp_dir: &Path,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
@@ -107,8 +109,8 @@ pub fn create_file_writer<Callback: FileCryptoWriterCallback + 'static>(
 
 fn create_ring_writer<W: Write + Send + Sync>(
     writer: W,
-    cipher: &Cipher,
-    key: Arc<SecretVec<u8>>,
+    cipher: Cipher,
+    key: &Arc<SecretVec<u8>>,
     nonce_seed: u64,
 ) -> RingCryptoWriter<W> {
     let algorithm = match cipher {
@@ -120,7 +122,7 @@ fn create_ring_writer<W: Write + Send + Sync>(
 
 fn create_ring_reader<R: Read + Seek + Send + Sync>(
     reader: R,
-    cipher: &Cipher,
+    cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
 ) -> RingCryptoReader<R> {
@@ -150,15 +152,16 @@ fn create_ring_reader<R: Read + Seek + Send + Sync>(
 
 pub fn create_reader<R: Read + Seek + Send + Sync>(
     reader: R,
-    cipher: &Cipher,
+    cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
 ) -> impl CryptoReader<R> {
     create_ring_reader(reader, cipher, key, nonce_seed)
 }
 
+#[allow(clippy::missing_errors_doc)]
 pub fn create_file_reader(
-    file: PathBuf,
+    file: &Path,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
@@ -192,10 +195,11 @@ pub fn create_file_reader(
 // }
 
 /// `nonce_seed`: If we should include the nonce seed in the result so that it can be used when decrypting.
+#[allow(clippy::missing_errors_doc)]
 pub fn encrypt_string_with_nonce_seed(
     s: &SecretString,
-    cipher: &Cipher,
-    key: Arc<SecretVec<u8>>,
+    cipher: Cipher,
+    key: &Arc<SecretVec<u8>>,
     nonce_seed: u64,
     include_nonce_seed: bool,
 ) -> Result<String> {
@@ -213,10 +217,11 @@ pub fn encrypt_string_with_nonce_seed(
 }
 
 /// Encrypt a string with a random nonce seed. It will include the nonce seed in the result so that it can be used when decrypting.
+#[allow(clippy::missing_errors_doc)]
 pub fn encrypt_string(
     s: &SecretString,
-    cipher: &Cipher,
-    key: Arc<SecretVec<u8>>,
+    cipher: Cipher,
+    key: &Arc<SecretVec<u8>>,
 ) -> Result<String> {
     let mut cursor = io::Cursor::new(vec![]);
     let nonce_seed = create_rng().next_u64();
@@ -229,12 +234,18 @@ pub fn encrypt_string(
 }
 
 /// Decrypt a string that was encrypted with including the nonce seed.
-pub fn decrypt_string(s: &str, cipher: &Cipher, key: Arc<SecretVec<u8>>) -> Result<SecretString> {
+#[allow(clippy::missing_panics_doc)]
+#[allow(clippy::missing_errors_doc)]
+pub fn decrypt_string(s: &str, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<SecretString> {
     // extract nonce seed
-    if !s.contains(".") {
+    if !s.contains('.') {
         return Err(Error::Generic("nonce seed is missing"));
     }
-    let nonce_seed = s.split('.').last().unwrap().parse::<u64>()?;
+    let nonce_seed = s
+        .split('.')
+        .last()
+        .expect("missing nonce seed")
+        .parse::<u64>()?;
     let s = s.split('.').next().unwrap();
 
     let vec = BASE64.decode(s)?;
@@ -247,9 +258,10 @@ pub fn decrypt_string(s: &str, cipher: &Cipher, key: Arc<SecretVec<u8>>) -> Resu
 }
 
 /// Decrypt a string that was encrypted with a specific nonce seed.
+#[allow(clippy::missing_errors_doc)]
 pub fn decrypt_string_with_nonce_seed(
     s: &str,
-    cipher: &Cipher,
+    cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
 ) -> Result<SecretString> {
@@ -262,25 +274,26 @@ pub fn decrypt_string_with_nonce_seed(
     Ok(SecretString::new(decrypted))
 }
 
+#[allow(clippy::missing_errors_doc)]
 pub fn decrypt_file_name(
     name: &str,
-    cipher: &Cipher,
+    cipher: Cipher,
     key: Arc<SecretVec<u8>>,
 ) -> Result<SecretString> {
-    let name = String::from(name).replace("|", "/");
+    let name = String::from(name).replace('|', "/");
     decrypt_string(&name, cipher, key)
 }
 
 #[instrument(skip(password, salt))]
+#[allow(clippy::missing_errors_doc)]
 pub fn derive_key(
     password: &SecretString,
-    cipher: &Cipher,
+    cipher: Cipher,
     salt: [u8; 32],
 ) -> Result<SecretVec<u8>> {
     let mut dk = vec![];
     let key_len = match cipher {
-        Cipher::ChaCha20 => 32,
-        Cipher::Aes256Gcm => 32,
+        Cipher::ChaCha20 | Cipher::Aes256Gcm => 32,
     };
     dk.resize(key_len, 0);
     Argon2::default()
@@ -290,21 +303,21 @@ pub fn derive_key(
 }
 
 /// Encrypt a file name with provided nonce seed. It will **INCLUDE** the nonce seed in the result so that it can be used when decrypting.
+#[allow(clippy::missing_errors_doc)]
 pub fn encrypt_file_name(
     name: &SecretString,
-    cipher: &Cipher,
-    key: Arc<SecretVec<u8>>,
+    cipher: Cipher,
+    key: &Arc<SecretVec<u8>>,
     nonce_seed: u64,
 ) -> FsResult<String> {
     // in order not to add too much to filename length we keep just 3 digits from nonce seed
     let nonce_seed = nonce_seed % 1000;
 
     if name.expose_secret() != "$." && name.expose_secret() != "$.." {
-        let normalized_name =
-            SecretString::new(name.expose_secret().replace("/", " ").replace("\\", " "));
+        let normalized_name = SecretString::new(name.expose_secret().replace(['/', '\\'], " "));
         let mut encrypted =
             encrypt_string_with_nonce_seed(&normalized_name, cipher, key, nonce_seed, true)?;
-        encrypted = encrypted.replace("/", "|");
+        encrypted = encrypted.replace('/', "|");
         Ok(encrypted)
     } else {
         // add nonce seed
@@ -314,34 +327,39 @@ pub fn encrypt_file_name(
     }
 }
 
+#[must_use]
 pub fn hash(data: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().into()
 }
 
+#[allow(clippy::missing_panics_doc)]
 pub fn hash_reader<R: Read>(r: R) -> [u8; 32] {
     let mut hasher = Sha256::new();
     let mut reader = io::BufReader::new(r);
-    io::copy(&mut reader, &mut hasher).unwrap();
+    io::copy(&mut reader, &mut hasher).expect("cannot copy");
     hasher.finalize().into()
 }
 
+#[must_use]
 pub fn hash_secret_string(data: &SecretString) -> [u8; 32] {
     hash(data.expose_secret().as_bytes())
 }
 
+#[must_use]
 pub fn hash_secret_vec(data: &SecretVec<u8>) -> [u8; 32] {
     hash(data.expose_secret())
 }
 
 /// Copy from `pos` position in file `len` bytes
 #[instrument(skip(w, key), fields(pos = pos.to_formatted_string(& Locale::en), len = len.to_formatted_string(& Locale::en)))]
+#[allow(clippy::missing_errors_doc)]
 pub fn copy_from_file_exact(
     file: PathBuf,
     pos: u64,
     len: u64,
-    cipher: &Cipher,
+    cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
     w: &mut impl Write,
@@ -350,11 +368,13 @@ pub fn copy_from_file_exact(
     copy_from_file(file, pos, len, cipher, key, nonce_seed, w, false)?;
     Ok(())
 }
+
+#[allow(clippy::missing_errors_doc)]
 pub fn copy_from_file(
     file: PathBuf,
     pos: u64,
     len: u64,
-    cipher: &Cipher,
+    cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
     w: &mut impl Write,
@@ -390,14 +410,21 @@ pub fn copy_from_file(
     Ok(len)
 }
 
+#[allow(clippy::missing_panics_doc)]
+#[allow(clippy::missing_errors_doc)]
 pub fn extract_nonce_from_encrypted_string(name: &str) -> Result<u64> {
-    if !name.contains(".") {
+    if !name.contains('.') {
         return Err(Error::Generic("nonce seed is missing"));
     }
-    let nonce_seed = name.split('.').last().unwrap().parse::<u64>()?;
+    let nonce_seed = name
+        .split('.')
+        .last()
+        .expect("nonce seed missing")
+        .parse::<u64>()?;
     Ok(nonce_seed)
 }
 
+#[must_use]
 pub fn create_rng() -> impl RngCore + CryptoRng {
     ChaCha20Rng::from_entropy()
 }

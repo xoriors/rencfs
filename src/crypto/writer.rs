@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{fs, io};
 
@@ -24,7 +24,9 @@ pub(crate) const BUF_SIZE: usize = 256 * 1024;
 #[cfg(not(test))]
 pub(crate) const BUF_SIZE: usize = 1024 * 1024; // 1 MB buffer
 
+#[allow(clippy::module_name_repetitions)]
 pub trait CryptoWriter<W: Write>: Write + Send + Sync {
+    #[allow(clippy::missing_errors_doc)]
     fn finish(&mut self) -> io::Result<W>;
 }
 
@@ -60,6 +62,7 @@ pub trait CryptoWriter<W: Write>: Write + Send + Sync {
 
 /// ring
 
+#[allow(clippy::module_name_repetitions)]
 pub struct RingCryptoWriter<W: Write + Send + Sync> {
     out: Option<BufWriter<W>>,
     sealing_key: SealingKey<RandomNonceSequence>,
@@ -67,13 +70,14 @@ pub struct RingCryptoWriter<W: Write + Send + Sync> {
 }
 
 impl<W: Write + Send + Sync> RingCryptoWriter<W> {
+    #[allow(clippy::missing_panics_doc)]
     pub fn new(
         w: W,
         algorithm: &'static Algorithm,
-        key: Arc<SecretVec<u8>>,
+        key: &Arc<SecretVec<u8>>,
         nonce_seed: u64,
     ) -> Self {
-        let unbound_key = UnboundKey::new(&algorithm, key.expose_secret()).unwrap();
+        let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).expect("unbound key");
         let nonce_sequence = RandomNonceSequence::new(nonce_seed);
         let sealing_key = SealingKey::new(unbound_key, nonce_sequence);
         let buf = BufMut::new(vec![0; BUF_SIZE]);
@@ -109,16 +113,16 @@ impl<W: Write + Send + Sync> Write for RingCryptoWriter<W> {
 
 impl<W: Write + Send + Sync> RingCryptoWriter<W> {
     fn encrypt_and_write(&mut self) -> io::Result<()> {
-        let mut data = self.buf.as_mut();
+        let data = self.buf.as_mut();
         let tag = self
             .sealing_key
-            .seal_in_place_separate_tag(Aad::empty(), &mut data)
+            .seal_in_place_separate_tag(Aad::empty(), data)
             .map_err(|err| {
                 error!("error sealing in place: {}", err);
                 io::Error::from(io::ErrorKind::Other)
             })?;
         let out = self.out.as_mut().unwrap();
-        out.write_all(&data)?;
+        out.write_all(data)?;
         self.buf.clear();
         out.write_all(tag.as_ref())?;
         out.flush()?;
@@ -186,11 +190,14 @@ pub trait CryptoWriterSeek<W: Write>: CryptoWriter<W> + Seek {}
 
 /// file writer
 
+#[allow(clippy::module_name_repetitions)]
 pub trait FileCryptoWriterCallback: Send + Sync {
+    #[allow(clippy::missing_errors_doc)]
     fn on_file_content_changed(&self, changed_from_pos: u64, last_write_pos: u64)
         -> io::Result<()>;
 }
 
+#[allow(clippy::module_name_repetitions)]
 pub struct FileCryptoWriter<Callback: FileCryptoWriterCallback> {
     file: PathBuf,
     tmp_dir: PathBuf,
@@ -204,31 +211,27 @@ pub struct FileCryptoWriter<Callback: FileCryptoWriterCallback> {
 }
 
 impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
+    #[allow(clippy::missing_errors_doc)]
     pub fn new(
-        file_path: PathBuf,
-        tmp_dir: PathBuf,
+        file_path: &Path,
+        tmp_dir: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
         nonce_seed: u64,
         callback: Callback,
     ) -> io::Result<Self> {
         if !file_path.exists() {
-            File::create(&file_path)?;
+            File::create(file_path)?;
         }
         // start writer in tmp file
-        let tmp_path = NamedTempFile::new_in(tmp_dir.clone())?
+        let tmp_path = NamedTempFile::new_in(tmp_dir)?
             .into_temp_path()
             .to_path_buf();
         let tmp_file = File::create(tmp_path.clone())?;
         Ok(Self {
-            file: file_path,
-            tmp_dir,
-            writer: Box::new(crypto::create_writer(
-                tmp_file,
-                &cipher,
-                key.clone(),
-                nonce_seed,
-            )),
+            file: file_path.to_owned(),
+            tmp_dir: tmp_dir.to_owned(),
+            writer: Box::new(crypto::create_writer(tmp_file, cipher, &key, nonce_seed)),
             cipher,
             key,
             nonce_seed,
@@ -238,7 +241,7 @@ impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
         })
     }
 
-    pub fn seek_from_start(&mut self, pos: u64) -> io::Result<u64> {
+    fn seek_from_start(&mut self, pos: u64) -> io::Result<u64> {
         if pos == self.pos {
             return Ok(pos);
         }
@@ -246,12 +249,11 @@ impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
         if self.pos < pos {
             // seek forward
             let len = pos - self.pos;
-            let cipher = &self.cipher.clone();
             crypto::copy_from_file(
                 self.file.clone(),
                 self.pos,
                 len,
-                cipher,
+                self.cipher,
                 self.key.clone(),
                 self.nonce_seed,
                 self,
@@ -274,7 +276,7 @@ impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
                 self.file.clone(),
                 self.pos,
                 u64::MAX,
-                &cipher,
+                cipher,
                 self.key.clone(),
                 self.nonce_seed,
                 self,
@@ -301,8 +303,8 @@ impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
             let tmp_file = File::create(tmp_path.clone())?;
             self.writer = Box::new(crypto::create_writer(
                 tmp_file,
-                &cipher,
-                self.key.clone(),
+                cipher,
+                &self.key.clone(),
                 self.nonce_seed,
             ));
             self.tmp_file_path = tmp_path;
@@ -314,7 +316,7 @@ impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
                 self.file.clone(),
                 self.pos,
                 len,
-                &cipher,
+                cipher,
                 self.key.clone(),
                 self.nonce_seed,
                 self,
@@ -356,15 +358,15 @@ impl<Callback: FileCryptoWriterCallback> CryptoWriter<File> for FileCryptoWriter
 }
 
 impl<Callback: FileCryptoWriterCallback> Seek for FileCryptoWriter<Callback> {
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         match pos {
             SeekFrom::Start(pos) => self.seek_from_start(pos),
-            SeekFrom::End(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "seek from end not supported",
-                ))
-            }
+            SeekFrom::End(_) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "seek from end not supported",
+            )),
             SeekFrom::Current(pos) => {
                 let new_pos = self.pos as i64 + pos;
                 if new_pos < 0 {
