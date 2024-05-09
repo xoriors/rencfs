@@ -130,14 +130,13 @@ pub struct EncryptedFsFuse3 {
 }
 
 impl EncryptedFsFuse3 {
-    #[allow(clippy::no_effect_underscore_binding)]
     pub async fn new(
         data_dir: PathBuf,
         tmp_dir: PathBuf,
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
         direct_io: bool,
-        _suid_support: bool,
+        #[allow(clippy::no_effect_underscore_binding)] _suid_support: bool,
     ) -> FsResult<Self> {
         #[cfg(feature = "abi-7-26")]
         {
