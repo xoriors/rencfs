@@ -1,5 +1,4 @@
 use std::fs::OpenOptions;
-use std::future::Future;
 use std::io::Read;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
@@ -8,11 +7,10 @@ use std::sync::Arc;
 use std::{fs, io};
 
 use secrecy::{ExposeSecret, SecretString};
-use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use tracing_test::traced_test;
 
-use crate::encryptedfs::{write_all_bytes_to_fs, AsyncRuntime};
+use crate::encryptedfs::write_all_bytes_to_fs;
 use crate::encryptedfs::{
     Cipher, CreateFileAttr, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType, FsError,
     FsResult, PasswordProvider, CONTENTS_DIR, ROOT_INODE,

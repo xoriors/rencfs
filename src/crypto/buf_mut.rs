@@ -7,7 +7,7 @@ use secrecy::Zeroize;
 pub struct BufMut {
     buf: Vec<u8>,
     pos: usize,
-    read_pos: usize,
+    pos_read: usize,
 }
 
 impl BufMut {
@@ -15,7 +15,7 @@ impl BufMut {
         Self {
             buf: from,
             pos: 0,
-            read_pos: 0,
+            pos_read: 0,
         }
     }
 
@@ -27,7 +27,7 @@ impl BufMut {
         &mut self.buf[..self.pos]
     }
 
-    pub fn as_mut_read(&mut self) -> &mut [u8] {
+    pub fn as_mut_remaining(&mut self) -> &mut [u8] {
         &mut self.buf[self.pos..]
     }
 
@@ -37,15 +37,23 @@ impl BufMut {
 
     pub fn clear(&mut self) {
         self.pos = 0;
-        self.read_pos = 0;
+        self.pos_read = 0;
     }
 
     pub fn pos(&self) -> usize {
         self.pos
     }
 
+    pub fn pos_read(&self) -> usize {
+        self.pos_read
+    }
+
     pub fn available(&self) -> usize {
         self.pos()
+    }
+
+    pub fn available_read(&self) -> usize {
+        self.available() - self.pos_read
     }
 }
 
@@ -64,49 +72,30 @@ impl Write for BufMut {
 
 impl Seek for BufMut {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        match pos {
-            SeekFrom::Start(pos) => {
-                if pos as usize > self.buf.len() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "position is out of bounds",
-                    ));
-                }
-                self.pos = pos as usize;
-            }
-            SeekFrom::End(pos) => {
-                if (self.buf.len() as i64 + pos) < 0
-                    || (self.buf.len() as i64 + pos) > self.buf.len() as i64
-                {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "position is out of bounds",
-                    ));
-                }
-                self.pos = (self.buf.len() as i64 + pos) as usize;
-            }
-            SeekFrom::Current(pos) => {
-                if (self.pos as i64 + pos) < 0 || (self.pos as i64 + pos) > self.buf.len() as i64 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "position is out of bounds",
-                    ));
-                }
-                self.pos = (self.pos as i64 + pos) as usize;
-            }
+        let new_pos = match pos {
+            SeekFrom::Start(pos) => pos as i64,
+            SeekFrom::End(pos) => self.buf.len() as i64 + pos,
+            SeekFrom::Current(pos) => self.pos as i64 + pos,
+        };
+        if new_pos < 0 || new_pos > self.buf.len() as i64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "position is out of bounds",
+            ));
         }
+        self.pos = new_pos as usize;
         Ok(self.pos as u64)
     }
 }
 
 impl Read for BufMut {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let len = min(self.pos() - self.read_pos, buf.len());
+        let len = min(self.available_read(), buf.len());
         if len == 0 {
             return Ok(0);
         }
-        buf[..len].copy_from_slice(&self.buf[self.read_pos..self.read_pos + len]);
-        self.read_pos += len;
+        buf[..len].copy_from_slice(&self.buf[self.pos_read..self.pos_read + len]);
+        self.pos_read += len;
         Ok(len)
     }
 }

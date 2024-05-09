@@ -207,15 +207,16 @@
 //!     println!("Password changed successfully");
 //! }
 //! ```
-use crate::crypto::Cipher;
-use crate::encryptedfs::{AsyncRuntime, PasswordProvider};
-use crate::encryptedfs_fuse3::EncryptedFsFuse3;
-use fuse3::raw::Session;
-use fuse3::MountOptions;
 use std::ffi::OsStr;
 use std::path::PathBuf;
-use std::sync::Arc;
+
+use fuse3::raw::Session;
+use fuse3::MountOptions;
 use tracing::{info, instrument};
+
+use crate::crypto::Cipher;
+use crate::encryptedfs::PasswordProvider;
+use crate::encryptedfs_fuse3::EncryptedFsFuse3;
 
 pub mod arc_hashmap;
 pub mod crypto;

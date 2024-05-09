@@ -6,7 +6,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use argon2::Argon2;
-use base64::DecodeError;
+use base64::alphabet::STANDARD;
+use base64::engine::general_purpose::NO_PAD;
+use base64::engine::GeneralPurpose;
+use base64::{DecodeError, Engine};
 use hex::FromHexError;
 use num_format::{Locale, ToFormattedString};
 use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
@@ -29,6 +32,8 @@ use crate::stream_util;
 pub mod buf_mut;
 pub mod reader;
 pub mod writer;
+
+pub static BASE64: GeneralPurpose = GeneralPurpose::new(&STANDARD, NO_PAD);
 
 #[derive(Debug, Clone, Copy, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq)]
 pub enum Cipher {
@@ -143,7 +148,6 @@ fn create_ring_reader<R: Read + Seek + Send + Sync>(
 //     CryptostreamCryptoWriter::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 // }
 
-#[instrument(skip(reader, key))]
 pub fn create_reader<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: &Cipher,
@@ -202,9 +206,9 @@ pub fn encrypt_string_with_nonce_seed(
     cursor = writer.finish()?;
     let v = cursor.into_inner();
     if include_nonce_seed {
-        Ok(format!("{}.{}", base64::encode(v), nonce_seed))
+        Ok(format!("{}.{}", BASE64.encode(v), nonce_seed))
     } else {
-        Ok(base64::encode(v))
+        Ok(BASE64.encode(v))
     }
 }
 
@@ -221,7 +225,7 @@ pub fn encrypt_string(
     writer.flush()?;
     cursor = writer.finish()?;
     let v = cursor.into_inner();
-    Ok(format!("{}.{}", base64::encode(v), nonce_seed))
+    Ok(format!("{}.{}", BASE64.encode(v), nonce_seed))
 }
 
 /// Decrypt a string that was encrypted with including the nonce seed.
@@ -233,7 +237,7 @@ pub fn decrypt_string(s: &str, cipher: &Cipher, key: Arc<SecretVec<u8>>) -> Resu
     let nonce_seed = s.split('.').last().unwrap().parse::<u64>()?;
     let s = s.split('.').next().unwrap();
 
-    let vec = base64::decode(s)?;
+    let vec = BASE64.decode(s)?;
     let cursor = io::Cursor::new(vec);
 
     let mut reader = create_reader(cursor, cipher, key, nonce_seed);
@@ -249,7 +253,7 @@ pub fn decrypt_string_with_nonce_seed(
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
 ) -> Result<SecretString> {
-    let vec = base64::decode(s)?;
+    let vec = BASE64.decode(s)?;
     let cursor = io::Cursor::new(vec);
 
     let mut reader = create_reader(cursor, cipher, key, nonce_seed);
@@ -316,6 +320,13 @@ pub fn hash(data: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+pub fn hash_reader<R: Read>(r: R) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    let mut reader = io::BufReader::new(r);
+    io::copy(&mut reader, &mut hasher).unwrap();
+    hasher.finalize().into()
+}
+
 pub fn hash_secret_string(data: &SecretString) -> [u8; 32] {
     hash(data.expose_secret().as_bytes())
 }
@@ -339,7 +350,6 @@ pub fn copy_from_file_exact(
     copy_from_file(file, pos, len, cipher, key, nonce_seed, w, false)?;
     Ok(())
 }
-#[instrument(skip(w, key), fields(pos = pos.to_formatted_string(& Locale::en), len = len.to_formatted_string(& Locale::en)))]
 pub fn copy_from_file(
     file: PathBuf,
     pos: u64,
@@ -350,7 +360,6 @@ pub fn copy_from_file(
     w: &mut impl Write,
     stop_on_eof: bool,
 ) -> io::Result<u64> {
-    debug!("");
     if len == 0 {
         // no-op
         return Ok(0);

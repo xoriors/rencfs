@@ -5,24 +5,25 @@ use std::fs::{File, OpenOptions, ReadDir};
 use std::io::ErrorKind::Other;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::ParseIntError;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::AtomicU64;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime};
-use std::{fs, io};
+use std::{fs, io, thread};
 
 use argon2::password_hash::rand_core::RngCore;
-use futures_util::{TryFutureExt, TryStreamExt};
+use futures_util::TryStreamExt;
 use num_format::{Locale, ToFormattedString};
 use rand::thread_rng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use static_init::dynamic;
 use tempfile::NamedTempFile;
 use thiserror::Error;
-use tokio::sync::mpsc::Sender;
+use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
 use tracing::{debug, error, info, instrument, warn};
@@ -45,6 +46,81 @@ pub(crate) const SECURITY_DIR: &str = "security";
 pub(crate) const KEY_ENC_FILENAME: &str = "key.enc";
 
 pub(crate) const ROOT_INODE: u64 = 1;
+
+#[dynamic]
+static INITIATED: Mutex<bool> = Mutex::new(false);
+
+pub(crate) enum FsOperation {
+    ResetHandles {
+        fs: Arc<EncryptedFs>,
+        ino: u64,
+        changed_from_pos: u64,
+        last_write_pos: u64,
+        fh: u64,
+        tx: Sender<FsResult<()>>,
+    },
+}
+
+async fn init() {
+    let mut guard = INITIATED.lock().await;
+    if *guard {
+        return;
+    }
+
+    let (tx, rx): (Sender<FsOperation>, Receiver<FsOperation>) = std::sync::mpsc::channel();
+    *TX.lock().unwrap() = Some(tx);
+
+    thread::spawn(move || {
+        let rt = Runtime::new().unwrap();
+        while let Ok(op) = rx.recv() {
+            rt.spawn(async move {
+                match op {
+                    FsOperation::ResetHandles {
+                        fs,
+                        ino,
+                        changed_from_pos,
+                        last_write_pos,
+                        fh,
+                        tx,
+                    } => {
+                        if let Err(err) =
+                            recreate_handles(fs, ino, changed_from_pos, last_write_pos, fh).await
+                        {
+                            error!(err = %err, "recreating handles");
+                            tx.send(Err(err)).unwrap();
+                        } else {
+                            tx.send(Ok(())).unwrap();
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    *guard = true;
+}
+
+async fn recreate_handles(
+    fs: Arc<EncryptedFs>,
+    ino: u64,
+    changed_from_pos: u64,
+    last_write_pos: u64,
+    fh: u64,
+) -> FsResult<()> {
+    fs.reset_handles(ino, changed_from_pos, Some(fh)).await?;
+    let mut attr = fs.get_inode_from_storage(ino, fs.key.get().await?).await?;
+    let _guard = fs.serialize_update_inode_locks.lock().await;
+    // if we wrote pass the filesize we need to update the filesize
+    if last_write_pos > attr.size {
+        attr.size = last_write_pos;
+        fs.write_inode_to_storage(&attr, fs.key.get().await?)
+            .await?;
+    }
+
+    Ok(())
+}
+
+pub(crate) static TX: std::sync::Mutex<Option<Sender<FsOperation>>> = std::sync::Mutex::new(None);
 
 /// File attributes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -660,12 +736,6 @@ pub trait PasswordProvider: Send + Sync + 'static {
     fn get_password(&self) -> Option<SecretString>;
 }
 
-pub trait AsyncRuntime: Send + Sync + 'static {
-    fn block_on<F, Output, Error>(&self, future: F) -> F::Output
-    where
-        F: std::future::Future<Output = Result<Output, Error>> + Send + 'static;
-}
-
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
 pub struct EncryptedFs {
     pub(crate) data_dir: PathBuf,
@@ -701,6 +771,8 @@ impl EncryptedFs {
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
     ) -> FsResult<Arc<Self>> {
+        init().await;
+
         let key_provider = KeyProvider {
             path: data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
             password_provider,
@@ -709,7 +781,7 @@ impl EncryptedFs {
 
         ensure_structure_created(&data_dir.clone(), &tmp_dir.clone(), &key_provider).await?;
 
-        let mut fs = EncryptedFs {
+        let fs = EncryptedFs {
             data_dir,
             tmp_dir,
             write_handles: RwLock::new(HashMap::new()),
@@ -996,7 +1068,6 @@ impl EncryptedFs {
             }
         };
         let name = crypto::encrypt_file_name(&name, &self.cipher, self.key.get().await?, parent)?;
-        info!(parent = parent, name = name);
         Ok(self
             .data_dir
             .join(CONTENTS_DIR)
@@ -1156,7 +1227,7 @@ impl EncryptedFs {
         &self,
         ino: u64,
         offset: u64,
-        mut buf: &mut [u8],
+        buf: &mut [u8],
         handle: u64,
     ) -> FsResult<usize> {
         debug!("read");
@@ -1193,10 +1264,24 @@ impl EncryptedFs {
 
         // read data
         let len = {
+            let size = ctx.attr.size;
             let reader = ctx.reader.as_mut().unwrap();
+
+            info!(
+                "read offset {} pos {} size {}",
+                offset.to_formatted_string(&Locale::en),
+                reader.stream_position()?.to_formatted_string(&Locale::en),
+                buf.len().to_formatted_string(&Locale::en)
+            );
+
             reader.seek(SeekFrom::Start(offset))?;
-            let len = reader.read(&mut buf)?;
-            len
+            let read_len = if reader.stream_position()? + buf.len() as u64 > size {
+                (size - reader.stream_position()?) as usize
+            } else {
+                buf.len()
+            };
+            reader.read_exact(&mut buf[..read_len])?;
+            read_len
         };
 
         ctx.attr.atime = SystemTime::now();
@@ -1290,7 +1375,6 @@ impl EncryptedFs {
             map_guard.get_or_insert_with(ino, || RwLock::new(false))
         };
         let _guard = lock.write().await;
-        debug!("ptr {:p}", lock.deref());
 
         if !self.node_exists(ino) {
             return Err(FsError::InodeNotFound);
@@ -1353,15 +1437,20 @@ impl EncryptedFs {
             // in case of directory or if the file was crated without being opened we don't use handle
             return Ok(());
         }
+        let mut valid_fh = false;
         if let Some(_) = self.read_handles.read().await.get(&handle) {
-            return Ok(());
+            valid_fh = true;
         }
         if let Some(ctx) = self.write_handles.read().await.get(&handle) {
             ctx.lock().await.writer.as_mut().unwrap().flush()?;
-            return Ok(());
+            valid_fh = true;
         }
 
-        Err(FsError::InvalidFileHandle)
+        if !valid_fh {
+            return Err(FsError::InvalidFileHandle);
+        }
+
+        Ok(())
     }
 
     /// Helpful when we want to copy just some portions of the file.
@@ -1777,7 +1866,12 @@ impl EncryptedFs {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
-    async fn reset_handles(&self, ino: u64, pos: u64, skip_fh: Option<u64>) -> FsResult<()> {
+    pub(crate) async fn reset_handles(
+        &self,
+        ino: u64,
+        pos: u64,
+        skip_fh: Option<u64>,
+    ) -> FsResult<()> {
         debug!("recreate_handles");
 
         // read
@@ -2132,24 +2226,33 @@ fn merge_attr(attr: &mut FileAttr, set_attr: SetFileAttr) {
 struct LocalFileCryptoWriterCallback(Weak<EncryptedFs>, u64, u64);
 
 impl FileCryptoWriterCallback for LocalFileCryptoWriterCallback {
-    fn on_file_content_changed(&self, pos: u64) -> io::Result<()> {
+    fn on_file_content_changed(
+        &self,
+        changed_from_pos: u64,
+        last_write_pos: u64,
+    ) -> io::Result<()> {
         if let Some(fs) = self.0.upgrade() {
-            let (tx, rx) = std::sync::mpsc::channel();
+            let (tx, rx) = std::sync::mpsc::channel::<FsResult<()>>();
             let fs = fs.clone();
             let ino = self.1;
             let fh = self.2;
-            tokio::spawn(async move {
-                fs.reset_handles(ino, pos, Some(fh)).await.map_err(|err| {
-                    error!(%err, "reset_handles error");
-                    err
-                })?;
-
-                tx.send(()).unwrap();
-
-                Ok::<(), FsError>(())
-            });
+            TX.lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .clone()
+                .send(FsOperation::ResetHandles {
+                    fs,
+                    ino,
+                    changed_from_pos,
+                    last_write_pos,
+                    fh,
+                    tx,
+                })
+                .map_err(|_| io::Error::new(Other, "send error"))?;
             rx.recv()
-                .map_err(|_| io::Error::new(Other, "receive error"))?;
+                .map_err(|_| io::Error::new(Other, "receive error"))?
+                .map_err(|e| io::Error::new(Other, e))?;
         }
 
         Ok(())

@@ -25,8 +25,8 @@ use tracing::{debug, error, instrument, trace, warn};
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
-    AsyncRuntime, CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult,
-    PasswordProvider, SetFileAttr,
+    CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult, PasswordProvider,
+    SetFileAttr,
 };
 
 const TTL: Duration = Duration::from_secs(1);

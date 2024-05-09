@@ -1,4 +1,3 @@
-use num_format::{Locale, ToFormattedString};
 use std::fs::File;
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -14,7 +13,7 @@ use ring::aead::{
 use ring::error::Unspecified;
 use secrecy::{ExposeSecret, SecretVec};
 use tempfile::NamedTempFile;
-use tracing::{debug, error, instrument};
+use tracing::error;
 
 use crate::crypto::buf_mut::BufMut;
 use crate::crypto::Cipher;
@@ -74,7 +73,6 @@ impl<W: Write + Send + Sync> RingCryptoWriter<W> {
         key: Arc<SecretVec<u8>>,
         nonce_seed: u64,
     ) -> Self {
-        // todo: param for start nonce sequence
         let unbound_key = UnboundKey::new(&algorithm, key.expose_secret()).unwrap();
         let nonce_sequence = RandomNonceSequence::new(nonce_seed);
         let sealing_key = SealingKey::new(unbound_key, nonce_sequence);
@@ -96,7 +94,6 @@ impl<W: Write + Send + Sync> Write for RingCryptoWriter<W> {
         Ok(len)
     }
 
-    #[instrument(name = "RingEncryptor::flush", skip(self))]
     fn flush(&mut self) -> io::Result<()> {
         if self.buf.available() == 0 {
             return Ok(());
@@ -138,10 +135,16 @@ impl<W: Write + Send + Sync> CryptoWriter<W> for RingCryptoWriter<W> {
             ));
         }
         if self.buf.available() > 0 {
-            // encrypt and write last block, use as many bytes we have
+            // encrypt and write last block, use as many bytes as we have
             self.encrypt_and_write()?;
         }
         Ok(self.out.take().unwrap().into_inner()?)
+    }
+}
+
+impl<W: Write + Send + Sync> Drop for RingCryptoWriter<W> {
+    fn drop(&mut self) {
+        let _ = self.finish();
     }
 }
 
@@ -154,7 +157,7 @@ impl RandomNonceSequence {
     pub fn new(seed: u64) -> Self {
         Self {
             rng: ChaCha20Rng::seed_from_u64(seed),
-            // seed: 1,
+            // seed,
         }
     }
 }
@@ -164,7 +167,10 @@ impl NonceSequence for RandomNonceSequence {
     fn advance(&mut self) -> Result<Nonce, Unspecified> {
         let mut nonce_bytes = vec![0; NONCE_LEN];
 
-        let bytes = self.rng.next_u64().to_le_bytes();
+        let num = self.rng.next_u64();
+        // let num = self.seed;
+        // self.seed = self.seed + 1;
+        let bytes = num.to_le_bytes();
         // let bytes = self.seed.to_le_bytes();
         nonce_bytes[4..].copy_from_slice(&bytes);
         // println!("nonce_bytes = {}", hex::encode(&nonce_bytes));
@@ -181,7 +187,8 @@ pub trait CryptoWriterSeek<W: Write>: CryptoWriter<W> + Seek {}
 /// file writer
 
 pub trait FileCryptoWriterCallback: Send + Sync {
-    fn on_file_content_changed(&self, pos: u64) -> io::Result<()>;
+    fn on_file_content_changed(&self, changed_from_pos: u64, last_write_pos: u64)
+        -> io::Result<()>;
 }
 
 pub struct FileCryptoWriter<Callback: FileCryptoWriterCallback> {
@@ -205,6 +212,9 @@ impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
         nonce_seed: u64,
         callback: Callback,
     ) -> io::Result<Self> {
+        if !file_path.exists() {
+            File::create(&file_path)?;
+        }
         // start writer in tmp file
         let tmp_path = NamedTempFile::new_in(tmp_dir.clone())?
             .into_temp_path()
@@ -232,12 +242,6 @@ impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
         if pos == self.pos {
             return Ok(pos);
         }
-
-        debug!(
-            "seeking to offset {} from pos {}",
-            pos.to_formatted_string(&Locale::en),
-            self.pos.to_formatted_string(&Locale::en)
-        );
 
         if self.pos < pos {
             // seek forward
@@ -282,6 +286,14 @@ impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
             // move tmp file to file
             fs::rename(self.tmp_file_path.clone(), self.file.clone())?;
 
+            // notify back that file content has changed
+            self.callback
+                .on_file_content_changed(0, self.pos)
+                .map_err(|err| {
+                    error!("error notifying file content changed: {}", err);
+                    err
+                })?;
+
             // recreate writer
             let tmp_path = NamedTempFile::new_in(self.tmp_dir.clone())?
                 .into_temp_path()
@@ -296,9 +308,6 @@ impl<Callback: FileCryptoWriterCallback> FileCryptoWriter<Callback> {
             ));
             self.tmp_file_path = tmp_path;
             self.pos = 0;
-
-            // notify back that file content has changed
-            self.callback.on_file_content_changed(0)?;
 
             // copy until pos
             let len = pos;
@@ -334,6 +343,15 @@ impl<Callback: FileCryptoWriterCallback> Write for FileCryptoWriter<Callback> {
 impl<Callback: FileCryptoWriterCallback> CryptoWriter<File> for FileCryptoWriter<Callback> {
     fn finish(&mut self) -> io::Result<File> {
         self.flush()?;
+        {
+            self.writer.finish()?;
+        }
+        if self.tmp_file_path.exists() {
+            if let Err(err) = fs::remove_file(&self.tmp_file_path) {
+                error!("error removing tmp file: {}", err);
+                return Err(io::Error::new(io::ErrorKind::NotFound, err.to_string()));
+            }
+        }
         File::open(self.file.clone())
     }
 }
@@ -363,3 +381,9 @@ impl<Callback: FileCryptoWriterCallback> Seek for FileCryptoWriter<Callback> {
 }
 
 impl<Callback: FileCryptoWriterCallback> CryptoWriterSeek<File> for FileCryptoWriter<Callback> {}
+
+impl<Callback: FileCryptoWriterCallback> Drop for FileCryptoWriter<Callback> {
+    fn drop(&mut self) {
+        let _ = self.finish();
+    }
+}

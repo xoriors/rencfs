@@ -1,0 +1,15 @@
+{
+    "configurations": [
+        {
+            "type": "cargo",
+            "name": "run",
+            "cargoArgs": ["run"],
+            "executableArgs": ["mount", "-m", "$USER_HOME$/rencfs", "-d", "$USER_HOME$/rencfs_data", "-t", "$USER_HOME$/tmp"],
+            "environment": {
+                "RENCFS_PASSWORD": "pass42",
+                "RUST_LOG": "none,rencfs=trace",
+            },
+            "workingDir": "$PROJECT_DIR$",
+        },
+    ]
+}
