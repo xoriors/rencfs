@@ -3,8 +3,10 @@ use std::io;
 use std::io::{Read, Seek, Write};
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::arc_hashmap::Holder;
 use argon2::Argon2;
 use base64::alphabet::STANDARD;
 use base64::engine::general_purpose::NO_PAD;
@@ -12,6 +14,7 @@ use base64::engine::GeneralPurpose;
 use base64::{DecodeError, Engine};
 use hex::FromHexError;
 use num_format::{Locale, ToFormattedString};
+use parking_lot::RwLock;
 use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
@@ -22,9 +25,13 @@ use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tracing::{debug, error, instrument};
 
-use crate::crypto::reader::{CryptoReader, FileCryptoReader, RingCryptoReader};
+use crate::crypto::reader::{
+    AsyncCryptoReader, ChunkedFileCryptoReader, CryptoReader, FileCryptoReader, RingCryptoReader,
+};
 use crate::crypto::writer::{
-    CryptoWriter, CryptoWriterSeek, FileCryptoWriter, FileCryptoWriterCallback, RingCryptoWriter,
+    AsyncSeekCryptoWriter, ChunkedFileCryptoWriter, CryptoWriter, CryptoWriterSeek,
+    FileCryptoWriter, FileCryptoWriterCallback, FileCryptoWriterMetadataProvider, RingCryptoWriter,
+    SequenceLockProvider,
 };
 use crate::encryptedfs::FsResult;
 use crate::stream_util;
@@ -93,17 +100,76 @@ pub fn create_writer<W: Write + Send + Sync>(
 ) -> impl CryptoWriter<W> {
     create_ring_writer(writer, cipher, key, nonce_seed)
 }
+
+/// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position\
+/// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do\
+/// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
+/// **`tmp_dir`** is used to store the temporary file while writing. It **MUST** be on the same filesystem as the **`file_dir`**\
+///     New changes are written to a temporary file and on **`flush`** or **`finish`** the tmp file is renamed to the original file
 #[allow(clippy::missing_errors_doc)]
-pub fn create_file_writer<Callback: FileCryptoWriterCallback + 'static>(
+pub fn create_file_writer(
     file: &Path,
     tmp_dir: &Path,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
-    callback: Callback,
-) -> Result<Box<dyn CryptoWriterSeek<File>>> {
+    callback: Option<Box<dyn FileCryptoWriterCallback>>,
+    lock: Option<Holder<RwLock<bool>>>,
+    metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
+) -> io::Result<Box<dyn CryptoWriterSeek<File>>> {
     Ok(Box::new(FileCryptoWriter::new(
-        file, tmp_dir, cipher, key, nonce_seed, callback,
+        file,
+        tmp_dir,
+        cipher,
+        key,
+        nonce_seed,
+        callback,
+        lock,
+        metadata_provider,
+    )?))
+}
+
+/// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position\
+/// **`locks`** is used to write lock the chunks files when accessing them. This ensures that we have exclusive write to a given chunk when we need to change it's content\
+///     If not provided, it will not ensure that other instances are not accessing the chunks while we do\
+/// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
+/// **`tmp_dir`** is used to store the temporary files while writing the chunks. It **MUST** be on the same filesystem as the `file_dir`\
+///   New changes are written to a temporary file and on `flush`, `shutdown` or when we write to another chunk the tmp file is renamed to the original chunk
+#[allow(clippy::missing_errors_doc)]
+pub fn create_chunked_file_writer(
+    file_dir: &Path,
+    tmp_dir: &Path,
+    cipher: Cipher,
+    key: Arc<SecretVec<u8>>,
+    nonce_seed: u64,
+    callback: Option<Box<dyn FileCryptoWriterCallback>>,
+    locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
+    metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
+) -> io::Result<Pin<Box<dyn AsyncSeekCryptoWriter>>> {
+    Ok(Box::pin(ChunkedFileCryptoWriter::new(
+        file_dir,
+        tmp_dir,
+        cipher,
+        key,
+        nonce_seed,
+        callback,
+        locks,
+        metadata_provider,
+    )?))
+}
+
+/// `locks` is used to read lock the chunks files when accessing them. This ensures offer multiple reads but exclusive writes to a given chunk
+///     If not provided, it will not ensure that other instances are not writing the chunks while we read them
+#[allow(clippy::missing_errors_doc)]
+pub fn create_chunked_file_reader(
+    file_dir: &Path,
+    cipher: Cipher,
+    key: Arc<SecretVec<u8>>,
+    nonce_seed: u64,
+    locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
+) -> io::Result<Pin<Box<dyn AsyncCryptoReader>>> {
+    Ok(Box::pin(ChunkedFileCryptoReader::new(
+        file_dir, cipher, key, nonce_seed, locks,
     )?))
 }
 
@@ -159,15 +225,17 @@ pub fn create_reader<R: Read + Seek + Send + Sync>(
     create_ring_reader(reader, cipher, key, nonce_seed)
 }
 
+/// `lock` is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read
 #[allow(clippy::missing_errors_doc)]
 pub fn create_file_reader(
     file: &Path,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
-) -> Result<Box<dyn CryptoReader<File>>> {
+    lock: Option<Holder<RwLock<bool>>>,
+) -> io::Result<Box<dyn CryptoReader<File>>> {
     Ok(Box::new(FileCryptoReader::new(
-        file, cipher, key, nonce_seed,
+        file, cipher, key, nonce_seed, lock,
     )?))
 }
 

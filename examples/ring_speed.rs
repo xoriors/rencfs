@@ -42,13 +42,13 @@ fn main() -> io::Result<()> {
     let mut input = OpenOptions::new().read(true).open(in_path).unwrap();
     let out_path = format!(
         "/tmp/{}.enc",
-        Path::new(&path_in).file_name().unwrap().to_str().unwrap()
+        Path::new(&in_path).file_name().unwrap().to_str().unwrap()
     );
     let mut out = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open(out_path)?;
+        .open(out_path.clone())?;
 
     // Create a new instance of SystemRandom to be used as the single source of entropy
     let rand = SystemRandom::new();

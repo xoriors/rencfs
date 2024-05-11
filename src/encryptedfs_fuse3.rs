@@ -226,7 +226,7 @@ impl EncryptedFsFuse3 {
                 error!(err = %err);
                 match err {
                     FsError::AlreadyExists => EEXIST,
-                    FsError::Io { source } => {
+                    FsError::Io { source, .. } => {
                         if source.to_string().to_lowercase().contains("too long") {
                             ENAMETOOLONG
                         } else {

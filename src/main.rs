@@ -265,27 +265,22 @@ async fn run_change_password(matches: &ArgMatches) -> Result<()> {
         return Err(ExitStatusError::Failure(1).into());
     }
     println!("Changing password...");
-    EncryptedFs::change_password(
-        Path::new(&data_dir).to_path_buf(),
-        password,
-        new_password,
-        cipher,
-    )
-    .await
-    .map_err(|err| {
-        match err {
-            FsError::InvalidPassword => {
-                println!("Invalid old password");
+    EncryptedFs::change_password(Path::new(&data_dir), password, new_password, cipher)
+        .await
+        .map_err(|err| {
+            match err {
+                FsError::InvalidPassword => {
+                    println!("Invalid old password");
+                }
+                FsError::InvalidDataDirStructure => {
+                    println!("Invalid structure of data directory");
+                }
+                _ => {
+                    error!(err = %err);
+                }
             }
-            FsError::InvalidDataDirStructure => {
-                println!("Invalid structure of data directory");
-            }
-            _ => {
-                error!(err = %err);
-            }
-        }
-        ExitStatusError::Failure(1)
-    })?;
+            ExitStatusError::Failure(1)
+        })?;
     println!("Password changed successfully");
 
     Ok(())

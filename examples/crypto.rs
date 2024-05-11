@@ -27,16 +27,6 @@ fn main() -> anyhow::Result<()> {
         std::fs::remove_file(&out)?;
     }
 
-    struct CallbackImpl {}
-    impl FileCryptoWriterCallback for CallbackImpl {
-        fn on_file_content_changed(
-            &self,
-            changed_from_pos: u64,
-            last_write_pos: u64,
-        ) -> io::Result<()> {
-            Ok(())
-        }
-    }
     let mut file = File::open(path_in.clone()).unwrap();
     let mut writer = crypto::create_file_writer(
         &Path::new(&path_out).to_path_buf(),
@@ -44,7 +34,9 @@ fn main() -> anyhow::Result<()> {
         cipher,
         key.clone(),
         42_u64,
-        CallbackImpl {},
+        None,
+        None,
+        None,
     )?;
     io::copy(&mut file, &mut writer).unwrap();
     writer.flush().unwrap();

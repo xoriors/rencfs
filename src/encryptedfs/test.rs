@@ -1,5 +1,3 @@
-use std::fs::OpenOptions;
-use std::io::Read;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -7,6 +5,7 @@ use std::sync::Arc;
 use std::{fs, io};
 
 use secrecy::{ExposeSecret, SecretString};
+use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tracing_test::traced_test;
 
@@ -30,9 +29,7 @@ struct SetupResult {
 
 async fn setup(setup: TestSetup) -> SetupResult {
     let data_dir_str = setup.data_path.as_str();
-    if fs::metadata(data_dir_str).is_ok() {
-        fs::remove_dir_all(data_dir_str).unwrap();
-    }
+    let _ = fs::remove_dir_all(data_dir_str);
     let tmp = Path::new(data_dir_str).join("tmp");
 
     struct PasswordProviderImpl {}
@@ -42,6 +39,7 @@ async fn setup(setup: TestSetup) -> SetupResult {
         }
     }
 
+    println!("Creating fs");
     let fs = EncryptedFs::new(
         Path::new(data_dir_str).to_path_buf(),
         tmp,
@@ -69,6 +67,7 @@ async fn run_test<T>(init: TestSetup, t: T)
 where
     T: std::future::Future, // + std::panic::UnwindSafe
 {
+    println!("Setting up");
     {
         let s = SETUP_RESULT.with(|s| Arc::clone(s));
         let mut s = s.lock().await;
@@ -102,18 +101,12 @@ fn create_attr_from_type(kind: FileType) -> CreateFileAttr {
 
 async fn read_to_string(path: PathBuf, fs: &EncryptedFs, ino: u64) -> String {
     let mut buf: Vec<u8> = vec![];
-    fs.create_crypto_reader(
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .unwrap(),
-        ino,
-    )
-    .await
-    .unwrap()
-    .read_to_end(&mut buf)
-    .unwrap();
+    fs.create_crypto_chunk_file_reader(&path, ino, None)
+        .await
+        .unwrap()
+        .read_to_end(&mut buf)
+        .await
+        .unwrap();
     String::from_utf8(buf).unwrap()
 }
 
@@ -162,7 +155,8 @@ async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8], han
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "current_thread")]
+#[test_log::test]
 async fn test_write() {
     run_test(
         TestSetup {
@@ -337,7 +331,8 @@ async fn test_write() {
     .await
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "current_thread")]
+#[test_log::test]
 async fn test_read() {
     run_test(
         TestSetup {
@@ -516,7 +511,8 @@ async fn test_read() {
     .await
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "current_thread")]
+#[test_log::test]
 async fn test_truncate() {
     run_test(
         TestSetup {
@@ -613,7 +609,7 @@ async fn test_truncate() {
     .await
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "current_thread")]
 #[traced_test]
 async fn test_copy_file_range() {
     run_test(
@@ -700,7 +696,8 @@ async fn test_copy_file_range() {
     .await
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "current_thread")]
+#[test_log::test]
 async fn test_read_dir() {
     run_test(
         TestSetup {
@@ -878,7 +875,8 @@ async fn test_read_dir() {
     .await
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "current_thread")]
+#[test_log::test]
 async fn test_read_dir_plus() {
     run_test(
         TestSetup {

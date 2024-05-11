@@ -12,19 +12,19 @@ where
     map: Mutex<HashMap<K, Value<V>>>,
 }
 
-pub struct Guard<V> {
+pub struct Holder<V> {
     val: Arc<V>,
     rc: Arc<AtomicUsize>,
 }
 
-impl<V> Drop for Guard<V> {
+impl<V> Drop for Holder<V> {
     fn drop(&mut self) {
         self.rc.fetch_sub(1, Ordering::SeqCst);
         // debug!(remaining = self.rc.load(Ordering::SeqCst), "Dropping guard");
     }
 }
 
-impl<V> Deref for Guard<V> {
+impl<V> Deref for Holder<V> {
     type Target = V;
 
     fn deref(&self) -> &Self::Target {
@@ -41,21 +41,21 @@ impl<K: Eq + Hash, V> Default for ArcHashMap<K, V> {
 }
 
 impl<K: Eq + Hash, V> ArcHashMap<K, V> {
-    pub fn insert(&self, key: K, value: V) -> Guard<V> {
+    pub fn insert(&self, key: K, value: V) -> Holder<V> {
         self.purge();
         self.get_or_insert_with(key, || value)
     }
 
     #[allow(clippy::missing_panics_doc)]
-    pub fn get(&self, key: &K) -> Option<Guard<V>> {
+    pub fn get(&self, key: &K) -> Option<Holder<V>> {
         self.purge();
         Self::get_internal(self.map.lock().expect("cannot obtain lock").get(key))
     }
 
-    fn get_internal(v: Option<&Value<V>>) -> Option<Guard<V>> {
+    fn get_internal(v: Option<&Value<V>>) -> Option<Holder<V>> {
         if let Some((v, rc)) = v {
             rc.fetch_add(1, Ordering::SeqCst);
-            return Some(Guard {
+            return Some(Holder {
                 val: v.clone(),
                 rc: rc.clone(),
             });
@@ -64,7 +64,7 @@ impl<K: Eq + Hash, V> ArcHashMap<K, V> {
     }
 
     #[allow(clippy::missing_panics_doc)]
-    pub fn get_or_insert_with<F>(&self, key: K, f: F) -> Guard<V>
+    pub fn get_or_insert_with<F>(&self, key: K, f: F) -> Holder<V>
     where
         F: FnOnce() -> V,
     {

@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions, ReadDir};
 use std::io::ErrorKind::Other;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{SeekFrom, Write};
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{Receiver, Sender};
@@ -23,17 +24,21 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use static_init::dynamic;
 use tempfile::NamedTempFile;
 use thiserror::Error;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
 use tracing::{debug, error, instrument, warn};
 
-use crate::arc_hashmap::{ArcHashMap, Guard};
-use crate::crypto::reader::CryptoReader;
-use crate::crypto::writer::{CryptoWriter, CryptoWriterSeek, FileCryptoWriterCallback};
+use crate::arc_hashmap::{ArcHashMap, Holder};
+use crate::crypto::reader::{AsyncCryptoReader, CryptoReader};
+use crate::crypto::writer::{
+    AsyncSeekCryptoWriter, CryptoWriter, CryptoWriterSeek, FileCryptoWriterCallback,
+    FileCryptoWriterMetadataProvider, SequenceLockProvider, WHOLE_FILE_CHUNK_INDEX,
+};
 use crate::crypto::{extract_nonce_from_encrypted_string, Cipher};
 use crate::expire_value::{ExpireValue, Provider};
-use crate::{crypto, stream_util};
+use crate::{crypto, fs_util, stream_util};
 
 #[cfg(test)]
 mod test;
@@ -54,10 +59,15 @@ pub(crate) enum FsOperation {
     ResetHandles {
         fs: Arc<EncryptedFs>,
         ino: u64,
-        changed_from_pos: u64,
+        changed_from_pos: i64,
         last_write_pos: u64,
         fh: u64,
         tx: Sender<FsResult<()>>,
+    },
+    GetMetadata {
+        fs: Arc<EncryptedFs>,
+        ino: u64,
+        tx: Sender<FsResult<FileAttr>>,
     },
 }
 
@@ -92,6 +102,13 @@ async fn init() {
                             tx.send(Ok(())).unwrap();
                         }
                     }
+                    FsOperation::GetMetadata { fs, ino, tx } => match get_metadata(fs, ino).await {
+                        Ok(attr) => tx.send(Ok(attr)).unwrap(),
+                        Err(err) => {
+                            error!(err = %err, "getting metadata");
+                            tx.send(Err(err)).unwrap();
+                        }
+                    },
                 }
             });
         }
@@ -103,23 +120,52 @@ async fn init() {
 async fn recreate_handles(
     fs: Arc<EncryptedFs>,
     ino: u64,
-    changed_from_pos: u64,
+    changed_from_pos: i64,
     last_write_pos: u64,
     fh: u64,
 ) -> FsResult<()> {
-    fs.reset_handles(ino, changed_from_pos, Some(fh)).await?;
-    let mut attr = fs.get_inode_from_storage(ino, fs.key.get().await?)?;
-    let _guard = fs.serialize_update_inode_locks.lock().await;
-    // if we wrote pass the filesize we need to update the filesize
-    if last_write_pos > attr.size {
-        attr.size = last_write_pos;
-        fs.write_inode_to_storage(&attr, &fs.key.get().await?)?;
+    {
+        let mut attr = fs.get_inode_from_storage(ino, fs.key.get().await?)?;
+        let _guard = fs.serialize_update_inode_locks.lock().await;
+        // if we wrote pass the filesize we need to update the filesize
+        if last_write_pos > attr.size {
+            attr.size = last_write_pos;
+            fs.write_inode_to_storage(&attr, &fs.key.get().await?)?;
+        }
     }
-
+    fs.reset_handles(ino, changed_from_pos, Some(fh)).await?;
     Ok(())
 }
 
+async fn get_metadata(fs: Arc<EncryptedFs>, ino: u64) -> FsResult<FileAttr> {
+    fs.get_inode_from_storage(ino, fs.key.get().await?)
+}
+
 pub(crate) static TX: std::sync::Mutex<Option<Sender<FsOperation>>> = std::sync::Mutex::new(None);
+
+struct LocalFileCryptoWriterMetadataProvider(Weak<EncryptedFs>, u64);
+impl FileCryptoWriterMetadataProvider for LocalFileCryptoWriterMetadataProvider {
+    fn size(&self) -> io::Result<u64> {
+        if let Some(fs) = self.0.upgrade() {
+            let (tx, rx) = std::sync::mpsc::channel::<FsResult<FileAttr>>();
+            let ino = self.1;
+            TX.lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .clone()
+                .send(FsOperation::GetMetadata { fs, ino, tx })
+                .map_err(|_| io::Error::new(Other, "send error"))?;
+            let attr = rx
+                .recv()
+                .map_err(|_| io::Error::new(Other, "receive error"))?
+                .map_err(|e| io::Error::new(Other, e))?;
+            Ok(attr.size)
+        } else {
+            return Err(io::Error::new(Other, "fs dropped"));
+        }
+    }
+}
 
 /// File attributes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -698,12 +744,11 @@ impl KeyStore {
 struct ReadHandleContext {
     ino: u64,
     attr: TimeAndSizeFileAttr,
-    reader: Option<Box<dyn CryptoReader<File>>>,
-    _lock: Guard<RwLock<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
+    reader: Option<Pin<Box<dyn AsyncCryptoReader>>>,
 }
 
 enum ReadHandleContextOperation {
-    Create { ino: u64, lock: Guard<RwLock<bool>> },
+    Create { ino: u64 },
 }
 
 impl ReadHandleContextOperation {
@@ -715,7 +760,7 @@ impl ReadHandleContextOperation {
 }
 
 enum WriteHandleContextOperation {
-    Create { ino: u64, lock: Guard<RwLock<bool>> },
+    Create { ino: u64 },
 }
 
 impl WriteHandleContextOperation {
@@ -729,8 +774,7 @@ impl WriteHandleContextOperation {
 struct WriteHandleContext {
     ino: u64,
     attr: TimeAndSizeFileAttr,
-    writer: Option<Box<dyn CryptoWriterSeek<File>>>,
-    _lock: Guard<RwLock<bool>>, // we don't use it but just keep a reference to keep it alive in `read_write_inode_locks` while handle is open
+    writer: Option<Pin<Box<dyn AsyncSeekCryptoWriter>>>,
 }
 
 struct KeyProvider {
@@ -775,8 +819,7 @@ pub struct EncryptedFs {
     // todo: remove external std::sync::RwLock, ArcHashMap is thread safe
     serialize_dir_entries_locks:
         Arc<std::sync::RwLock<ArcHashMap<String, std::sync::RwLock<bool>>>>,
-    // todo: remove external Mutex, ArcHashMap is thread safe
-    read_write_inode_locks: Mutex<ArcHashMap<u64, RwLock<bool>>>,
+    read_write_inode_locks: ArcHashMap<u64, Box<dyn SequenceLockProvider>>,
     key: ExpireValue<SecretVec<u8>, FsError, KeyProvider>,
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
 }
@@ -809,13 +852,13 @@ impl EncryptedFs {
             cipher,
             opened_files_for_read: RwLock::new(HashMap::new()),
             opened_files_for_write: RwLock::new(HashMap::new()),
-            read_write_inode_locks: Mutex::new(ArcHashMap::default()),
             serialize_inode_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::default())),
             serialize_update_inode_locks: Mutex::new(ArcHashMap::default()),
             serialize_dir_entries_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::default())),
             // todo: take duration from param
             key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)),
             self_weak: std::sync::Mutex::new(None),
+            read_write_inode_locks: ArcHashMap::default(),
         };
 
         fs.ensure_root_exists().await?;
@@ -833,14 +876,18 @@ impl EncryptedFs {
         path.is_file()
     }
 
-    pub fn is_dir(&self, ino: u64) -> bool {
-        let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
-        path.is_dir()
+    pub async fn is_dir(&self, ino: u64) -> FsResult<bool> {
+        Ok(self
+            .get_inode_from_storage(ino, self.key.get().await?)?
+            .kind
+            == FileType::Directory)
     }
 
-    pub fn is_file(&self, ino: u64) -> bool {
-        let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
-        path.is_file()
+    pub async fn is_file(&self, ino: u64) -> FsResult<bool> {
+        Ok(self
+            .get_inode_from_storage(ino, self.key.get().await?)?
+            .kind
+            == FileType::RegularFile)
     }
 
     /// Create a new node in the filesystem
@@ -871,21 +918,10 @@ impl EncryptedFs {
         self.write_inode_to_storage(&attr, &self.key.get().await?)?;
 
         // create in contents directory
+        tokio::fs::create_dir(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).await?;
         match attr.kind {
-            FileType::RegularFile => {
-                let path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
-                // create the file
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(path)?;
-            }
+            FileType::RegularFile => {}
             FileType::Directory => {
-                // create the directory
-                tokio::fs::create_dir(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()))
-                    .await?;
-
                 // add "." and ".." entries
                 self.insert_directory_entry(
                     attr.ino,
@@ -954,7 +990,7 @@ impl EncryptedFs {
         if !self.exists_by_name(parent, name).await? {
             return Ok(None);
         }
-        if !self.is_dir(parent) {
+        if !self.is_dir(parent).await? {
             return Err(FsError::InvalidInodeType);
         }
         let name = {
@@ -992,7 +1028,7 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
     pub async fn remove_dir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
-        if !self.is_dir(parent) {
+        if !self.is_dir(parent).await? {
             return Err(FsError::InvalidInodeType);
         }
 
@@ -1046,7 +1082,7 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
     pub async fn remove_file(&self, parent: u64, name: &SecretString) -> FsResult<()> {
-        if !self.is_dir(parent) {
+        if !self.is_dir(parent).await? {
             return Err(FsError::InvalidInodeType);
         }
         if !self.exists_by_name(parent, name).await? {
@@ -1073,10 +1109,9 @@ impl EncryptedFs {
             fs::remove_file(self.data_dir.join(INODES_DIR).join(&ino_str))?;
         }
 
-        // remove contents file
-        tokio::fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(&ino_str)).await?;
+        // remove contents directory
+        tokio::fs::remove_dir_all(self.data_dir.join(CONTENTS_DIR).join(&ino_str)).await?;
         // remove from parent directory
-        // remove from parent contents
         self.remove_directory_entry(parent, name).await?;
 
         self.update_inode(
@@ -1259,17 +1294,10 @@ impl EncryptedFs {
         buf: &mut [u8],
         handle: u64,
     ) -> FsResult<usize> {
-        // lock for reading
-        let lock = {
-            let map_guard = self.read_write_inode_locks.lock().await;
-            map_guard.get_or_insert_with(ino, || RwLock::new(false))
-        };
-        let _guard = lock.read().await;
-
         if !self.node_exists(ino) {
             return Err(FsError::InodeNotFound);
         }
-        if !self.is_file(ino) {
+        if !self.is_file(ino).await? {
             return Err(FsError::InvalidInodeType);
         }
         if !self.read_handles.read().await.contains_key(&handle) {
@@ -1282,7 +1310,7 @@ impl EncryptedFs {
         if ctx.ino != ino {
             return Err(FsError::InvalidFileHandle);
         }
-        if self.is_dir(ino) {
+        if self.is_dir(ino).await? {
             return Err(FsError::InvalidInodeType);
         }
         if buf.is_empty() {
@@ -1292,16 +1320,43 @@ impl EncryptedFs {
 
         // read data
         let len = {
+            use futures_util::TryFutureExt;
+            use tokio::io::AsyncReadExt;
+            use tokio::io::AsyncSeekExt;
+
             let size = ctx.attr.size;
             let reader = ctx.reader.as_mut().unwrap();
 
-            reader.seek(SeekFrom::Start(offset))?;
-            let read_len = if reader.stream_position()? + buf.len() as u64 > size {
-                (size - reader.stream_position()?) as usize
+            reader
+                .seek(SeekFrom::Start(offset))
+                .map_err(|err| {
+                    error!(err = %err, "seeking");
+                    err
+                })
+                .await?;
+            let pos = reader
+                .stream_position()
+                .map_err(|err| {
+                    error!(err = %err, "getting position");
+                    err
+                })
+                .await?;
+            if pos < offset {
+                // we would need to seek after filesize
+                return Ok(0);
+            }
+            let read_len = if pos + buf.len() as u64 > size {
+                (size - pos) as usize
             } else {
                 buf.len()
             };
-            reader.read_exact(&mut buf[..read_len])?;
+            reader
+                .read(&mut buf[..read_len])
+                .map_err(|err| {
+                    error!(err = %err, "reading");
+                    err
+                })
+                .await?;
             read_len
         };
 
@@ -1322,7 +1377,7 @@ impl EncryptedFs {
         // read
         let ctx = { self.read_handles.write().await.remove(&handle) };
         if let Some(ctx) = ctx {
-            let mut ctx = ctx.lock().await;
+            let ctx = ctx.lock().await;
 
             {
                 let mut opened_files_for_read = self.opened_files_for_read.write().await;
@@ -1346,7 +1401,6 @@ impl EncryptedFs {
             attr.size.take();
             self.update_inode(ctx.ino, attr).await?;
 
-            ctx.reader.take().unwrap().finish()?;
             drop(ctx);
             valid_fh = true;
         }
@@ -1356,7 +1410,7 @@ impl EncryptedFs {
         if let Some(ctx) = ctx {
             let mut ctx = ctx.lock().await;
 
-            ctx.writer.take().unwrap().finish()?;
+            ctx.writer.take().unwrap().shutdown().await?;
 
             self.opened_files_for_write.write().await.remove(&ctx.ino);
 
@@ -1393,18 +1447,10 @@ impl EncryptedFs {
     /// If the file is not opened for write, it will return an error of type ['FsError::InvalidFileHandle'].
     #[instrument(skip(self, buf))]
     pub async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
-        // lock for writing
-        // todo: give this to the writer to only use it when is actually changing the file
-        let lock = {
-            let map_guard = self.read_write_inode_locks.lock().await;
-            map_guard.get_or_insert_with(ino, || RwLock::new(false))
-        };
-        let _guard = lock.write().await;
-
         if !self.node_exists(ino) {
             return Err(FsError::InodeNotFound);
         }
-        if !self.is_file(ino) {
+        if !self.is_file(ino).await? {
             return Err(FsError::InvalidInodeType);
         }
         {
@@ -1412,7 +1458,7 @@ impl EncryptedFs {
                 return Err(FsError::InvalidFileHandle);
             }
         }
-        if self.is_dir(ino) {
+        if self.is_dir(ino).await? {
             return Err(FsError::InvalidInodeType);
         }
         {
@@ -1432,12 +1478,20 @@ impl EncryptedFs {
 
         // write new data
         let (pos, len) = {
+            use tokio::io::AsyncSeekExt;
+            use tokio::io::AsyncWriteExt;
             let writer = ctx.writer.as_mut().unwrap();
-            writer.seek(SeekFrom::Start(offset))?;
+            writer.seek(SeekFrom::Start(offset)).await.map_err(|err| {
+                error!(err = %err, "seeking");
+                err
+            })?;
 
-            let len = writer.write(buf)?;
+            let len = writer.write(buf).await.map_err(|err| {
+                error!(err = %err, "writing");
+                err
+            })?;
 
-            (writer.stream_position()?, len)
+            (writer.stream_position().await?, len)
         };
 
         if pos > ctx.attr.size {
@@ -1461,12 +1515,14 @@ impl EncryptedFs {
         }
         let mut valid_fh = self.read_handles.read().await.get(&handle).is_some();
         if let Some(ctx) = self.write_handles.read().await.get(&handle) {
+            use tokio::io::AsyncWriteExt;
             ctx.lock()
                 .await
                 .writer
                 .as_mut()
                 .expect("writer is missing")
-                .flush()?;
+                .flush()
+                .await?;
             valid_fh = true;
         }
 
@@ -1488,7 +1544,7 @@ impl EncryptedFs {
         src_fh: u64,
         dest_fh: u64,
     ) -> FsResult<usize> {
-        if self.is_dir(src_ino) || self.is_dir(dest_ino) {
+        if self.is_dir(src_ino).await? || self.is_dir(dest_ino).await? {
             return Err(FsError::InvalidInodeType);
         }
 
@@ -1519,30 +1575,27 @@ impl EncryptedFs {
                 "read and write cannot be false at the same time",
             ));
         }
-        if self.is_dir(ino) {
+        if self.is_dir(ino).await? {
             return Err(FsError::InvalidInodeType);
         }
 
-        let map_guard = self.read_write_inode_locks.lock().await;
         let mut handle: Option<u64> = None;
         if read {
-            let lock = map_guard.get_or_insert_with(ino, || RwLock::new(false));
             handle = Some(self.allocate_next_handle());
             self.do_with_read_handle(
                 *handle.as_ref().unwrap(),
-                ReadHandleContextOperation::Create { ino, lock },
+                ReadHandleContextOperation::Create { ino },
             )
             .await?;
         }
         if write {
-            let lock = map_guard.get_or_insert_with(ino, || RwLock::new(false));
             if handle.is_none() {
                 handle = Some(self.allocate_next_handle());
             }
             let res = self
                 .do_with_write_handle(
                     *handle.as_ref().expect("handle is missing"),
-                    WriteHandleContextOperation::Create { ino, lock },
+                    WriteHandleContextOperation::Create { ino },
                 )
                 .await;
             if res.is_err() && read {
@@ -1562,12 +1615,6 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::too_many_lines)]
     pub async fn truncate(&self, ino: u64, size: u64) -> FsResult<()> {
-        let lock = {
-            let map_guard = self.read_write_inode_locks.lock().await;
-            map_guard.get_or_insert_with(ino, || RwLock::new(false))
-        };
-        let _guard = lock.write().await;
-
         let attr = self.get_inode(ino).await?;
         if matches!(attr.kind, FileType::Directory) {
             return Err(FsError::InvalidInodeType);
@@ -1578,19 +1625,6 @@ impl EncryptedFs {
             return Ok(());
         }
 
-        #[allow(clippy::items_after_statements)]
-        struct Callback {}
-        #[allow(clippy::items_after_statements)]
-        impl FileCryptoWriterCallback for Callback {
-            fn on_file_content_changed(
-                &self,
-                _changed_from_pos: u64,
-                _last_write_pos: u64,
-            ) -> io::Result<()> {
-                Ok(())
-            }
-        }
-
         // flush writers
         self.flush_and_reset_writers(ino).await?;
 
@@ -1598,64 +1632,62 @@ impl EncryptedFs {
             debug!("truncate to zero");
             // truncate to zero
 
-            OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(self.data_dir.join(CONTENTS_DIR).join(ino.to_string()))?;
-        } else if size < attr.size {
-            debug!(
-                "truncate decrease size to {}",
-                size.to_formatted_string(&Locale::en)
-            );
-            // decrease size, copy from beginning until size as offset
+            let locks = self
+                .read_write_inode_locks
+                .get_or_insert_with(ino, || Box::new(LocalSequenceLockProvider::default()));
+            // obtain a write lock to whole file, we ue a special value to indicate this
+            let lock = locks.get(WHOLE_FILE_CHUNK_INDEX);
+            let _guard = lock.write();
 
-            let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
-            let mut reader = self.create_crypto_file_reader(&in_path, ino).await?;
-
-            let tmp = NamedTempFile::new_in(self.tmp_dir.clone())?;
-            let tmp_path = tmp.into_temp_path().to_path_buf();
-            let mut writer = self
-                .create_crypto_file_writer(&tmp_path, ino, Callback {})
-                .await?;
-
-            // copy existing data until new size
-            stream_util::copy_exact(&mut reader, &mut writer, size)?;
-            writer.flush()?;
-            writer.finish()?;
-            tokio::fs::rename(
-                tmp_path,
-                self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-            )
-            .await?;
+            let file_dir = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
+            fs::remove_dir_all(&file_dir)?;
+            fs::create_dir(&file_dir)?;
         } else {
-            debug!(
-                "truncate increase size to {}",
-                size.to_formatted_string(&Locale::en)
-            );
-            // increase size, write zeros from actual size to new size
+            debug!("truncate size to {}", size.to_formatted_string(&Locale::en));
+
+            let locks = self
+                .read_write_inode_locks
+                .get_or_insert_with(ino, || Box::new(LocalSequenceLockProvider::default()));
+            // obtain a write lock to whole file, we ue a special value `u64::MAX - 42_u64` to indicate this
+            let lock = locks.get(u64::MAX - 42_u64);
+            let _guard = lock.write();
 
             let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
-            let mut reader = self.create_crypto_file_reader(&in_path, ino).await?;
-
             let tmp = NamedTempFile::new_in(self.tmp_dir.clone())?;
             let tmp_path = tmp.into_temp_path().to_path_buf();
-            let mut writer = self
-                .create_crypto_file_writer(&tmp_path, ino, Callback {})
-                .await?;
+            // we need a tmp dir instead of file, we create one with the same name as tmp file and remove the file
+            fs::create_dir(&tmp_path)?;
+            {
+                // have a new scope, so we drop the reader before moving new content files
+                let mut reader = self
+                    .create_crypto_chunk_file_reader(&in_path, ino, None)
+                    .await?;
 
-            // copy existing data
-            stream_util::copy_exact(&mut reader, &mut writer, attr.size)?;
+                let mut writer = self
+                    .create_crypto_chunk_file_writer(&tmp_path, ino, None, None, None)
+                    .await?;
 
-            // seek to new size, this will fill up with zeros
-            writer.seek(SeekFrom::Start(size))?;
+                let size = if size > attr.size {
+                    // copy existing data until existing size, we will increase size
+                    attr.size
+                } else {
+                    // copy existing data until new size, decrease size
+                    size
+                };
+                stream_util::copy_exact_async(&mut reader, &mut writer, size).await?;
+                if size > attr.size {
+                    // increase size, seek to new size will write zeros
+                    writer
+                        .seek(SeekFrom::Current((size - attr.size) as i64))
+                        .await?;
+                }
+                writer.flush().await?;
+                writer.shutdown().await?;
+            }
 
-            writer.finish()?;
-            tokio::fs::rename(
-                tmp_path,
-                self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-            )
-            .await?;
+            // move new content to the original file content directory
+            tokio::fs::remove_dir_all(&in_path).await?;
+            fs_util::rename_dir_content(&tmp_path, &in_path).await?;
         }
 
         let set_attr = SetFileAttr::default()
@@ -1679,10 +1711,12 @@ impl EncryptedFs {
         if let Some(handle) = handle {
             let guard = self.write_handles.read().await;
             if let Some(lock) = guard.get(handle) {
+                use tokio::io::AsyncSeekExt;
+                use tokio::io::AsyncWriteExt;
                 let mut ctx = lock.lock().await;
                 let writer = ctx.writer.as_mut().unwrap();
-                writer.flush()?;
-                writer.seek(SeekFrom::Start(0))?;
+                writer.flush().await?;
+                writer.seek(SeekFrom::Start(0)).await?;
             }
         }
 
@@ -1700,13 +1734,13 @@ impl EncryptedFs {
         if !self.node_exists(parent) {
             return Err(FsError::InodeNotFound);
         }
-        if !self.is_dir(parent) {
+        if !self.is_dir(parent).await? {
             return Err(FsError::InvalidInodeType);
         }
         if !self.node_exists(new_parent) {
             return Err(FsError::InodeNotFound);
         }
-        if !self.is_dir(new_parent) {
+        if !self.is_dir(new_parent).await? {
             return Err(FsError::InvalidInodeType);
         }
         if !self.exists_by_name(parent, name).await? {
@@ -1784,11 +1818,17 @@ impl EncryptedFs {
     }
 
     /// Create a crypto writer to file using internal encryption info.
+    ///
+    /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position\
+    /// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do\
+    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file
     pub async fn create_crypto_file_writer<Callback: FileCryptoWriterCallback + 'static>(
         &self,
         file: &Path,
         nonce_seed: u64,
-        callback: Callback,
+        callback: Option<Box<dyn FileCryptoWriterCallback>>,
+        lock: Option<Holder<parking_lot::RwLock<bool>>>,
+        metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
     ) -> FsResult<Box<dyn CryptoWriterSeek<File>>> {
         Ok(crypto::create_file_writer(
             file,
@@ -1796,21 +1836,70 @@ impl EncryptedFs {
             self.cipher,
             self.key.get().await?,
             nonce_seed,
+            *Box::new(callback),
+            lock,
+            metadata_provider,
+        )?)
+    }
+
+    /// Create a crypto writer that writes to a file in chunks using internal encryption info.
+    ///
+    /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position\
+    /// **`locks`** is used to write lock the chunks files when accessing them. This ensures that we have exclusive write to a given chunk when we need to change it's content\
+    ///     If not provided, it will not ensure that other instances are not accessing the chunks while we do\
+    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file
+    pub async fn create_crypto_chunk_file_writer(
+        &self,
+        file_dir: &Path,
+        nonce_seed: u64,
+        callback: Option<Box<dyn FileCryptoWriterCallback>>,
+        locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
+        metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
+    ) -> FsResult<Pin<Box<dyn AsyncSeekCryptoWriter>>> {
+        Ok(crypto::create_chunked_file_writer(
+            file_dir,
+            &self.tmp_dir,
+            self.cipher,
+            self.key.get().await?,
+            nonce_seed,
             callback,
+            locks,
+            metadata_provider,
+        )?)
+    }
+
+    /// Create a crypto reader that reads from a file in chunks using internal encryption info.
+    /// `locks` is used to read lock the chunks files when accessing them. This ensures offer multiple reads but exclusive writes to a given chunk
+    ///     If not provided, it will not ensure that other instances are not writing the chunks while we read them
+    pub async fn create_crypto_chunk_file_reader(
+        &self,
+        file_dir: &Path,
+        nonce_seed: u64,
+        locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
+    ) -> FsResult<Pin<Box<dyn AsyncCryptoReader>>> {
+        Ok(crypto::create_chunked_file_reader(
+            file_dir,
+            self.cipher,
+            self.key.get().await?,
+            nonce_seed,
+            locks,
         )?)
     }
 
     /// Create a crypto reader from file using internal encryption info.
+    /// `lock` is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read
     pub async fn create_crypto_file_reader(
         &self,
         file: &Path,
         nonce_seed: u64,
+        lock: Option<Holder<parking_lot::RwLock<bool>>>,
     ) -> FsResult<Box<dyn CryptoReader<File>>> {
         Ok(crypto::create_file_reader(
             file,
             self.cipher,
             self.key.get().await?,
             nonce_seed,
+            lock,
         )?)
     }
 
@@ -1839,7 +1928,7 @@ impl EncryptedFs {
 
     /// Change the password of the filesystem used to access the encryption key.
     pub async fn change_password(
-        data_dir: PathBuf,
+        data_dir: &Path,
         old_password: SecretString,
         new_password: SecretString,
         cipher: Cipher,
@@ -1883,17 +1972,18 @@ impl EncryptedFs {
     pub(crate) async fn reset_handles(
         &self,
         ino: u64,
-        pos: u64,
+        pos: i64,
         skip_fh: Option<u64>,
     ) -> FsResult<()> {
         // read
         if let Some(set) = self.opened_files_for_read.read().await.get(&ino) {
             for handle in set.iter().filter(|h| skip_fh.map_or(true, |fh| **h != fh)) {
+                use tokio::io::AsyncSeekExt;
                 let map = self.read_handles.read().await;
                 let mut ctx = map.get(handle).unwrap().lock().await;
                 let reader = ctx.reader.as_mut().unwrap();
-                if reader.stream_position()? > pos {
-                    reader.seek(SeekFrom::Start(0)).unwrap();
+                if reader.stream_position().await? as i64 > pos {
+                    reader.seek(SeekFrom::Start(0)).await?;
                 }
             }
         }
@@ -1906,10 +1996,12 @@ impl EncryptedFs {
                 }
             }
             if let Some(ctx) = self.write_handles.read().await.get(fh) {
+                use tokio::io::AsyncSeekExt;
+                use tokio::io::AsyncWriteExt;
                 let mut ctx = ctx.lock().await;
                 let writer = ctx.writer.as_mut().unwrap();
-                writer.flush()?;
-                writer.seek(SeekFrom::Start(0))?;
+                writer.flush().await?;
+                writer.seek(SeekFrom::Start(0)).await?;
                 let attr = self.get_inode_from_storage(ino, self.key.get().await?)?;
                 ctx.attr.size = attr.size;
             }
@@ -1925,16 +2017,23 @@ impl EncryptedFs {
     ) -> FsResult<()> {
         let ino = op.get_ino();
         let path = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
-        let reader = self.create_crypto_file_reader(&path, op.get_ino()).await?;
         let attr = self.get_inode_from_storage(ino, self.key.get().await?)?;
         match op {
-            ReadHandleContextOperation::Create { ino, lock } => {
+            ReadHandleContextOperation::Create { ino } => {
                 let attr: TimeAndSizeFileAttr = attr.into();
+                let reader = self
+                    .create_crypto_chunk_file_reader(
+                        &path,
+                        ino,
+                        Some(self.read_write_inode_locks.get_or_insert_with(ino, || {
+                            Box::new(LocalSequenceLockProvider::default())
+                        })),
+                    )
+                    .await?;
                 let ctx = ReadHandleContext {
                     ino,
                     attr,
                     reader: Some(reader),
-                    _lock: lock,
                 };
                 self.read_handles
                     .write()
@@ -1963,15 +2062,28 @@ impl EncryptedFs {
             ino,
             handle,
         );
-        let writer = self.create_crypto_file_writer(&path, ino, callback).await?;
         match op {
-            WriteHandleContextOperation::Create { ino, lock } => {
+            WriteHandleContextOperation::Create { ino } => {
                 let attr = self.get_inode(ino).await?.into();
+                let metadata_provider = Box::new(LocalFileCryptoWriterMetadataProvider(
+                    (*self.self_weak.lock().unwrap().as_ref().unwrap()).clone(),
+                    ino,
+                ));
+                let writer = self
+                    .create_crypto_chunk_file_writer(
+                        &path,
+                        ino,
+                        Some(Box::new(callback)),
+                        Some(self.read_write_inode_locks.get_or_insert_with(ino, || {
+                            Box::new(LocalSequenceLockProvider::default())
+                        })),
+                        Some(metadata_provider),
+                    )
+                    .await?;
                 let ctx = WriteHandleContext {
                     ino,
                     attr,
                     writer: Some(writer),
-                    _lock: lock,
                 };
                 self.write_handles
                     .write()
@@ -2167,7 +2279,7 @@ async fn ensure_structure_created(
     Ok(())
 }
 
-async fn check_structure(data_dir: &PathBuf, ignore_empty: bool) -> FsResult<()> {
+async fn check_structure(data_dir: &Path, ignore_empty: bool) -> FsResult<()> {
     if !data_dir.exists() || !data_dir.is_dir() {
         return Err(FsError::InvalidDataDirStructure);
     }
@@ -2229,7 +2341,7 @@ struct LocalFileCryptoWriterCallback(Weak<EncryptedFs>, u64, u64);
 impl FileCryptoWriterCallback for LocalFileCryptoWriterCallback {
     fn on_file_content_changed(
         &self,
-        changed_from_pos: u64,
+        changed_from_pos: i64,
         last_write_pos: u64,
     ) -> io::Result<()> {
         if let Some(fs) = self.0.upgrade() {
@@ -2253,9 +2365,29 @@ impl FileCryptoWriterCallback for LocalFileCryptoWriterCallback {
             rx.recv()
                 .map_err(|_| io::Error::new(Other, "receive error"))?
                 .map_err(|e| io::Error::new(Other, e))?;
+            Ok(())
+        } else {
+            return Err(io::Error::new(Other, "fs dropped"));
         }
+    }
+}
 
-        Ok(())
+struct LocalSequenceLockProvider {
+    locks: ArcHashMap<u64, parking_lot::RwLock<bool>>,
+}
+
+impl Default for LocalSequenceLockProvider {
+    fn default() -> Self {
+        Self {
+            locks: ArcHashMap::default(),
+        }
+    }
+}
+
+impl SequenceLockProvider for LocalSequenceLockProvider {
+    fn get(&self, _sequence: u64) -> Holder<parking_lot::RwLock<bool>> {
+        self.locks
+            .get_or_insert_with(_sequence, || parking_lot::RwLock::new(false))
     }
 }
 
