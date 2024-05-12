@@ -255,11 +255,11 @@ sharing pull requests are always apporeciated.
   to destination. the `mv` operation is atomic as it's using `rename()` which is atomic as per specs,
   see [here](https://pubs.opengroup.org/onlinepubs/009695399/functions/rename.html) `That specification requires that the action of the function be atomic.`
 - Phantom reads: reading older content from a file, this is not possible. While writing, data is kept in a buffer and
-  tmp file and on flushing that buffer we write the new content to the file (as per above the tmp file is moved into
-  place with `mv`). After that we reset all opened readers so any reads after that will pickup the new content\
+  tmp file and on releasing the file handle we write the new content to the file (as per above the tmp file is moved
+  into place with `mv`). After that we reset all opened readers so any reads after that will pick up the new content\
   One problem that may occur is if we do a truncate we change the content of the file but the process is killed before
-  we write the metadata with the new filesize. In this case next time we mount the system we are still using the old
-  filesize but the content of the file could be bigger and we read until the old size offset, se we would not pick-up
+  we write the metadata with the new filesize. In this case next time we mount the system we are still seeing the old
+  filesize but the content of the file could be bigger, and we read until the old size offset, se we would not pick up
   the new zeros bytes written on truncating by increasing the size. If content is smaller the read would stop and
   end-of-file of the actual content so this would not be such a big issue
 - What kind of metadata does it leak: close to none. The filename, actual file size and other file attrs (times,

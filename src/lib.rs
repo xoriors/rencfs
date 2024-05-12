@@ -229,6 +229,7 @@ use crate::encryptedfs::PasswordProvider;
 use crate::encryptedfs_fuse3::EncryptedFsFuse3;
 
 pub mod arc_hashmap;
+pub mod async_util;
 pub mod crypto;
 pub mod encryptedfs;
 pub mod encryptedfs_fuse3;

@@ -1,25 +1,21 @@
-use ring::aead::quic::CHACHA20;
+use std::env::args;
+use std::fs::OpenOptions;
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::path::Path;
+use std::{fs, io};
+
 use ring::aead::Aad;
 use ring::aead::BoundKey;
 use ring::aead::Nonce;
 use ring::aead::NonceSequence;
 use ring::aead::OpeningKey;
 use ring::aead::SealingKey;
-use ring::aead::Tag;
 use ring::aead::UnboundKey;
-use ring::aead::AES_128_GCM;
-use ring::aead::AES_256_GCM;
 use ring::aead::CHACHA20_POLY1305;
 use ring::aead::NONCE_LEN;
-use ring::aead::{Algorithm, LessSafeKey};
 use ring::error::Unspecified;
 use ring::rand::SecureRandom;
 use ring::rand::SystemRandom;
-use std::env::args;
-use std::fs::OpenOptions;
-use std::io;
-use std::io::{BufReader, BufWriter, Read, Write};
-use std::path::Path;
 
 struct CounterNonceSequence(u32);
 
@@ -38,13 +34,16 @@ impl NonceSequence for CounterNonceSequence {
 }
 
 fn main() -> io::Result<()> {
-    let in_path = args().next().expect("in_path is missing");
-    let mut input = OpenOptions::new().read(true).open(in_path).unwrap();
+    let mut args = args();
+    let _ = args.next(); // skip the program name
+    let in_path = args.next().expect("in_path is missing");
+    println!("in_path = {}", in_path);
+    let mut input = OpenOptions::new().read(true).open(in_path.clone()).unwrap();
     let out_path = format!(
         "/tmp/{}.enc",
         Path::new(&in_path).file_name().unwrap().to_str().unwrap()
     );
-    let mut out = OpenOptions::new()
+    let out = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
@@ -77,7 +76,7 @@ fn main() -> io::Result<()> {
     let mut out = BufWriter::new(out);
 
     let start = std::time::Instant::now();
-    let mut buffer = vec![0; 4096];
+    let mut buffer = vec![0; 1024 * 1024];
     loop {
         let len = {
             let mut pos = 0;
@@ -130,14 +129,15 @@ fn main() -> io::Result<()> {
     let mut opening_key = OpeningKey::new(unbound_key, nonce_sequence);
 
     let input = OpenOptions::new().read(true).open(out_path).unwrap();
+    let out_path = "/tmp/encrypted.dec";
     let out = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open(Path::new("/tmp/encrypted.dec"))?;
+        .open(Path::new(out_path))?;
 
     let start = std::time::Instant::now();
-    let mut buffer = vec![0; 4096 + CHACHA20_POLY1305.tag_len()];
+    let mut buffer = vec![0; 1024 * 1024 + CHACHA20_POLY1305.tag_len()];
     let mut input = BufReader::new(input);
     let mut out = BufWriter::new(out);
     loop {
@@ -179,12 +179,13 @@ fn main() -> io::Result<()> {
     out.flush().unwrap();
     let end = std::time::Instant::now();
     let duration = end.duration_since(start);
-    // let file_size = input.metadata()?.len();
     println!("duration = {:?}", duration);
     println!(
         "speed MB/s {}",
         (file_size as f64 / duration.as_secs_f64()) / 1024.0 / 1024.0
     );
+
+    fs::remove_file(out_path).unwrap();
 
     Ok(())
 }

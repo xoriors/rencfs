@@ -35,7 +35,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2.3"
 tracing-test = "0.2.4"
 ctrlc = { version = "3.1.9", features = ["termination"] }
-sha2 = "0.11.0-pre.3"
+sha2 = "0.10.8"
 strum = "0.26.2"
 strum_macros = "0.26.2"
 rpassword = "7.3.1"
@@ -50,9 +50,9 @@ ring = "0.17.8"
 hex = "0.4.3"
 rand_chacha = "0.3.1"
 tempfile = "3.10.1"
-static_init = "1.0.3"
 parking_lot = { version = "0.12.2", features = ["send_guard"] }
 test-log = "0.2.16"
+lru = "0.12.3"
 
 [package.metadata.aur]
 depends = ["fuse3"]

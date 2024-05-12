@@ -7,7 +7,6 @@ use std::sync::Arc;
 use secrecy::SecretString;
 
 use rencfs::crypto;
-use rencfs::crypto::writer::FileCryptoWriterCallback;
 use rencfs::crypto::Cipher;
 
 fn main() -> anyhow::Result<()> {
@@ -17,6 +16,7 @@ fn main() -> anyhow::Result<()> {
     let key = Arc::new(crypto::derive_key(&password, cipher, salt).unwrap());
 
     let mut args = args();
+    let _ = args.next(); // skip the program name
     let path_in = args.next().expect("path_in is missing");
     let path_out = format!(
         "/tmp/{}.enc",
@@ -28,7 +28,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mut file = File::open(path_in.clone()).unwrap();
-    let mut writer = crypto::create_file_writer(
+    let mut writer = crypto::create_tmp_file_writer(
         &Path::new(&path_out).to_path_buf(),
         &Path::new(&"/tmp").to_path_buf(),
         cipher,
@@ -47,9 +47,10 @@ fn main() -> anyhow::Result<()> {
         cipher,
         key.clone(),
         42_u64,
+        None,
     )?;
-    let hash1 = crypto::hash_reader(File::open(path_in).unwrap());
-    let hash2 = crypto::hash_reader(&mut reader);
+    let hash1 = crypto::hash_reader(&mut File::open(path_in)?)?;
+    let hash2 = crypto::hash_reader(&mut reader)?;
 
     assert_eq!(hash1, hash2);
 

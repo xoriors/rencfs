@@ -3,9 +3,7 @@ use parking_lot::RwLock;
 use std::fs::File;
 use std::io::{BufWriter, Error, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::{fs, io};
 
 use crate::arc_hashmap::Holder;
@@ -18,7 +16,6 @@ use ring::aead::{
 use ring::error::Unspecified;
 use secrecy::{ExposeSecret, SecretVec};
 use tempfile::NamedTempFile;
-use tokio::io::{AsyncSeek, AsyncWrite};
 use tracing::{debug, error};
 
 use crate::crypto::buf_mut::BufMut;
@@ -80,7 +77,7 @@ impl<W: Write + Send + Sync> RingCryptoWriter<W> {
     pub fn new(
         w: W,
         algorithm: &'static Algorithm,
-        key: &Arc<SecretVec<u8>>,
+        key: Arc<SecretVec<u8>>,
         nonce_seed: u64,
     ) -> Self {
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).expect("unbound key");
@@ -203,14 +200,6 @@ impl NonceSequence for RandomNonceSequence {
 
 pub trait CryptoWriterSeek<W: Write>: CryptoWriter<W> + Seek {}
 
-/// Async writer
-
-pub trait AsyncCryptoWriter: AsyncWrite + Send + Sync {}
-
-/// Async writer with seek
-
-pub trait AsyncSeekCryptoWriter: AsyncCryptoWriter + AsyncSeek {}
-
 /// File writer
 
 #[allow(clippy::module_name_repetitions)]
@@ -226,26 +215,31 @@ pub trait FileCryptoWriterMetadataProvider: Send + Sync {
 }
 
 #[allow(clippy::module_name_repetitions)]
-pub struct FileCryptoWriter {
-    file: PathBuf,
+pub struct TmpFileCryptoWriter {
+    file_path: PathBuf,
     tmp_dir: PathBuf,
-    writer: Box<dyn CryptoWriter<File>>,
+    writer: Option<Box<dyn CryptoWriter<File>>>,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
-    pos: u64,
-    tmp_file_path: PathBuf,
+    tmp_file_path: Option<PathBuf>,
     callback: Option<Box<dyn FileCryptoWriterCallback>>,
     lock: Option<Holder<RwLock<bool>>>,
     metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
+    pos: u64,
 }
 
-impl FileCryptoWriter {
-    /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position\
+impl TmpFileCryptoWriter {
+    /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
+    ///
     /// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do\
+    ///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
+    ///
+    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
+    ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
+    ///
     /// **`tmp_dir`** is used to store the temporary files while writing the chunks. It **MUST** be on the same filesystem as the **`file_dir`**\
-    ///    New changes are written to a temporary file and on **`flush`** or **`finish`** the tmp file is renamed to the original file\
-    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file
+    ///    New changes are written to a temporary file and on **`finish`** the tmp file is renamed to the original file\
     #[allow(clippy::missing_errors_doc)]
     pub fn new(
         file_path: &Path,
@@ -260,42 +254,74 @@ impl FileCryptoWriter {
         if !file_path.exists() {
             File::create(file_path)?;
         }
-        // start writer in tmp file
-        let tmp_path = NamedTempFile::new_in(tmp_dir)?
-            .into_temp_path()
-            .to_path_buf();
-        let tmp_file = File::create(tmp_path.clone())?;
         Ok(Self {
-            file: file_path.to_owned(),
+            file_path: file_path.to_owned(),
             tmp_dir: tmp_dir.to_owned(),
-            writer: Box::new(crypto::create_writer(tmp_file, cipher, &key, nonce_seed)),
+            writer: None,
             cipher,
             key,
             nonce_seed,
-            pos: 0,
-            tmp_file_path: tmp_path,
+            tmp_file_path: None,
             callback,
             lock,
             metadata_provider,
+            pos: 0,
         })
     }
 
+    fn pos(&self) -> io::Result<u64> {
+        if let Some(_) = &self.writer {
+            Ok(self.pos)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn ensure_writer_created(&mut self) -> io::Result<()> {
+        if self.writer.is_none() {
+            // delete any existing tmp file
+            if let Some(tmp_file_path) = self.tmp_file_path.take() {
+                if tmp_file_path.exists() {
+                    fs::remove_file(tmp_file_path).map_err(|err| {
+                        error!("error removing tmp file: {}", err);
+                        err
+                    })?;
+                }
+            }
+            let tmp_path = NamedTempFile::new_in(self.tmp_dir.clone())?
+                .into_temp_path()
+                .to_path_buf();
+            self.tmp_file_path = Some(tmp_path.clone());
+            let tmp_file = File::create(tmp_path)?;
+            self.writer = Some(Box::new(crypto::create_writer(
+                tmp_file,
+                self.cipher,
+                self.key.clone(),
+                self.nonce_seed,
+            )));
+            self.pos = 0;
+        }
+        Ok(())
+    }
+
     fn seek_from_start(&mut self, pos: u64) -> io::Result<u64> {
-        if pos == self.pos {
+        if pos == self.pos()? {
             return Ok(pos);
         }
 
-        if self.pos < pos {
+        self.ensure_writer_created()?;
+
+        if self.pos()? < pos {
             // seek forward
             debug!(
                 pos = pos.to_formatted_string(&Locale::en),
-                current_pos = self.pos.to_formatted_string(&Locale::en),
+                current_pos = self.pos()?.to_formatted_string(&Locale::en),
                 "seeking forward"
             );
-            let len = pos - self.pos;
+            let len = pos - self.pos()?;
             crypto::copy_from_file(
-                self.file.clone(),
-                self.pos,
+                self.file_path.clone(),
+                self.pos()?,
                 len,
                 self.cipher,
                 self.key.clone(),
@@ -303,9 +329,9 @@ impl FileCryptoWriter {
                 self,
                 true,
             )?;
-            if self.pos < pos {
+            if self.pos()? < pos {
                 // eof, we write zeros until pos
-                stream_util::fill_zeros(self, pos - self.pos)?;
+                stream_util::fill_zeros(self, pos - self.pos()?)?;
             }
         } else {
             // seek backward
@@ -313,12 +339,12 @@ impl FileCryptoWriter {
 
             debug!(
                 pos = pos.to_formatted_string(&Locale::en),
-                current_pos = self.pos.to_formatted_string(&Locale::en),
+                current_pos = self.pos()?.to_formatted_string(&Locale::en),
                 "seeking backward"
             );
 
             // write dirty data
-            self.writer.flush()?;
+            self.writer.as_mut().unwrap().flush()?;
 
             let size = {
                 if let Some(metadata_provider) = &self.metadata_provider {
@@ -328,12 +354,12 @@ impl FileCryptoWriter {
                     u64::MAX
                 }
             };
-            if self.pos < size {
+            if self.pos()? < size {
                 // copy remaining data from file
-                debug!("copying remaining data from file until size {}", size);
+                debug!(size, "copying remaining data from file");
                 crypto::copy_from_file(
-                    self.file.clone(),
-                    self.pos,
+                    self.file_path.clone(),
+                    self.pos()?,
                     u64::MAX,
                     self.cipher,
                     self.key.clone(),
@@ -343,46 +369,42 @@ impl FileCryptoWriter {
                 )?;
             }
 
-            self.writer.finish()?;
+            let last_write_pos = self.pos()?;
+
+            // finish writer
+            let mut writer = self.writer.take().unwrap();
+            writer.flush()?;
+            writer.finish()?;
             {
-                if let Some(lock) = &self.lock {
-                    let _guard = lock.write();
-                    // move tmp file to file
-                    fs::rename(self.tmp_file_path.clone(), self.file.clone())?;
-                }
+                let _guard = if let Some(lock) = &self.lock {
+                    Some(lock.write())
+                } else {
+                    None
+                };
+                // move tmp file to file
+                fs::rename(
+                    self.tmp_file_path.as_ref().unwrap().clone(),
+                    self.file_path.clone(),
+                )?;
             }
 
             if let Some(callback) = &self.callback {
                 // notify back that file content has changed
                 // set pos to -1 to reset also readers that opened the file but didn't read anything yet, because we need to take the new moved file
                 callback
-                    .on_file_content_changed(-1, self.pos)
+                    .on_file_content_changed(-1, last_write_pos)
                     .map_err(|err| {
                         error!("error notifying file content changed: {}", err);
                         err
                     })?;
             }
 
-            // recreate writer
-            let tmp_path = NamedTempFile::new_in(self.tmp_dir.clone())?
-                .into_temp_path()
-                .to_path_buf();
-            let tmp_file = File::create(tmp_path.clone())?;
-            self.writer = Box::new(crypto::create_writer(
-                tmp_file,
-                self.cipher,
-                &self.key.clone(),
-                self.nonce_seed,
-            ));
-            self.tmp_file_path = tmp_path;
-            self.pos = 0;
-
             // copy until pos
             let len = pos;
             if len != 0 {
                 crypto::copy_from_file_exact(
-                    self.file.clone(),
-                    self.pos,
+                    self.file_path.clone(),
+                    self.pos()?,
                     len,
                     self.cipher,
                     self.key.clone(),
@@ -391,42 +413,40 @@ impl FileCryptoWriter {
                 )?;
             }
         }
-
-        Ok(self.pos)
+        self.pos = pos;
+        Ok(self.pos()?)
     }
 }
 
-impl Write for FileCryptoWriter {
+impl Write for TmpFileCryptoWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let len = self.writer.write(buf)?;
+        self.ensure_writer_created()?;
+        let len = self.writer.as_mut().unwrap().write(buf)?;
         self.pos += len as u64;
         Ok(len)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.seek(SeekFrom::Start(0))?; // this will handle the flush and write any dirty data
+        if let Some(writer) = self.writer.as_mut() {
+            writer.flush()?;
+        }
 
         Ok(())
     }
 }
 
-impl CryptoWriter<File> for FileCryptoWriter {
+impl CryptoWriter<File> for TmpFileCryptoWriter {
     fn finish(&mut self) -> io::Result<File> {
         self.flush()?;
-        {
-            self.writer.finish()?;
+        self.seek(SeekFrom::Start(0))?; // this will handle moving the tmp file to the original file
+        if let Some(mut writer) = self.writer.take() {
+            writer.finish()?;
         }
-        if self.tmp_file_path.exists() {
-            if let Err(err) = fs::remove_file(&self.tmp_file_path) {
-                error!("error removing tmp file: {}", err);
-                return Err(Error::new(io::ErrorKind::NotFound, err.to_string()));
-            }
-        }
-        File::open(self.file.clone())
+        File::open(self.file_path.clone())
     }
 }
 
-impl Seek for FileCryptoWriter {
+impl Seek for TmpFileCryptoWriter {
     #[allow(clippy::cast_possible_wrap)]
     #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
@@ -437,7 +457,7 @@ impl Seek for FileCryptoWriter {
                 "seek from end not supported",
             )),
             SeekFrom::Current(pos) => {
-                let new_pos = self.pos as i64 + pos;
+                let new_pos = self.pos()? as i64 + pos;
                 if new_pos < 0 {
                     return Err(Error::new(
                         io::ErrorKind::InvalidInput,
@@ -450,16 +470,26 @@ impl Seek for FileCryptoWriter {
     }
 }
 
-impl CryptoWriterSeek<File> for FileCryptoWriter {}
+impl Drop for TmpFileCryptoWriter {
+    fn drop(&mut self) {
+        if let Some(tmp_file_path) = self.tmp_file_path.take() {
+            if tmp_file_path.exists() {
+                if let Err(err) = fs::remove_file(tmp_file_path) {
+                    // we cannot use tracing here because of some error accessing thread local info
+                    eprintln!("error removing tmp file: {}", err);
+                }
+            }
+        }
+    }
+}
 
-/// Chunked writer
-/// File is split into chunks files. This writer iterates over the chunks and write them one by one.
+impl CryptoWriterSeek<File> for TmpFileCryptoWriter {}
 
 // todo: expose as param
 #[cfg(test)]
-pub(in crate::crypto) const CHUNK_SIZE: u64 = 1024; // 1K for tests
+pub(crate) const CHUNK_SIZE: u64 = 1024; // 1K for tests
 #[cfg(not(test))]
-pub(in crate::crypto) const CHUNK_SIZE: u64 = 64 * 1024 * 1024; // 64M
+pub(crate) const CHUNK_SIZE: u64 = 16 * 1024 * 1024; // 64M
 
 // use this when we want to lock the whole file
 pub const WHOLE_FILE_CHUNK_INDEX: u64 = u64::MAX - 42_u64;
@@ -469,7 +499,7 @@ pub trait SequenceLockProvider: Send + Sync {
 }
 
 #[allow(clippy::module_name_repetitions)]
-pub struct ChunkedFileCryptoWriter {
+pub struct ChunkedTmpFileCryptoWriter {
     file_dir: PathBuf,
     tmp_dir: PathBuf,
     cipher: Cipher,
@@ -480,7 +510,7 @@ pub struct ChunkedFileCryptoWriter {
     chunk_index: u64,
     writer: Option<Box<dyn CryptoWriterSeek<File>>>,
     locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
-    metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
+    metadata_provider: Option<Arc<Box<dyn FileCryptoWriterMetadataProvider>>>,
 }
 
 struct CallbackWrapper(Arc<Box<dyn FileCryptoWriterCallback>>, u64);
@@ -495,19 +525,40 @@ impl FileCryptoWriterCallback for CallbackWrapper {
     }
 }
 
-struct FileCryptoWriterMetadataProviderImpl(u64);
+struct FileCryptoWriterMetadataProviderImpl {
+    chunk_index: u64,
+    chunk_size: u64,
+    file_dir: PathBuf,
+    provider: Arc<Box<dyn FileCryptoWriterMetadataProvider>>,
+}
 impl FileCryptoWriterMetadataProvider for FileCryptoWriterMetadataProviderImpl {
     fn size(&self) -> io::Result<u64> {
-        Ok(self.0)
+        let mut size = self.provider.size()?;
+        // check if we are in the last chunk
+        let path = Path::new(&self.file_dir).join((self.chunk_index + 1).to_string());
+        if !path.exists() {
+            // we are in the last chunk, size is remaining after multiple of chunk size
+            size %= self.chunk_size;
+        } else {
+            // we are NOT in the last chunk, size is a full chunk size
+            size = self.chunk_size;
+        }
+        Ok(size)
     }
 }
 
-impl ChunkedFileCryptoWriter {
-    /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position\
+// todo: create traits for lock and metadata provider and don't use [`Guard`]
+impl ChunkedTmpFileCryptoWriter {
+    /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
+    ///
     /// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do\
-    /// **`tmp_dir`** is used to store the temporary file while writing. It **MUST** be on the same filesystem as the **`file_dir`**\
-    ///    New changes are written to a temporary file and on **`flush`**, **`shutdown`** or when we write to another chunk the tmp file is renamed to the original chunk\
-    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file
+    ///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
+    ///
+    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
+    ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
+    ///
+    /// **`tmp_dir`** is used to store temporary file while writing to chunks. It **MUST** be on the same filesystem as the **`file_dir`**\
+    ///    New changes are written to a temporary file and on **`finish`** or when we write to another chunk the tmp file is renamed to the original chunk\
     pub fn new(
         file_dir: &Path,
         tmp_dir: &Path,
@@ -518,6 +569,9 @@ impl ChunkedFileCryptoWriter {
         locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
         metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
     ) -> io::Result<Self> {
+        if !file_dir.exists() {
+            fs::create_dir_all(file_dir)?;
+        }
         Ok(Self {
             file_dir: file_dir.to_owned(),
             tmp_dir: tmp_dir.to_owned(),
@@ -529,38 +583,11 @@ impl ChunkedFileCryptoWriter {
             chunk_index: 0,
             writer: None,
             locks,
-            metadata_provider,
+            metadata_provider: metadata_provider.map(|m| Arc::new(m)),
         })
     }
 
-    fn create_new_writer(
-        &mut self,
-        pos: u64,
-        current_pos: u64,
-    ) -> io::Result<Box<dyn CryptoWriterSeek<File>>> {
-        let metadata_provider = if let Some(metadata_provider) = &self.metadata_provider {
-            let mut size = metadata_provider.size()?;
-            if current_pos > size {
-                // we received and old size
-                size = current_pos % self.chunk_size;
-            }
-            // check if we are in the last chunk
-            let chunk_index = pos / self.chunk_size;
-            let path = Path::new(&self.file_dir).join((chunk_index + 1).to_string());
-            if path.exists() {
-                // we are in the last chunk, size is remaining after multiple of chunk size
-                size %= self.chunk_size;
-            } else {
-                // we are NOT in the last chunk, size is a full chunk size
-                size /= self.chunk_size;
-            }
-
-            Some(Box::new(FileCryptoWriterMetadataProviderImpl(size))
-                as Box<dyn FileCryptoWriterMetadataProvider>)
-        } else {
-            None
-        };
-
+    fn create_new_writer(&mut self, pos: u64) -> io::Result<Box<dyn CryptoWriterSeek<File>>> {
         Self::create_writer(
             pos,
             &self.file_dir,
@@ -571,7 +598,14 @@ impl ChunkedFileCryptoWriter {
             self.chunk_size,
             &self.locks,
             self.callback.clone(),
-            metadata_provider,
+            self.metadata_provider.as_ref().map(|m| {
+                Box::new(FileCryptoWriterMetadataProviderImpl {
+                    chunk_size: self.chunk_size,
+                    chunk_index: pos / self.chunk_size,
+                    file_dir: self.file_dir.clone(),
+                    provider: m.clone(),
+                }) as Box<dyn FileCryptoWriterMetadataProvider>
+            }),
         )
     }
 
@@ -611,7 +645,7 @@ impl ChunkedFileCryptoWriter {
                 File::create(&chunk_file)?;
             }
         }
-        crypto::create_file_writer(
+        crypto::create_tmp_file_writer(
             chunk_file.as_path(),
             tmp_dir,
             cipher,
@@ -644,37 +678,58 @@ impl ChunkedFileCryptoWriter {
             }
         };
 
-        let chunk_index = pos / self.chunk_size;
+        let new_chunk_index = pos / self.chunk_size;
         if pos == 0 {
             // reset the writer if we seek at the beginning to pick up any filesize changes
             if let Some(mut writer) = self.writer.take() {
                 writer.flush()?;
                 writer.finish()?;
             }
-            let current_pos = self.pos()?;
-            self.writer = Some(self.create_new_writer(pos, current_pos)?);
+            self.writer = Some(self.create_new_writer(pos)?);
         } else {
-            if self.chunk_index != chunk_index {
+            if self.chunk_index != new_chunk_index {
                 // we need to switch to a new chunk
                 debug!(
-                    chunk_index = chunk_index.to_formatted_string(&Locale::en),
+                    chunk_index = new_chunk_index.to_formatted_string(&Locale::en),
                     "switching to new chunk"
                 );
+                if self.chunk_index < new_chunk_index {
+                    // we need to seek forward, maybe we don't yet have chunks created until new chunk
+                    // in that case create them and fill up with zeros
+                    if self.writer.is_none() {
+                        let current_pos = self.pos()?;
+                        self.writer = Some(self.create_new_writer(current_pos)?);
+                    }
+                    // first seek in current chunk to the end to fill up with zeros as needed
+                    self.writer
+                        .as_mut()
+                        .unwrap()
+                        .seek(SeekFrom::Start(self.chunk_size))?;
+                    // iterate through all chunks until new chunk and create missing ones
+                    for i in self.chunk_index + 1..new_chunk_index {
+                        let current_pos = i * self.chunk_size;
+                        if !self.chunk_exists(i) {
+                            let mut writer = self.create_new_writer(current_pos)?;
+                            writer.seek(SeekFrom::Start(self.chunk_size))?; // fill up with zeros
+                            writer.flush()?;
+                            writer.finish()?;
+                        }
+                    }
+                }
+                // finish any existing writer
                 if let Some(mut writer) = self.writer.take() {
                     writer.flush()?;
                     writer.finish()?;
                 }
-                let current_pos = self.pos()?;
-                self.writer = Some(self.create_new_writer(pos, current_pos)?);
             }
+            // seeking in current chunk
             let offset_in_chunk = pos % self.chunk_size;
             debug!(
                 offset_in_chunk = offset_in_chunk.to_formatted_string(&Locale::en),
                 "seeking in chunk"
             );
             if self.writer.is_none() {
-                let current_pos = self.pos()?;
-                self.writer = Some(self.create_new_writer(pos, current_pos)?);
+                self.writer = Some(self.create_new_writer(pos)?);
             }
             self.writer
                 .as_mut()
@@ -685,35 +740,35 @@ impl ChunkedFileCryptoWriter {
         Ok(pos)
     }
 
+    fn chunk_exists(&self, chunk_index: u64) -> bool {
+        let path = self.file_dir.join(chunk_index.to_string());
+        path.exists()
+    }
+
     fn pos(&mut self) -> io::Result<u64> {
         if self.writer.is_none() {
-            self.writer = Some(self.create_new_writer(self.chunk_index, self.chunk_index)?);
+            self.writer = Some(self.create_new_writer(self.chunk_index * self.chunk_size)?);
         }
-        Ok(self.chunk_index * CHUNK_SIZE + self.writer.as_mut().unwrap().stream_position()?)
+        Ok(self.chunk_index * self.chunk_size + self.writer.as_mut().unwrap().stream_position()?)
     }
 }
 
-impl AsyncWrite for ChunkedFileCryptoWriter {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, Error>> {
-        let this = Pin::into_inner(self);
+impl Write for ChunkedTmpFileCryptoWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         debug!(
-            pos = this.pos()?.to_formatted_string(&Locale::en),
-            chunk_index = this.chunk_index.to_formatted_string(&Locale::en),
+            pos = self.pos()?.to_formatted_string(&Locale::en),
+            chunk_index = self.chunk_index.to_formatted_string(&Locale::en),
             "writing {} bytes",
             buf.len().to_formatted_string(&Locale::en)
         );
         if buf.is_empty() {
-            return Poll::Ready(Ok(0));
+            return Ok(0);
         }
 
         // obtain a read lock to whole file, we ue a special value to indicate this.
         // this helps if someone is truncating the file while we are using it, they will to a write lock
         let mut _lock = None;
-        let _guard_all = if let Some(locks) = &this.locks {
+        let _guard_all = if let Some(locks) = &self.locks {
             _lock = Some(locks.get(WHOLE_FILE_CHUNK_INDEX));
             Some(_lock.as_ref().unwrap().read())
         } else {
@@ -723,101 +778,103 @@ impl AsyncWrite for ChunkedFileCryptoWriter {
         let mut buf = &buf[..];
         let mut written = 0_u64;
         loop {
-            let current_pos = this.pos()?;
-            if this.writer.is_none() {
+            let current_pos = self.pos()?;
+            if self.writer.is_none() {
                 let pos = current_pos;
-                this.writer = Some(this.create_new_writer(pos, pos)?);
+                self.writer = Some(self.create_new_writer(pos)?);
             }
-            if (current_pos + buf.len() as u64) / this.chunk_size > (current_pos / this.chunk_size)
-            {
+
+            let remaining = self.chunk_size - self.writer.as_mut().unwrap().stream_position()?;
+            let (current_buf, next_buf) = if buf.len() > remaining as usize {
                 // buf expands to next chunk, split it
-                let len = (((current_pos / this.chunk_size + 1) * this.chunk_size) - current_pos)
-                    as usize;
                 debug!(
-                    at = len.to_formatted_string(&Locale::en),
-                    pos = this.pos()?.to_formatted_string(&Locale::en),
-                    chunk_index = this.chunk_index.to_formatted_string(&Locale::en),
+                    at = remaining.to_formatted_string(&Locale::en),
+                    pos = self.pos()?.to_formatted_string(&Locale::en),
+                    chunk_index = self.chunk_index.to_formatted_string(&Locale::en),
                     "splitting buf"
                 );
-                let (buf1, buf2) = buf.split_at(len);
-                let res = this.writer.as_mut().unwrap().write(buf1);
-                if let Err(err) = res {
-                    error!("error writing to chunk: {}", err);
-                    return Poll::Ready(Err(err));
-                }
-                if let Ok(len2) = res {
-                    written += len2 as u64;
-                    if len2 != len {
-                        // we didn't write all of buf1, return early
-                        return Poll::Ready(Ok(written as usize + len2));
-                    }
-                    // flush and finish current chunk
-                    if let Err(err) = this.writer.as_mut().unwrap().flush() {
-                        error!("error flushing chunk: {}", err);
-                        return Poll::Ready(Err(err));
-                    }
-                    if let Err(err) = this.writer.as_mut().unwrap().finish() {
-                        error!("error finishing chunk: {}", err);
-                        return Poll::Ready(Err(err));
-                    }
-                    this.writer.take();
-
-                    if buf2.is_empty() {
-                        return Poll::Ready(Ok(written as usize));
-                    }
-
-                    // now write buf2 to next chunk
-                    debug!(
-                        pos = this.pos()?.to_formatted_string(&Locale::en),
-                        len = buf2.len().to_formatted_string(&Locale::en),
-                        chunk_index = this.chunk_index.to_formatted_string(&Locale::en),
-                        "writing to next chunk"
-                    );
-                    buf = buf2;
-                    this.chunk_index += 1;
-                }
+                let (buf1, buf2) = buf.split_at(remaining as usize);
+                (buf1, Some(buf2))
             } else {
-                debug!(
-                    pos = this.pos()?.to_formatted_string(&Locale::en),
-                    chunk_index = this.chunk_index.to_formatted_string(&Locale::en),
-                    "writing to chunk"
-                );
-                let res = this.writer.as_mut().unwrap().write(buf);
-                if let Err(err) = res {
-                    error!("error writing to chunk: {}", err);
-                    return Poll::Ready(Err(err));
-                }
-                if let Ok(len) = res {
+                (buf, None)
+            };
+
+            // write current buf
+            match self.writer.as_mut().unwrap().write(current_buf) {
+                Ok(len) => {
                     written += len as u64;
-                    return Poll::Ready(Ok(written as usize));
+                    if len < current_buf.len() && next_buf.is_some() {
+                        // we didn't write all the current buf, but we have a next buf also, return early
+                        return Ok(written as usize + len);
+                    }
                 }
+                Err(err) => {
+                    error!("error writing to chunk: {}", err);
+                    return Err(err);
+                }
+            }
+
+            let remaining = self.chunk_size - self.writer.as_mut().unwrap().stream_position()?;
+            if remaining == 0 {
+                // flush and finish current chunk
+                if let Err(err) = self.writer.as_mut().unwrap().flush() {
+                    error!("error flushing chunk: {}", err);
+                    return Err(err);
+                }
+                if let Err(err) = self.writer.as_mut().unwrap().finish() {
+                    error!("error finishing chunk: {}", err);
+                    return Err(err);
+                }
+                self.writer.take();
+                self.chunk_index += 1;
+            }
+
+            if next_buf.is_none() {
+                // we're done writing
+                return Ok(written as usize);
+            } else {
+                // prepare writing to next chunk
+                debug!(
+                    pos = self.pos()?.to_formatted_string(&Locale::en),
+                    len = next_buf
+                        .as_ref()
+                        .unwrap()
+                        .len()
+                        .to_formatted_string(&Locale::en),
+                    chunk_index = self.chunk_index.to_formatted_string(&Locale::en),
+                    "writing to next chunk"
+                );
+                buf = next_buf.unwrap();
             }
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        let this = Pin::into_inner(self);
-        if let Some(writer) = this.writer.as_mut() {
-            let res = writer.flush();
-            return Poll::Ready(res);
+    fn flush(&mut self) -> io::Result<()> {
+        if let Some(writer) = self.writer.as_mut() {
+            writer.flush()?;
         }
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
-        let this = Pin::into_inner(self);
-        if let Some(mut writer) = this.writer.take() {
-            let _ = writer.flush();
-            let _ = writer.finish();
-        }
-        Poll::Ready(Ok(()))
+        Ok(())
     }
 }
 
-impl AsyncSeek for ChunkedFileCryptoWriter {
-    fn start_seek(self: Pin<&mut Self>, position: SeekFrom) -> io::Result<()> {
-        let this = Pin::into_inner(self);
-        let new_pos = match position {
+impl CryptoWriter<File> for ChunkedTmpFileCryptoWriter {
+    fn finish(&mut self) -> io::Result<File> {
+        if let Some(mut writer) = self.writer.take() {
+            let _ = writer.flush();
+            let _ = writer.finish();
+        }
+
+        let path = self.file_dir.join(0.to_string());
+        if !path.exists() {
+            File::create(&path)?;
+        }
+        Ok(File::open(path)?)
+    }
+}
+
+impl Seek for ChunkedTmpFileCryptoWriter {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let new_pos = match pos {
             SeekFrom::Start(pos) => pos as i64,
             SeekFrom::End(_) => {
                 return Err(Error::new(
@@ -825,7 +882,7 @@ impl AsyncSeek for ChunkedFileCryptoWriter {
                     "seek from end not supported",
                 ))
             }
-            SeekFrom::Current(pos) => this.pos()? as i64 + pos,
+            SeekFrom::Current(pos) => self.pos()? as i64 + pos,
         };
         if new_pos < 0 {
             return Err(Error::new(
@@ -833,16 +890,9 @@ impl AsyncSeek for ChunkedFileCryptoWriter {
                 "can't seek before start",
             ));
         }
-        this.seek_from_start(new_pos as u64)?;
-        Ok(())
-    }
-
-    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
-        let this = Pin::into_inner(self);
-        Poll::Ready(Ok(this.pos()?))
+        self.seek_from_start(new_pos as u64)?;
+        Ok(self.pos()?)
     }
 }
 
-impl AsyncCryptoWriter for ChunkedFileCryptoWriter {}
-
-impl AsyncSeekCryptoWriter for ChunkedFileCryptoWriter {}
+impl CryptoWriterSeek<File> for ChunkedTmpFileCryptoWriter {}

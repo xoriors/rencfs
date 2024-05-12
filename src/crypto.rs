@@ -3,7 +3,6 @@ use std::io;
 use std::io::{Read, Seek, Write};
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::arc_hashmap::Holder;
@@ -23,15 +22,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tracing::{debug, error, instrument};
 
 use crate::crypto::reader::{
-    AsyncCryptoReader, ChunkedFileCryptoReader, CryptoReader, FileCryptoReader, RingCryptoReader,
+    ChunkedFileCryptoReader, CryptoReader, FileCryptoReader, RingCryptoReader,
 };
 use crate::crypto::writer::{
-    AsyncSeekCryptoWriter, ChunkedFileCryptoWriter, CryptoWriter, CryptoWriterSeek,
-    FileCryptoWriter, FileCryptoWriterCallback, FileCryptoWriterMetadataProvider, RingCryptoWriter,
-    SequenceLockProvider,
+    ChunkedTmpFileCryptoWriter, CryptoWriter, CryptoWriterSeek, FileCryptoWriterCallback,
+    FileCryptoWriterMetadataProvider, RingCryptoWriter, SequenceLockProvider, TmpFileCryptoWriter,
 };
 use crate::encryptedfs::FsResult;
 use crate::stream_util;
@@ -95,19 +94,24 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub fn create_writer<W: Write + Send + Sync>(
     writer: W,
     cipher: Cipher,
-    key: &Arc<SecretVec<u8>>,
+    key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
 ) -> impl CryptoWriter<W> {
     create_ring_writer(writer, cipher, key, nonce_seed)
 }
 
-/// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position\
+/// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
+///
 /// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do\
+///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
+///
 /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
+///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
+///
 /// **`tmp_dir`** is used to store the temporary file while writing. It **MUST** be on the same filesystem as the **`file_dir`**\
-///     New changes are written to a temporary file and on **`flush`** or **`finish`** the tmp file is renamed to the original file
+///     New changes are written to a temporary file and on **`finish`** the tmp file is renamed to the original file
 #[allow(clippy::missing_errors_doc)]
-pub fn create_file_writer(
+pub fn create_tmp_file_writer(
     file: &Path,
     tmp_dir: &Path,
     cipher: Cipher,
@@ -117,7 +121,7 @@ pub fn create_file_writer(
     lock: Option<Holder<RwLock<bool>>>,
     metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
 ) -> io::Result<Box<dyn CryptoWriterSeek<File>>> {
-    Ok(Box::new(FileCryptoWriter::new(
+    Ok(Box::new(TmpFileCryptoWriter::new(
         file,
         tmp_dir,
         cipher,
@@ -132,11 +136,13 @@ pub fn create_file_writer(
 /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position\
 /// **`locks`** is used to write lock the chunks files when accessing them. This ensures that we have exclusive write to a given chunk when we need to change it's content\
 ///     If not provided, it will not ensure that other instances are not accessing the chunks while we do\
+///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks\
 /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
-/// **`tmp_dir`** is used to store the temporary files while writing the chunks. It **MUST** be on the same filesystem as the `file_dir`\
-///   New changes are written to a temporary file and on `flush`, `shutdown` or when we write to another chunk the tmp file is renamed to the original chunk
+///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it\
+/// **`tmp_dir`** is used to store temporary files while writing to chunks. It **MUST** be on the same filesystem as the `file_dir`\
+///   New changes are written to a temporary file and on **`finish`** or when we write to another chunk the tmp file is renamed to the original chunk
 #[allow(clippy::missing_errors_doc)]
-pub fn create_chunked_file_writer(
+pub fn create_chunked_tmp_file_writer(
     file_dir: &Path,
     tmp_dir: &Path,
     cipher: Cipher,
@@ -145,8 +151,8 @@ pub fn create_chunked_file_writer(
     callback: Option<Box<dyn FileCryptoWriterCallback>>,
     locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
     metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
-) -> io::Result<Pin<Box<dyn AsyncSeekCryptoWriter>>> {
-    Ok(Box::pin(ChunkedFileCryptoWriter::new(
+) -> io::Result<Box<dyn CryptoWriterSeek<File>>> {
+    Ok(Box::new(ChunkedTmpFileCryptoWriter::new(
         file_dir,
         tmp_dir,
         cipher,
@@ -158,8 +164,9 @@ pub fn create_chunked_file_writer(
     )?))
 }
 
-/// `locks` is used to read lock the chunks files when accessing them. This ensures offer multiple reads but exclusive writes to a given chunk
-///     If not provided, it will not ensure that other instances are not writing the chunks while we read them
+/// **`locks`** is used to read lock the chunks files when accessing them. This ensures offer multiple reads but exclusive writes to a given chunk\
+///     If not provided, it will not ensure that other instances are not writing the chunks while we read them\
+///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks
 #[allow(clippy::missing_errors_doc)]
 pub fn create_chunked_file_reader(
     file_dir: &Path,
@@ -167,8 +174,8 @@ pub fn create_chunked_file_reader(
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
     locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
-) -> io::Result<Pin<Box<dyn AsyncCryptoReader>>> {
-    Ok(Box::pin(ChunkedFileCryptoReader::new(
+) -> io::Result<Box<dyn CryptoReader>> {
+    Ok(Box::new(ChunkedFileCryptoReader::new(
         file_dir, cipher, key, nonce_seed, locks,
     )?))
 }
@@ -176,7 +183,7 @@ pub fn create_chunked_file_reader(
 fn create_ring_writer<W: Write + Send + Sync>(
     writer: W,
     cipher: Cipher,
-    key: &Arc<SecretVec<u8>>,
+    key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
 ) -> RingCryptoWriter<W> {
     let algorithm = match cipher {
@@ -221,11 +228,12 @@ pub fn create_reader<R: Read + Seek + Send + Sync>(
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
-) -> impl CryptoReader<R> {
+) -> impl CryptoReader {
     create_ring_reader(reader, cipher, key, nonce_seed)
 }
 
-/// `lock` is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read
+/// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read\
+///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
 #[allow(clippy::missing_errors_doc)]
 pub fn create_file_reader(
     file: &Path,
@@ -233,7 +241,7 @@ pub fn create_file_reader(
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
     lock: Option<Holder<RwLock<bool>>>,
-) -> io::Result<Box<dyn CryptoReader<File>>> {
+) -> io::Result<Box<dyn CryptoReader>> {
     Ok(Box::new(FileCryptoReader::new(
         file, cipher, key, nonce_seed, lock,
     )?))
@@ -267,7 +275,7 @@ pub fn create_file_reader(
 pub fn encrypt_string_with_nonce_seed(
     s: &SecretString,
     cipher: Cipher,
-    key: &Arc<SecretVec<u8>>,
+    key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
     include_nonce_seed: bool,
 ) -> Result<String> {
@@ -286,11 +294,7 @@ pub fn encrypt_string_with_nonce_seed(
 
 /// Encrypt a string with a random nonce seed. It will include the nonce seed in the result so that it can be used when decrypting.
 #[allow(clippy::missing_errors_doc)]
-pub fn encrypt_string(
-    s: &SecretString,
-    cipher: Cipher,
-    key: &Arc<SecretVec<u8>>,
-) -> Result<String> {
+pub fn encrypt_string(s: &SecretString, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<String> {
     let mut cursor = io::Cursor::new(vec![]);
     let nonce_seed = create_rng().next_u64();
     let mut writer = create_writer(cursor, cipher, key, nonce_seed);
@@ -375,7 +379,7 @@ pub fn derive_key(
 pub fn encrypt_file_name(
     name: &SecretString,
     cipher: Cipher,
-    key: &Arc<SecretVec<u8>>,
+    key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
 ) -> FsResult<String> {
     // in order not to add too much to filename length we keep just 3 digits from nonce seed
@@ -403,11 +407,27 @@ pub fn hash(data: &[u8]) -> [u8; 32] {
 }
 
 #[allow(clippy::missing_panics_doc)]
-pub fn hash_reader<R: Read>(r: R) -> [u8; 32] {
+pub fn hash_reader<R: Read + ?Sized>(r: &mut R) -> io::Result<[u8; 32]> {
     let mut hasher = Sha256::new();
     let mut reader = io::BufReader::new(r);
-    io::copy(&mut reader, &mut hasher).expect("cannot copy");
-    hasher.finalize().into()
+    io::copy(&mut reader, &mut hasher)?;
+    Ok(hasher.finalize().into())
+}
+
+#[allow(clippy::missing_panics_doc)]
+pub async fn hash_async_reader(r: &mut (impl AsyncRead + ?Sized + Unpin)) -> io::Result<[u8; 32]> {
+    let mut hasher = Sha256::new();
+
+    let mut r = tokio::io::BufReader::new(r);
+    let buf = &mut [0; 1024 * 1024];
+    loop {
+        let n = r.read(buf).await?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().into())
 }
 
 #[must_use]
@@ -448,7 +468,7 @@ pub fn copy_from_file(
     w: &mut impl Write,
     stop_on_eof: bool,
 ) -> io::Result<u64> {
-    if len == 0 {
+    if len == 0 || file.metadata()?.len() == 0 {
         // no-op
         return Ok(0);
     }
@@ -474,7 +494,6 @@ pub fn copy_from_file(
 
     // copy the rest of the file
     let len = stream_util::copy(&mut reader, w, len, stop_on_eof)?;
-    reader.finish()?;
     Ok(len)
 }
 

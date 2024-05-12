@@ -1,16 +1,13 @@
 use std::fs::File;
 use std::io;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use num_format::{Locale, ToFormattedString};
 use parking_lot::RwLock;
 use ring::aead::{Aad, Algorithm, BoundKey, OpeningKey, UnboundKey};
 use secrecy::{ExposeSecret, SecretVec};
-use tokio::io::{AsyncRead, AsyncSeek, ReadBuf};
 use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::Holder;
@@ -22,10 +19,7 @@ use crate::crypto::Cipher;
 use crate::{crypto, stream_util};
 
 #[allow(clippy::module_name_repetitions)]
-pub trait CryptoReader<R: Read + Seek>: Read + Seek + Send + Sync {
-    #[allow(clippy::missing_errors_doc)]
-    fn finish(&mut self) -> io::Result<R>;
-}
+pub trait CryptoReader: Read + Seek + Send + Sync {}
 
 /// cryptostream
 
@@ -63,7 +57,7 @@ pub trait CryptoReader<R: Read + Seek>: Read + Seek + Send + Sync {
 
 #[allow(clippy::module_name_repetitions)]
 pub struct RingCryptoReader<R: Read + Seek + Send + Sync> {
-    input: Option<R>,
+    input: Option<BufReader<R>>,
     opening_key: OpeningKey<RandomNonceSequence>,
     buf: BufMut,
     pos: u64,
@@ -82,7 +76,7 @@ impl<R: Read + Seek + Send + Sync> RingCryptoReader<R> {
         let opening_key = Self::create_opening_key(algorithm, &key, nonce_seed);
         let buf = BufMut::new(vec![0; BUF_SIZE + algorithm.tag_len()]);
         Self {
-            input: Some(r),
+            input: Some(BufReader::new(r)),
             opening_key,
             buf,
             pos: 0,
@@ -202,24 +196,14 @@ impl<R: Read + Seek + Send + Sync> Seek for RingCryptoReader<R> {
     }
 }
 
-impl<R: Read + Seek + Send + Sync> CryptoReader<R> for RingCryptoReader<R> {
-    fn finish(&mut self) -> io::Result<R> {
-        if self.input.is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "RingCryptoReader already finished",
-            ));
-        }
-        Ok(self.input.take().unwrap())
-    }
-}
+impl<R: Read + Seek + Send + Sync> CryptoReader for RingCryptoReader<R> {}
 
 /// file reader
 
 #[allow(clippy::module_name_repetitions)]
 pub struct FileCryptoReader {
     file: PathBuf,
-    reader: Box<dyn CryptoReader<File>>,
+    reader: Box<dyn CryptoReader>,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
@@ -227,7 +211,8 @@ pub struct FileCryptoReader {
 }
 
 impl FileCryptoReader {
-    /// `lock` is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read
+    /// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read\
+    ///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
     #[allow(clippy::missing_errors_doc)]
     pub fn new(
         file: &Path,
@@ -289,10 +274,9 @@ impl Seek for FileCryptoReader {
                 new_pos as u64
             }
         };
-        // pos 0 means also we need to recreate the reader as maybe the actual file got replaced
+        // pos 0 also means we need to recreate the reader as maybe the actual file got replaced
         if pos == 0 || self.reader.stream_position()? != pos {
             if pos == 0 || self.reader.stream_position()? > pos {
-                self.reader.finish()?;
                 self.reader = Box::new(crypto::create_reader(
                     File::open(&self.file).unwrap(),
                     self.cipher,
@@ -306,15 +290,7 @@ impl Seek for FileCryptoReader {
     }
 }
 
-impl CryptoReader<File> for FileCryptoReader {
-    fn finish(&mut self) -> io::Result<File> {
-        self.reader.finish()
-    }
-}
-
-/// Async reader
-
-pub trait AsyncCryptoReader: AsyncRead + AsyncSeek + Send + Sync {}
+impl CryptoReader for FileCryptoReader {}
 
 /// Chunked reader
 /// File is split into chunks files. This reader iterates over the chunks and reads them one by one.
@@ -322,7 +298,7 @@ pub trait AsyncCryptoReader: AsyncRead + AsyncSeek + Send + Sync {}
 #[allow(clippy::module_name_repetitions)]
 pub struct ChunkedFileCryptoReader {
     file_dir: PathBuf,
-    reader: Option<Box<dyn CryptoReader<File>>>,
+    reader: Option<Box<dyn CryptoReader>>,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
@@ -332,8 +308,9 @@ pub struct ChunkedFileCryptoReader {
 }
 
 impl ChunkedFileCryptoReader {
-    /// `locks` is used to read lock the chunks files when accessing them. This ensures offer multiple reads but exclusive writes to a given chunk
-    ///     If not provided, it will not ensure that other instances are not writing the chunks while we read them
+    /// **`locks`** is used to read lock the chunks files when accessing them. This ensures offer multiple reads but exclusive writes to a given chunk\
+    ///     If not provided, it will not ensure that other instances are not writing the chunks while we read them\
+    ///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks
     #[allow(clippy::missing_errors_doc)]
     pub fn new(
         file_dir: &Path,
@@ -342,26 +319,24 @@ impl ChunkedFileCryptoReader {
         nonce_seed: u64,
         locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
     ) -> io::Result<Self> {
-        let mut s = Self {
+        Ok(Self {
             file_dir: file_dir.to_owned(),
-            reader: None,
+            reader: Self::try_create_reader(
+                0,
+                CHUNK_SIZE,
+                file_dir.to_owned(),
+                cipher,
+                key.clone(),
+                nonce_seed,
+                &locks,
+            )?,
             cipher,
-            key: key.clone(),
+            key,
             nonce_seed,
             locks,
             chunk_size: CHUNK_SIZE,
             chunk_index: 0,
-        };
-        s.reader = Self::try_create_reader(
-            0,
-            CHUNK_SIZE,
-            file_dir.to_owned(),
-            cipher,
-            key,
-            nonce_seed,
-            &s.locks,
-        )?;
-        Ok(s)
+        })
     }
 
     fn try_create_reader(
@@ -372,7 +347,7 @@ impl ChunkedFileCryptoReader {
         key: Arc<SecretVec<u8>>,
         nonce_seed: u64,
         locks: &Option<Holder<Box<dyn SequenceLockProvider>>>,
-    ) -> io::Result<Option<Box<dyn CryptoReader<File>>>> {
+    ) -> io::Result<Option<Box<dyn CryptoReader>>> {
         let chunk_index = pos / chunk_size;
         let chunk_file = file_dir.join(chunk_index.to_string());
         if !chunk_file.exists() {
@@ -397,7 +372,7 @@ impl ChunkedFileCryptoReader {
         key: Arc<SecretVec<u8>>,
         nonce_seed: u64,
         locks: &Option<Holder<Box<dyn SequenceLockProvider>>>,
-    ) -> io::Result<Box<dyn CryptoReader<File>>> {
+    ) -> io::Result<Box<dyn CryptoReader>> {
         let chunk_index = pos / chunk_size;
         let chunk_file = file_dir.join(chunk_index.to_string());
         Ok(crypto::create_file_reader(
@@ -410,29 +385,24 @@ impl ChunkedFileCryptoReader {
     }
 
     fn pos(&mut self) -> io::Result<u64> {
-        Ok(self.chunk_index + self.reader.as_mut().unwrap().stream_position()?)
+        if self.reader.is_none() {
+            return Ok(self.chunk_index * self.chunk_size);
+        }
+        Ok(self.chunk_index * self.chunk_size + self.reader.as_mut().unwrap().stream_position()?)
     }
 }
 
-impl AsyncRead for ChunkedFileCryptoReader {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        _cx: &mut Context,
-        buf: &mut ReadBuf,
-    ) -> Poll<io::Result<()>> {
-        let this = Pin::into_inner(self);
-        if this.reader.is_none() {
-            return Poll::Ready(Ok(()));
-        }
-        if buf.remaining() == 0 {
-            return Poll::Ready(Ok(()));
+impl Read for ChunkedFileCryptoReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
         }
 
         // obtain a read lock to whole file, we ue a special value to indicate this.
         // this helps if someone is truncating the file while we are using it, they will to a write lock
         let mut _lock = None;
         let _guard_all = {
-            if let Some(locks) = &this.locks {
+            if let Some(locks) = &self.locks {
                 _lock = Some(locks.get(WHOLE_FILE_CHUNK_INDEX));
                 Some(_lock.as_ref().unwrap().read())
             } else {
@@ -440,18 +410,51 @@ impl AsyncRead for ChunkedFileCryptoReader {
             }
         };
 
-        let len = buf.remaining();
-        debug!(len = len.to_formatted_string(&Locale::en), "reading");
-        let mut buffer = vec![0; len];
-        this.reader.as_mut().unwrap().read(&mut buffer)?;
-        buf.put_slice(&buffer);
-        Poll::Ready(Ok(()))
+        if self.reader.is_none() {
+            // create the reader
+            let current_pos = self.pos()?;
+            self.reader = Self::try_create_reader(
+                current_pos,
+                self.chunk_size,
+                self.file_dir.to_owned(),
+                self.cipher,
+                self.key.clone(),
+                self.nonce_seed,
+                &self.locks,
+            )?;
+        }
+        if self.reader.is_none() {
+            // we don't have any more chunks
+            return Ok(0);
+        }
+
+        debug!(len = buf.len().to_formatted_string(&Locale::en), "reading");
+        let mut len = self.reader.as_mut().unwrap().read(buf)?;
+
+        if len == 0 {
+            debug!("switching to next chunk");
+            self.chunk_index += 1;
+            self.reader = Self::try_create_reader(
+                self.chunk_index * self.chunk_size,
+                self.chunk_size,
+                self.file_dir.to_owned(),
+                self.cipher,
+                self.key.clone(),
+                self.nonce_seed,
+                &self.locks,
+            )?;
+            if let Some(reader) = &mut self.reader {
+                debug!(len = len.to_formatted_string(&Locale::en), "reading");
+                len = reader.read(buf)?;
+            }
+        }
+
+        Ok(len)
     }
 }
 
-impl AsyncSeek for ChunkedFileCryptoReader {
-    fn start_seek(self: Pin<&mut Self>, pos: SeekFrom) -> io::Result<()> {
-        let this = Pin::into_inner(self);
+impl Seek for ChunkedFileCryptoReader {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let new_pos = match pos {
             SeekFrom::Start(pos) => pos,
             SeekFrom::End(_) => {
@@ -461,7 +464,7 @@ impl AsyncSeek for ChunkedFileCryptoReader {
                 ))
             }
             SeekFrom::Current(pos) => {
-                let new_pos = this.pos()? as i64 + pos;
+                let new_pos = self.pos()? as i64 + pos;
                 if new_pos < 0 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
@@ -471,18 +474,18 @@ impl AsyncSeek for ChunkedFileCryptoReader {
                 new_pos as u64
             }
         };
-        if this.pos()? != new_pos {
+        if self.pos()? != new_pos {
             debug!(
-                pos = this.pos()?.to_formatted_string(&Locale::en),
+                pos = self.pos()?.to_formatted_string(&Locale::en),
                 new_pos = new_pos.to_formatted_string(&Locale::en),
                 "seeking"
             );
 
             // obtain a read lock to whole file, we ue a special value to indicate this.
-            // this helps if someone is truncating the file while we are using it, they will to a write lock
+            // this helps if someone is truncating the file while we are using it, they will use a write lock
             let mut _lock = None;
             let _guard_all = {
-                if let Some(locks) = &this.locks {
+                if let Some(locks) = &self.locks {
                     _lock = Some(locks.get(WHOLE_FILE_CHUNK_INDEX));
                     Some(_lock.as_ref().unwrap().read())
                 } else {
@@ -490,49 +493,53 @@ impl AsyncSeek for ChunkedFileCryptoReader {
                 }
             };
 
-            let pos = this.pos()?;
-            if let Some(reader) = &mut this.reader {
-                if pos / this.chunk_size == new_pos / this.chunk_size {
-                    // seek in current chunk as much as we can
-                    let new_pos_in_chunk = new_pos % this.chunk_size;
-                    reader.seek(SeekFrom::Start(new_pos_in_chunk))?;
-                } else {
-                    // we need to switch to another chunk
-                    let chunk_index = new_pos / this.chunk_size;
-                    let chunk_file = this.file_dir.join(chunk_index.to_string());
-                    if !chunk_file.exists() {
-                        return Ok(());
-                    }
-                    debug!("switching to next chunk");
-                    this.reader = Self::try_create_reader(
-                        new_pos,
-                        this.chunk_size,
-                        this.file_dir.to_owned(),
-                        this.cipher,
-                        this.key.clone(),
-                        this.nonce_seed,
-                        &this.locks,
-                    )?;
-                    if let Some(reader) = &mut this.reader {
-                        // seek in chunk
-                        let new_pos_in_chunk = new_pos % this.chunk_size;
-                        debug!(
-                            new_pos_in_chunk = new_pos_in_chunk.to_formatted_string(&Locale::en),
-                            "seeking in new chunk"
-                        );
-                        reader.seek(SeekFrom::Start(new_pos_in_chunk))?;
-                        this.chunk_index = new_pos / this.chunk_size;
-                    }
+            if self.reader.is_none() {
+                // create the reader
+                let current_pos = self.pos()?;
+                self.reader = Some(Self::create_reader(
+                    current_pos,
+                    self.chunk_size,
+                    self.file_dir.to_owned(),
+                    self.cipher,
+                    self.key.clone(),
+                    self.nonce_seed,
+                    &self.locks,
+                )?);
+            }
+            let pos = self.pos()?;
+            if self.chunk_index == new_pos / self.chunk_size {
+                // seek in current chunk as much as we can
+                let reader = self.reader.as_mut().unwrap();
+                let new_pos_in_chunk = new_pos % self.chunk_size;
+                reader.seek(SeekFrom::Start(new_pos_in_chunk))?;
+            } else {
+                // we need to switch to another chunk
+                debug!("switching to another chunk");
+                self.reader = Self::try_create_reader(
+                    new_pos,
+                    self.chunk_size,
+                    self.file_dir.to_owned(),
+                    self.cipher,
+                    self.key.clone(),
+                    self.nonce_seed,
+                    &self.locks,
+                )?;
+                if self.reader.is_none() {
+                    return Ok(pos);
                 }
+                let reader = self.reader.as_mut().unwrap();
+                // seek in chunk
+                let new_pos_in_chunk = new_pos % self.chunk_size;
+                debug!(
+                    new_pos_in_chunk = new_pos_in_chunk.to_formatted_string(&Locale::en),
+                    "seeking in new chunk"
+                );
+                reader.seek(SeekFrom::Start(new_pos_in_chunk))?;
+                self.chunk_index = new_pos / self.chunk_size;
             }
         }
-        Ok(())
-    }
-
-    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<u64>> {
-        let this = Pin::into_inner(self);
-        Poll::Ready(this.pos())
+        Ok(self.pos()?)
     }
 }
 
-impl AsyncCryptoReader for ChunkedFileCryptoReader {}
+impl CryptoReader for ChunkedFileCryptoReader {}
