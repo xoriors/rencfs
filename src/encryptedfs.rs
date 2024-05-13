@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use std::fs::{File, OpenOptions, ReadDir};
 use std::io::ErrorKind::Other;
 use std::io::{SeekFrom, Write};
-use std::num::{NonZero, ParseIntError};
+use std::num::{NonZeroUsize, ParseIntError};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::AtomicU64;
@@ -720,7 +720,7 @@ impl EncryptedFs {
             key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)),
             self_weak: std::sync::Mutex::new(None),
             read_write_locks: ArcHashMap::default(),
-            attr_cache: parking_lot::Mutex::new(LruCache::new(NonZero::new(100).unwrap())),
+            attr_cache: parking_lot::Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())),
         };
 
         fs.ensure_root_exists().await?;
