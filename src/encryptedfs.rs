@@ -31,7 +31,7 @@ use crate::async_util::call_async;
 use crate::crypto::reader::CryptoReader;
 use crate::crypto::writer::{
     CryptoWriter, CryptoWriterSeek, FileCryptoWriterCallback, FileCryptoWriterMetadataProvider,
-    SequenceLockProvider, WHOLE_FILE_CHUNK_INDEX,
+    SequenceLockProvider,
 };
 use crate::crypto::{extract_nonce_from_encrypted_string, Cipher};
 use crate::expire_value::{ExpireValue, Provider};
@@ -750,7 +750,7 @@ pub struct EncryptedFs {
     // todo: remove external std::sync::RwLock, ArcHashMap is thread safe
     serialize_dir_entries_locks:
         Arc<std::sync::RwLock<ArcHashMap<String, std::sync::RwLock<bool>>>>,
-    read_write_inode_locks: ArcHashMap<u64, Box<dyn SequenceLockProvider>>,
+    read_write_inode_locks: ArcHashMap<u64, parking_lot::RwLock<bool>>,
     key: ExpireValue<SecretVec<u8>, FsError, KeyProvider>,
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
     attr_cache: parking_lot::Mutex<LruCache<u64, FileAttr>>,
@@ -846,11 +846,18 @@ impl EncryptedFs {
         // write inode
         self.write_inode_to_storage(&attr, self.key.get().await?)?;
 
-        // create in contents directory
-        tokio::fs::create_dir(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string())).await?;
         match attr.kind {
-            FileType::RegularFile => {}
+            FileType::RegularFile => {
+                // create in contents directory
+                tokio::fs::File::create(
+                    self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
+                )
+                .await?;
+            }
             FileType::Directory => {
+                // create in contents directory
+                tokio::fs::create_dir(self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()))
+                    .await?;
                 // add "." and ".." entries
                 self.insert_directory_entry(
                     attr.ino,
@@ -1038,8 +1045,8 @@ impl EncryptedFs {
             fs::remove_file(self.data_dir.join(INODES_DIR).join(&ino_str))?;
         }
 
-        // remove contents directory
-        tokio::fs::remove_dir_all(self.data_dir.join(CONTENTS_DIR).join(&ino_str)).await?;
+        // remove from contents directory
+        tokio::fs::remove_file(self.data_dir.join(CONTENTS_DIR).join(&ino_str)).await?;
         // remove from parent directory
         self.remove_directory_entry(parent, name).await?;
 
@@ -1260,7 +1267,6 @@ impl EncryptedFs {
 
         // read data
         let len = {
-            let size = ctx.attr.size;
             let reader = ctx.reader.as_mut().unwrap();
 
             reader.seek(SeekFrom::Start(offset)).map_err(|err| {
@@ -1271,20 +1277,14 @@ impl EncryptedFs {
                 error!(err = %err, "getting position");
                 err
             })?;
-            if pos < offset {
+            if pos != offset {
                 // we would need to seek after filesize
                 return Ok(0);
             }
-            let read_len = if pos + buf.len() as u64 > size {
-                (size - pos) as usize
-            } else {
-                buf.len()
-            };
-            reader.read(&mut buf[..read_len]).map_err(|err| {
+            stream_util::read(reader, buf).map_err(|err| {
                 error!(err = %err, "reading");
                 err
-            })?;
-            read_len
+            })?
         };
 
         ctx.attr.atime = SystemTime::now();
@@ -1337,7 +1337,9 @@ impl EncryptedFs {
         if let Some(ctx) = ctx {
             let mut ctx = ctx.lock().await;
 
-            ctx.writer.take().unwrap().finish()?;
+            let mut writer = ctx.writer.take().unwrap();
+            writer.flush()?;
+            writer.finish()?;
 
             self.opened_files_for_write.write().await.remove(&ctx.ino);
 
@@ -1403,10 +1405,14 @@ impl EncryptedFs {
         // write new data
         let (pos, len) = {
             let writer = ctx.writer.as_mut().unwrap();
-            writer.seek(SeekFrom::Start(offset)).map_err(|err| {
+            let pos = writer.seek(SeekFrom::Start(offset)).map_err(|err| {
                 error!(err = %err, "seeking");
                 err
             })?;
+            if offset != pos {
+                // we could not seek to the desired position
+                return Ok(0);
+            }
 
             let len = writer.write(buf).map_err(|err| {
                 error!(err = %err, "writing");
@@ -1548,29 +1554,20 @@ impl EncryptedFs {
         // flush writers
         self.flush_and_reset_writers(ino).await?;
 
+        let lock = self
+            .read_write_inode_locks
+            .get_or_insert_with(ino, || parking_lot::RwLock::new(false));
+        // obtain a write lock to whole file, we ue a special value `u64::MAX - 42_u64` to indicate this
+        let _guard = lock.write();
+
         if size == 0 {
             debug!("truncate to zero");
             // truncate to zero
-
-            let locks = self
-                .read_write_inode_locks
-                .get_or_insert_with(ino, || Box::new(LocalSequenceLockProvider::default()));
-            // obtain a write lock to whole file, we ue a special value to indicate this
-            let lock = locks.get(WHOLE_FILE_CHUNK_INDEX);
-            let _guard = lock.write();
-
             let file_dir = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
             fs::remove_dir_all(&file_dir)?;
             fs::create_dir_all(&file_dir)?;
         } else {
             debug!("truncate size to {}", size.to_formatted_string(&Locale::en));
-
-            let locks = self
-                .read_write_inode_locks
-                .get_or_insert_with(ino, || Box::new(LocalSequenceLockProvider::default()));
-            // obtain a write lock to whole file, we ue a special value `u64::MAX - 42_u64` to indicate this
-            let lock = locks.get(u64::MAX - 42_u64);
-            let _guard = lock.write();
 
             let in_path = self.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
             let tmp = NamedTempFile::new_in(self.tmp_dir.clone())?;
@@ -1579,10 +1576,10 @@ impl EncryptedFs {
             fs::create_dir(&tmp_path)?;
             {
                 // have a new scope, so we drop the reader before moving new content files
-                let mut reader = self.create_chunked_file_reader(&in_path, ino, None).await?;
+                let mut reader = self.create_file_reader(&in_path, ino, None).await?;
 
                 let mut writer = self
-                    .create_chunked_tmp_file_writer(&tmp_path, ino, None, None, None)
+                    .create_tmp_file_writer(&tmp_path, ino, None, None, None)
                     .await?;
 
                 let len = if size > attr.size {
@@ -1740,7 +1737,7 @@ impl EncryptedFs {
     ///
     /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
     ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
-    pub async fn create_tmp_file_writer<Callback: FileCryptoWriterCallback + 'static>(
+    pub async fn create_tmp_file_writer(
         &self,
         file: &Path,
         nonce_seed: u64,
@@ -1938,15 +1935,10 @@ impl EncryptedFs {
         match op {
             ReadHandleContextOperation::Create { ino } => {
                 let attr: TimeAndSizeFileAttr = attr.into();
-                let reader = self
-                    .create_chunked_file_reader(
-                        &path,
-                        ino,
-                        Some(self.read_write_inode_locks.get_or_insert_with(ino, || {
-                            Box::new(LocalSequenceLockProvider::default())
-                        })),
-                    )
-                    .await?;
+                let lock = self
+                    .read_write_inode_locks
+                    .get_or_insert_with(ino, || parking_lot::RwLock::new(false));
+                let reader = self.create_file_reader(&path, ino, Some(lock)).await?;
                 let ctx = ReadHandleContext {
                     ino,
                     attr,
@@ -1986,14 +1978,15 @@ impl EncryptedFs {
                     (*self.self_weak.lock().unwrap().as_ref().unwrap()).clone(),
                     ino,
                 ));
+                let lock = self
+                    .read_write_inode_locks
+                    .get_or_insert_with(ino, || parking_lot::RwLock::new(false));
                 let writer = self
-                    .create_chunked_tmp_file_writer(
+                    .create_tmp_file_writer(
                         &path,
                         ino,
                         Some(Box::new(callback)),
-                        Some(self.read_write_inode_locks.get_or_insert_with(ino, || {
-                            Box::new(LocalSequenceLockProvider::default())
-                        })),
+                        Some(lock),
                         Some(metadata_provider),
                     )
                     .await?;

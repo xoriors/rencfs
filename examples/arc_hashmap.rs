@@ -1,7 +1,7 @@
 use rencfs::arc_hashmap::ArcHashMap;
 
 fn main() {
-    let mut m = ArcHashMap::new();
+    let mut m = ArcHashMap::default();
     {
         let v = m.insert(1, 2);
         println!("size {}", m.len());

@@ -301,3 +301,19 @@ pub async fn fill_zeros_async(
     }
     Ok(())
 }
+
+/// Read trying to fill the buffer but stops on eof
+pub fn read(mut r: impl Read, buf: &mut [u8]) -> io::Result<usize> {
+    let mut read = 0;
+    loop {
+        let len = r.read(&mut buf[read..])?;
+        if len == 0 {
+            break;
+        }
+        read += len;
+        if read == buf.len() {
+            break;
+        }
+    }
+    Ok(read)
+}

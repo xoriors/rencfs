@@ -218,7 +218,7 @@ pub trait FileCryptoWriterMetadataProvider: Send + Sync {
 pub struct TmpFileCryptoWriter {
     file_path: PathBuf,
     tmp_dir: PathBuf,
-    writer: Option<Box<dyn CryptoWriter<File>>>,
+    writer: Option<Box<dyn CryptoWriter<BufWriter<File>>>>,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     nonce_seed: u64,
@@ -292,7 +292,7 @@ impl TmpFileCryptoWriter {
                 .into_temp_path()
                 .to_path_buf();
             self.tmp_file_path = Some(tmp_path.clone());
-            let tmp_file = File::create(tmp_path)?;
+            let tmp_file = BufWriter::new(File::create(tmp_path)?);
             self.writer = Some(Box::new(crypto::create_writer(
                 tmp_file,
                 self.cipher,
@@ -375,6 +375,7 @@ impl TmpFileCryptoWriter {
             let mut writer = self.writer.take().unwrap();
             writer.flush()?;
             writer.finish()?;
+            self.pos = 0;
             {
                 let _guard = if let Some(lock) = &self.lock {
                     Some(lock.write())
@@ -413,7 +414,6 @@ impl TmpFileCryptoWriter {
                 )?;
             }
         }
-        self.pos = pos;
         Ok(self.pos()?)
     }
 }
@@ -489,7 +489,8 @@ impl CryptoWriterSeek<File> for TmpFileCryptoWriter {}
 #[cfg(test)]
 pub(crate) const CHUNK_SIZE: u64 = 1024; // 1K for tests
 #[cfg(not(test))]
-pub(crate) const CHUNK_SIZE: u64 = 16 * 1024 * 1024; // 64M
+// pub(crate) const CHUNK_SIZE: u64 = 16 * 1024 * 1024; // 64M
+pub(crate) const CHUNK_SIZE: u64 = 512 * 1024;
 
 // use this when we want to lock the whole file
 pub const WHOLE_FILE_CHUNK_INDEX: u64 = u64::MAX - 42_u64;

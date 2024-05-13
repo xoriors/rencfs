@@ -102,21 +102,19 @@ impl<R: Read + Seek + Send + Sync> RingCryptoReader<R> {
             if self.pos > offset {
                 // if we need an offset before the current position, we can't seek back, we need
                 // to read from the beginning until the desired offset
-                debug!("seeking back, recreating decryptor");
+                debug!(
+                    pos = self.pos.to_formatted_string(&Locale::en),
+                    offset = offset.to_formatted_string(&Locale::en),
+                    "seeking back, recreating decryptor"
+                );
                 self.opening_key =
                     Self::create_opening_key(self.algorithm, &self.key, self.nonce_seed);
                 self.buf.clear();
                 self.pos = 0;
                 self.input.as_mut().unwrap().seek(SeekFrom::Start(0))?;
             }
-            debug!(
-                pos = self.pos.to_formatted_string(&Locale::en),
-                offset = offset.to_formatted_string(&Locale::en),
-                "seeking"
-            );
             let len = offset - self.pos;
             stream_util::seek_forward(self, len, true)?;
-            debug!("new pos {}", self.pos.to_formatted_string(&Locale::en));
         }
         Ok(self.pos)
     }
@@ -126,15 +124,13 @@ impl<R: Read + Seek + Send + Sync> Read for RingCryptoReader<R> {
     #[instrument(name = "RingCryptoReader:read", skip(self, buf))]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // first try to read remaining decrypted data
-        {
-            let len = self.buf.read(buf)?;
-            if len != 0 {
-                self.pos += len as u64;
-                return Ok(len);
-            }
+        let len = self.buf.read(buf)?;
+        if len != 0 {
+            self.pos += len as u64;
+            return Ok(len);
         }
         // we read all the data from the buffer, so we need to read a new block and decrypt it
-        let pos = {
+        let len = {
             self.buf.clear();
             let buffer = self.buf.as_mut_remaining();
             let len = {
@@ -165,7 +161,7 @@ impl<R: Read + Seek + Send + Sync> Read for RingCryptoReader<R> {
                 })?;
             plaintext.len()
         };
-        self.buf.seek(SeekFrom::Start(pos as u64)).unwrap();
+        self.buf.seek(SeekFrom::Start(len as u64)).unwrap();
         let len = self.buf.read(buf)?;
         self.pos += len as u64;
         Ok(len)
@@ -274,19 +270,8 @@ impl Seek for FileCryptoReader {
                 new_pos as u64
             }
         };
-        // pos 0 also means we need to recreate the reader as maybe the actual file got replaced
-        if pos == 0 || self.reader.stream_position()? != pos {
-            if pos == 0 || self.reader.stream_position()? > pos {
-                self.reader = Box::new(crypto::create_reader(
-                    File::open(&self.file).unwrap(),
-                    self.cipher,
-                    self.key.clone(),
-                    self.nonce_seed,
-                ));
-            }
-            self.reader.seek(SeekFrom::Start(pos))?;
-        }
-        self.reader.stream_position()
+        self.reader.seek(SeekFrom::Start(pos))?;
+        Ok(self.reader.stream_position()?)
     }
 }
 

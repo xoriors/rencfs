@@ -3,25 +3,22 @@ use std::fs::File;
 use std::future::Future;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{fs, io};
 
 use anyhow::Result;
 use secrecy::{SecretString, SecretVec};
-use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt};
 
 use rencfs::crypto;
-use rencfs::crypto::writer::{AsyncSeekCryptoWriter, CryptoWriter};
+use rencfs::crypto::writer::CryptoWriter;
 use rencfs::crypto::Cipher;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let password = SecretString::new("password".to_string());
-    let salt = crypto::hash_secret_string(&password);
     let cipher = Cipher::ChaCha20;
-    let key = Arc::new(crypto::derive_key(&password, cipher, salt)?);
+    let key = Arc::new(get_key(cipher)?);
+    let nonce_seed = 3408692451508230642;
 
     let mut args = args();
     let _ = args.next(); // skip the program name
@@ -35,28 +32,28 @@ async fn main() -> Result<()> {
         fs::remove_file(&out)?;
     }
 
-    stream_speed(&path_in, &path_out, cipher, key.clone())?;
+    stream_speed(&path_in, &path_out, cipher, key.clone(), nonce_seed)?;
     println!();
-    file_speed(&path_in, &path_out, cipher, key.clone())?;
-    println!();
-    let dir_path_out = format!(
-        "/tmp/{}.dir.enc",
-        Path::new(&path_in).file_name().unwrap().to_str().unwrap()
-    );
-    chunks_speed(&path_in, &dir_path_out, cipher, key.clone())?;
+    file_speed(&path_in, &path_out, cipher, key.clone(), nonce_seed)?;
+    // println!();
+    // let dir_path_out = format!(
+    //     "/tmp/{}.dir.enc",
+    //     Path::new(&path_in).file_name().unwrap().to_str().unwrap()
+    // );
+    // chunks_speed(&path_in, &dir_path_out, cipher, key.clone())?;
 
     Ok(())
 }
 
-fn speed<F>(f: F, label: &str, size: u64) -> Result<()>
+fn speed<F>(f: F, label: &str, size: u64) -> io::Result<()>
 where
-    F: FnOnce() -> Result<()>,
+    F: FnOnce() -> io::Result<()>,
 {
     let start = Instant::now();
     f()?;
     let duration = start.elapsed();
     println!(
-        "{label} duration = {:?}, speed MB/s {}",
+        "{label} duration = {:?}, speed MB/s {:.2}",
         duration,
         (size as f64 / duration.as_secs_f64()) / 1024.0 / 1024.0
     );
@@ -85,32 +82,27 @@ fn check_hash(r1: &mut impl Read, r2: &mut (impl Read + ?Sized)) -> Result<()> {
     Ok(())
 }
 
-async fn check_hash_async<R: AsyncRead + Unpin, FR>(
-    r1: &mut (impl AsyncRead + ?Sized + Unpin),
-    r2: &mut FR,
-) -> Result<()>
-where
-    FR: Future<Output = R> + Unpin,
-{
-    let hash1 = crypto::hash_async_reader(r1).await?;
-    let hash2 = crypto::hash_async_reader(&mut r2.await).await?;
-    assert_eq!(hash1, hash2);
-    Ok(())
-}
-
 fn stream_speed(
     path_in: &str,
     path_out: &str,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
+    nonce_seed: u64,
 ) -> Result<()> {
-    println!("reader speed");
+    println!("stream speed");
     let _ = fs::remove_file(path_out);
     let mut file_in = File::open(path_in)?;
     let file_out = File::create(path_out)?;
-    let mut writer = crypto::create_writer(file_out, cipher, key.clone(), 42_u64);
+    let mut writer = crypto::create_writer(file_out, cipher, key.clone(), nonce_seed);
     let size = file_in.metadata()?.len();
-    let f = || crypto::create_reader(File::open(path_out).unwrap(), cipher, key.clone(), 42_u64);
+    let f = || {
+        crypto::create_reader(
+            File::open(path_out).unwrap(),
+            cipher,
+            key.clone(),
+            nonce_seed,
+        )
+    };
     test_speed(&mut file_in, &mut writer, size, f)?;
     file_in.seek(io::SeekFrom::Start(0))?;
     check_hash(&mut file_in, &mut f())?;
@@ -123,6 +115,7 @@ fn file_speed(
     path_out: &str,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
+    nonce_seed: u64,
 ) -> Result<()> {
     println!("file speed");
     let _ = fs::remove_file(path_out);
@@ -132,7 +125,7 @@ fn file_speed(
         &Path::new(&"/tmp").to_path_buf(),
         cipher,
         key.clone(),
-        42_u64,
+        nonce_seed,
         None,
         None,
         None,
@@ -143,7 +136,7 @@ fn file_speed(
             &Path::new(&path_out).to_path_buf(),
             cipher,
             key.clone(),
-            42_u64,
+            nonce_seed,
             None,
         )
         .unwrap()
@@ -151,7 +144,7 @@ fn file_speed(
     test_speed(&mut file_in, &mut *writer, size, f)?;
     file_in.seek(io::SeekFrom::Start(0)).unwrap();
     check_hash(&mut file_in, &mut *f())?;
-    fs::remove_file(path_out)?;
+    // fs::remove_file(path_out)?;
     Ok(())
 }
 
@@ -197,15 +190,22 @@ fn test_speed<W: Write, R: Read, FR>(
     w: &mut (impl CryptoWriter<W> + ?Sized),
     size: u64,
     r2: FR,
-) -> Result<()>
+) -> io::Result<()>
 where
     FR: FnOnce() -> R,
 {
+    let mut r = io::BufReader::new(r);
+    let mut w = io::BufWriter::new(w);
     speed(
         || {
-            io::copy(r, w)?;
+            io::copy(&mut r, &mut w)?;
             w.flush()?;
-            w.finish()?;
+            w.into_inner()
+                .map_err(|err| {
+                    let (err, _) = err.into_parts();
+                    err
+                })?
+                .finish()?;
             Ok(())
         },
         "write",
@@ -220,4 +220,10 @@ where
         size,
     )?;
     Ok(())
+}
+
+fn get_key(cipher: Cipher) -> io::Result<SecretVec<u8>> {
+    let password = SecretString::new("pass42".to_string());
+    let salt = crypto::hash_secret_string(&password);
+    Ok(crypto::derive_key(&password, cipher, salt)?)
 }
