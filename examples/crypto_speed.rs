@@ -18,7 +18,6 @@ use rencfs::crypto::Cipher;
 async fn main() -> Result<()> {
     let cipher = Cipher::ChaCha20;
     let key = Arc::new(get_key(cipher)?);
-    let nonce_seed = 3408692451508230642;
 
     let mut args = args();
     let _ = args.next(); // skip the program name
@@ -32,9 +31,9 @@ async fn main() -> Result<()> {
         fs::remove_file(&out)?;
     }
 
-    stream_speed(&path_in, &path_out, cipher, key.clone(), nonce_seed)?;
+    stream_speed(&path_in, &path_out, cipher, key.clone())?;
     println!();
-    file_speed(&path_in, &path_out, cipher, key.clone(), nonce_seed)?;
+    file_speed(&path_in, &path_out, cipher, key.clone())?;
     // println!();
     // let dir_path_out = format!(
     //     "/tmp/{}.dir.enc",
@@ -87,22 +86,14 @@ fn stream_speed(
     path_out: &str,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
 ) -> Result<()> {
     println!("stream speed");
     let _ = fs::remove_file(path_out);
     let mut file_in = File::open(path_in)?;
     let file_out = File::create(path_out)?;
-    let mut writer = crypto::create_writer(file_out, cipher, key.clone(), nonce_seed);
+    let mut writer = crypto::create_writer(file_out, cipher, key.clone());
     let size = file_in.metadata()?.len();
-    let f = || {
-        crypto::create_reader(
-            File::open(path_out).unwrap(),
-            cipher,
-            key.clone(),
-            nonce_seed,
-        )
-    };
+    let f = || crypto::create_reader(File::open(path_out).unwrap(), cipher, key.clone());
     test_speed(&mut file_in, &mut writer, size, f)?;
     file_in.seek(io::SeekFrom::Start(0))?;
     check_hash(&mut file_in, &mut f())?;
@@ -115,7 +106,6 @@ fn file_speed(
     path_out: &str,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
 ) -> Result<()> {
     println!("file speed");
     let _ = fs::remove_file(path_out);
@@ -125,8 +115,6 @@ fn file_speed(
         &Path::new(&"/tmp").to_path_buf(),
         cipher,
         key.clone(),
-        nonce_seed,
-        None,
         None,
         None,
     )?;
@@ -136,7 +124,6 @@ fn file_speed(
             &Path::new(&path_out).to_path_buf(),
             cipher,
             key.clone(),
-            nonce_seed,
             None,
         )
         .unwrap()

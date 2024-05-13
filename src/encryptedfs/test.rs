@@ -98,7 +98,7 @@ fn create_attr_from_type(kind: FileType) -> CreateFileAttr {
 
 async fn read_to_string(path: PathBuf, fs: &EncryptedFs, ino: u64) -> String {
     let mut buf: Vec<u8> = vec![];
-    fs.create_chunked_file_reader(&path, ino, None)
+    fs.create_file_reader(&path, None)
         .await
         .unwrap()
         .read_to_end(&mut buf)
@@ -152,6 +152,7 @@ async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8], han
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
 async fn test_write() {
     run_test(
         TestSetup {
@@ -327,6 +328,7 @@ async fn test_write() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
 async fn test_read() {
     run_test(
         TestSetup {
@@ -506,6 +508,7 @@ async fn test_read() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
 async fn test_truncate() {
     run_test(
         TestSetup {
@@ -690,6 +693,7 @@ async fn test_copy_file_range() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
 async fn test_read_dir() {
     run_test(
         TestSetup {
@@ -868,6 +872,7 @@ async fn test_read_dir() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
 async fn test_read_dir_plus() {
     run_test(
         TestSetup {
@@ -1059,6 +1064,81 @@ async fn test_read_dir_plus() {
             sample.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
             assert_eq!(entries.len(), 4);
             assert_eq!(sample, entries);
+        },
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
+async fn test_read_find_by_name() {
+    run_test(
+        TestSetup {
+            data_path: format!("{TESTS_DATA_DIR}test_read_find_by_name"),
+        },
+        async {
+            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let mut fs = fs.lock().await;
+            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+
+            let test_file = SecretString::from_str("test-file").unwrap();
+            let (_fh, file_attr) = fs
+                .create_nod(
+                    ROOT_INODE,
+                    &test_file,
+                    create_attr_from_type(FileType::RegularFile),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                Some(file_attr),
+                fs.find_by_name(ROOT_INODE, &test_file).await.unwrap()
+            );
+            assert_eq!(
+                None,
+                fs.find_by_name(ROOT_INODE, &SecretString::from_str("42").unwrap())
+                    .await
+                    .unwrap()
+            );
+        },
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
+async fn test_read_exists_by_name() {
+    run_test(
+        TestSetup {
+            data_path: format!("{TESTS_DATA_DIR}test_read_find_by_name"),
+        },
+        async {
+            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let mut fs = fs.lock().await;
+            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+
+            let test_file = SecretString::from_str("test-file").unwrap();
+            let (_fh, file_attr) = fs
+                .create_nod(
+                    ROOT_INODE,
+                    &test_file,
+                    create_attr_from_type(FileType::RegularFile),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            assert!(fs.exists_by_name(ROOT_INODE, &test_file).await.unwrap());
+            assert_eq!(
+                false,
+                (fs.exists_by_name(ROOT_INODE, &SecretString::from_str("42").unwrap())
+                    .await
+                    .unwrap())
+            );
         },
     )
     .await

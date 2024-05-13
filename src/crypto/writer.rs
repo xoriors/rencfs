@@ -3,13 +3,12 @@ use parking_lot::RwLock;
 use std::fs::File;
 use std::io::{BufWriter, Error, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::{fs, io};
 
 use crate::arc_hashmap::Holder;
 use crate::{crypto, stream_util};
-use rand_chacha::rand_core::{RngCore, SeedableRng};
-use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::RngCore;
 use ring::aead::{
     Aad, Algorithm, BoundKey, Nonce, NonceSequence, SealingKey, UnboundKey, NONCE_LEN,
 };
@@ -68,26 +67,24 @@ pub trait CryptoWriter<W: Write>: Write + Send + Sync {
 #[allow(clippy::module_name_repetitions)]
 pub struct RingCryptoWriter<W: Write + Send + Sync> {
     out: Option<BufWriter<W>>,
-    sealing_key: SealingKey<RandomNonceSequence>,
+    sealing_key: SealingKey<RandomNonceSequenceWrapper>,
     buf: BufMut,
+    nonce_sequence: Arc<Mutex<RandomNonceSequence>>,
 }
 
 impl<W: Write + Send + Sync> RingCryptoWriter<W> {
     #[allow(clippy::missing_panics_doc)]
-    pub fn new(
-        w: W,
-        algorithm: &'static Algorithm,
-        key: Arc<SecretVec<u8>>,
-        nonce_seed: u64,
-    ) -> Self {
+    pub fn new(w: W, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>) -> Self {
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).expect("unbound key");
-        let nonce_sequence = RandomNonceSequence::new(nonce_seed);
-        let sealing_key = SealingKey::new(unbound_key, nonce_sequence);
+        let nonce_sequence = Arc::new(Mutex::new(RandomNonceSequence::default()));
+        let wrapping_nonce_sequence = RandomNonceSequenceWrapper::new(nonce_sequence.clone());
+        let sealing_key = SealingKey::new(unbound_key, wrapping_nonce_sequence);
         let buf = BufMut::new(vec![0; BUF_SIZE]);
         Self {
             out: Some(BufWriter::new(w)),
             sealing_key,
             buf,
+            nonce_sequence,
         }
     }
 }
@@ -136,14 +133,16 @@ impl<W: Write + Send + Sync> RingCryptoWriter<W> {
                 error!("error sealing in place: {}", err);
                 io::Error::from(io::ErrorKind::Other)
             })?;
-        if self.out.is_none() {
-            panic!("encrypt_and_write called on already finished writer")
-        }
-        let out = self.out.as_mut().unwrap();
+        let out = self
+            .out
+            .as_mut()
+            .expect("encrypt_and_write called on already finished writer");
+        let _guard = self.nonce_sequence.lock().unwrap();
+        let nonce = _guard.last_nonce.as_ref().unwrap();
+        out.write_all(&nonce)?;
         out.write_all(data)?;
         self.buf.clear();
         out.write_all(tag.as_ref())?;
-        out.flush()?;
         Ok(())
     }
 }
@@ -156,24 +155,27 @@ impl<W: Write + Send + Sync> CryptoWriter<W> for RingCryptoWriter<W> {
                 "finish called on already finished writer",
             ));
         }
+        self.flush()?;
         if self.buf.available() > 0 {
             // encrypt and write last block, use as many bytes as we have
             self.encrypt_and_write()?;
         }
-        Ok(self.out.take().unwrap().into_inner()?)
+        let mut out = self.out.take().unwrap();
+        out.flush()?;
+        Ok(out.into_inner()?)
     }
 }
 
-pub(in crate::crypto) struct RandomNonceSequence {
-    rng: ChaCha20Rng,
-    // seed: u64,
+struct RandomNonceSequence {
+    rng: Mutex<Box<dyn RngCore + Send + Sync>>,
+    last_nonce: Option<Vec<u8>>,
 }
 
-impl RandomNonceSequence {
-    pub fn new(seed: u64) -> Self {
+impl Default for RandomNonceSequence {
+    fn default() -> Self {
         Self {
-            rng: ChaCha20Rng::seed_from_u64(seed),
-            // seed,
+            rng: Mutex::new(Box::new(crypto::create_rng())),
+            last_nonce: None,
         }
     }
 }
@@ -181,18 +183,28 @@ impl RandomNonceSequence {
 impl NonceSequence for RandomNonceSequence {
     // called once for each seal operation
     fn advance(&mut self) -> Result<Nonce, Unspecified> {
-        let mut nonce_bytes = vec![0; NONCE_LEN];
+        self.last_nonce = Some(vec![0; NONCE_LEN]);
+        self.rng
+            .lock()
+            .unwrap()
+            .fill_bytes(&mut self.last_nonce.as_mut().unwrap());
+        Nonce::try_assume_unique_for_key(&self.last_nonce.as_mut().unwrap())
+    }
+}
 
-        let num = self.rng.next_u64();
-        // let num = self.seed;
-        // self.seed = self.seed + 1;
-        let bytes = num.to_le_bytes();
-        // let bytes = self.seed.to_le_bytes();
-        nonce_bytes[4..].copy_from_slice(&bytes);
-        // println!("nonce_bytes = {}", hex::encode(&nonce_bytes));
-        // self.seed += 1;
+struct RandomNonceSequenceWrapper {
+    inner: Arc<Mutex<RandomNonceSequence>>,
+}
 
-        Nonce::try_assume_unique_for_key(&nonce_bytes)
+impl RandomNonceSequenceWrapper {
+    pub fn new(inner: Arc<Mutex<RandomNonceSequence>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl NonceSequence for RandomNonceSequenceWrapper {
+    fn advance(&mut self) -> Result<Nonce, Unspecified> {
+        self.inner.lock().unwrap().advance()
     }
 }
 
@@ -221,7 +233,6 @@ pub struct TmpFileCryptoWriter {
     writer: Option<Box<dyn CryptoWriter<BufWriter<File>>>>,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
     tmp_file_path: Option<PathBuf>,
     callback: Option<Box<dyn FileCryptoWriterCallback>>,
     lock: Option<Holder<RwLock<bool>>>,
@@ -246,7 +257,6 @@ impl TmpFileCryptoWriter {
         tmp_dir: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
-        nonce_seed: u64,
         callback: Option<Box<dyn FileCryptoWriterCallback>>,
         lock: Option<Holder<RwLock<bool>>>,
         metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
@@ -260,7 +270,6 @@ impl TmpFileCryptoWriter {
             writer: None,
             cipher,
             key,
-            nonce_seed,
             tmp_file_path: None,
             callback,
             lock,
@@ -297,7 +306,6 @@ impl TmpFileCryptoWriter {
                 tmp_file,
                 self.cipher,
                 self.key.clone(),
-                self.nonce_seed,
             )));
             self.pos = 0;
         }
@@ -325,7 +333,6 @@ impl TmpFileCryptoWriter {
                 len,
                 self.cipher,
                 self.key.clone(),
-                self.nonce_seed,
                 self,
                 true,
             )?;
@@ -363,7 +370,6 @@ impl TmpFileCryptoWriter {
                     u64::MAX,
                     self.cipher,
                     self.key.clone(),
-                    self.nonce_seed,
                     self,
                     true,
                 )?;
@@ -409,7 +415,6 @@ impl TmpFileCryptoWriter {
                     len,
                     self.cipher,
                     self.key.clone(),
-                    self.nonce_seed,
                     self,
                 )?;
             }
@@ -505,7 +510,6 @@ pub struct ChunkedTmpFileCryptoWriter {
     tmp_dir: PathBuf,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
     callback: Option<Arc<Box<dyn FileCryptoWriterCallback>>>,
     chunk_size: u64,
     chunk_index: u64,
@@ -565,7 +569,6 @@ impl ChunkedTmpFileCryptoWriter {
         tmp_dir: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
-        nonce_seed: u64,
         callback: Option<Box<dyn FileCryptoWriterCallback>>,
         locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
         metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
@@ -578,7 +581,6 @@ impl ChunkedTmpFileCryptoWriter {
             tmp_dir: tmp_dir.to_owned(),
             cipher,
             key: key.clone(),
-            nonce_seed,
             callback: callback.map(|c| Arc::new(c)),
             chunk_size: CHUNK_SIZE,
             chunk_index: 0,
@@ -595,7 +597,6 @@ impl ChunkedTmpFileCryptoWriter {
             &self.tmp_dir,
             self.cipher,
             self.key.clone(),
-            self.nonce_seed,
             self.chunk_size,
             &self.locks,
             self.callback.clone(),
@@ -616,7 +617,6 @@ impl ChunkedTmpFileCryptoWriter {
         tmp_dir: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
-        nonce_seed: u64,
         chunk_size: u64,
         locks: &Option<Holder<Box<dyn SequenceLockProvider>>>,
         callback: Option<Arc<Box<dyn FileCryptoWriterCallback>>>,
@@ -651,7 +651,6 @@ impl ChunkedTmpFileCryptoWriter {
             tmp_dir,
             cipher,
             key.clone(),
-            nonce_seed,
             callback.as_ref().map(|c| {
                 Box::new(CallbackWrapper(c.clone(), pos / chunk_size))
                     as Box<dyn FileCryptoWriterCallback>

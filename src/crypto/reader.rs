@@ -2,19 +2,20 @@ use std::fs::File;
 use std::io;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use num_format::{Locale, ToFormattedString};
 use parking_lot::RwLock;
-use ring::aead::{Aad, Algorithm, BoundKey, OpeningKey, UnboundKey};
+use ring::aead::{
+    Aad, Algorithm, BoundKey, Nonce, NonceSequence, OpeningKey, UnboundKey, NONCE_LEN,
+};
+use ring::error;
 use secrecy::{ExposeSecret, SecretVec};
 use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::Holder;
 use crate::crypto::buf_mut::BufMut;
-use crate::crypto::writer::{
-    RandomNonceSequence, SequenceLockProvider, BUF_SIZE, CHUNK_SIZE, WHOLE_FILE_CHUNK_INDEX,
-};
+use crate::crypto::writer::{SequenceLockProvider, BUF_SIZE, CHUNK_SIZE, WHOLE_FILE_CHUNK_INDEX};
 use crate::crypto::Cipher;
 use crate::{crypto, stream_util};
 
@@ -58,23 +59,19 @@ pub trait CryptoReader: Read + Seek + Send + Sync {}
 #[allow(clippy::module_name_repetitions)]
 pub struct RingCryptoReader<R: Read + Seek + Send + Sync> {
     input: Option<BufReader<R>>,
-    opening_key: OpeningKey<RandomNonceSequence>,
+    opening_key: OpeningKey<ExistingNonceSequence>,
     buf: BufMut,
     pos: u64,
     algorithm: &'static Algorithm,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
+    last_nonce: Arc<Mutex<Option<Vec<u8>>>>,
 }
 
 impl<R: Read + Seek + Send + Sync> RingCryptoReader<R> {
-    pub fn new(
-        r: R,
-        algorithm: &'static Algorithm,
-        key: Arc<SecretVec<u8>>,
-        nonce_seed: u64,
-    ) -> Self {
-        let opening_key = Self::create_opening_key(algorithm, &key, nonce_seed);
-        let buf = BufMut::new(vec![0; BUF_SIZE + algorithm.tag_len()]);
+    pub fn new(r: R, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>) -> Self {
+        let buf = BufMut::new(vec![0; NONCE_LEN + BUF_SIZE + algorithm.tag_len()]);
+        let last_nonce = Arc::new(Mutex::new(None));
+        let opening_key = Self::create_opening_key(algorithm, &key, last_nonce.clone());
         Self {
             input: Some(BufReader::new(r)),
             opening_key,
@@ -82,17 +79,17 @@ impl<R: Read + Seek + Send + Sync> RingCryptoReader<R> {
             pos: 0,
             algorithm,
             key,
-            nonce_seed,
+            last_nonce,
         }
     }
 
     fn create_opening_key(
         algorithm: &'static Algorithm,
         key: &Arc<SecretVec<u8>>,
-        nonce_seed: u64,
-    ) -> OpeningKey<RandomNonceSequence> {
+        last_nonce: Arc<Mutex<Option<Vec<u8>>>>,
+    ) -> OpeningKey<ExistingNonceSequence> {
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).unwrap();
-        let nonce_sequence = RandomNonceSequence::new(nonce_seed);
+        let nonce_sequence = ExistingNonceSequence::new(last_nonce);
         OpeningKey::new(unbound_key, nonce_sequence)
     }
 
@@ -108,7 +105,7 @@ impl<R: Read + Seek + Send + Sync> RingCryptoReader<R> {
                     "seeking back, recreating decryptor"
                 );
                 self.opening_key =
-                    Self::create_opening_key(self.algorithm, &self.key, self.nonce_seed);
+                    Self::create_opening_key(self.algorithm, &self.key, self.last_nonce.clone());
                 self.buf.clear();
                 self.pos = 0;
                 self.input.as_mut().unwrap().seek(SeekFrom::Start(0))?;
@@ -152,6 +149,12 @@ impl<R: Read + Seek + Send + Sync> Read for RingCryptoReader<R> {
                 return Ok(0);
             }
             let data = &mut buffer[..len];
+            // extract nonce
+            self.last_nonce
+                .lock()
+                .unwrap()
+                .replace(data[..NONCE_LEN].to_vec());
+            let data = &mut data[NONCE_LEN..];
             let plaintext = self
                 .opening_key
                 .open_within(Aad::empty(), data, 0..)
@@ -161,7 +164,13 @@ impl<R: Read + Seek + Send + Sync> Read for RingCryptoReader<R> {
                 })?;
             plaintext.len()
         };
-        self.buf.seek(SeekFrom::Start(len as u64)).unwrap();
+        self.buf
+            .seek(SeekFrom::Start(NONCE_LEN as u64 + len as u64))
+            .unwrap();
+        // skip nonce
+        self.buf
+            .seek_read(SeekFrom::Start(NONCE_LEN as u64))
+            .unwrap();
         let len = self.buf.read(buf)?;
         self.pos += len as u64;
         Ok(len)
@@ -192,6 +201,22 @@ impl<R: Read + Seek + Send + Sync> Seek for RingCryptoReader<R> {
     }
 }
 
+struct ExistingNonceSequence {
+    last_nonce: Arc<Mutex<Option<Vec<u8>>>>,
+}
+
+impl ExistingNonceSequence {
+    fn new(last_nonce: Arc<Mutex<Option<Vec<u8>>>>) -> Self {
+        Self { last_nonce }
+    }
+}
+
+impl NonceSequence for ExistingNonceSequence {
+    fn advance(&mut self) -> Result<Nonce, error::Unspecified> {
+        Nonce::try_assume_unique_for_key(&self.last_nonce.lock().unwrap().as_mut().unwrap())
+    }
+}
+
 impl<R: Read + Seek + Send + Sync> CryptoReader for RingCryptoReader<R> {}
 
 /// file reader
@@ -202,7 +227,6 @@ pub struct FileCryptoReader {
     reader: Box<dyn CryptoReader>,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
     lock: Option<Holder<RwLock<bool>>>,
 }
 
@@ -214,7 +238,6 @@ impl FileCryptoReader {
         file: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
-        nonce_seed: u64,
         lock: Option<Holder<RwLock<bool>>>,
     ) -> io::Result<Self> {
         Ok(Self {
@@ -223,11 +246,9 @@ impl FileCryptoReader {
                 File::open(file)?,
                 cipher,
                 key.clone(),
-                nonce_seed,
             )),
             cipher,
             key,
-            nonce_seed,
             lock,
         })
     }
@@ -270,6 +291,15 @@ impl Seek for FileCryptoReader {
                 new_pos as u64
             }
         };
+        let current_pos = self.reader.stream_position()?;
+        if current_pos > pos {
+            // we need to recreate the reader
+            self.reader = Box::new(crypto::create_reader(
+                File::open(&self.file)?,
+                self.cipher,
+                self.key.clone(),
+            ));
+        }
         self.reader.seek(SeekFrom::Start(pos))?;
         Ok(self.reader.stream_position()?)
     }
@@ -286,7 +316,6 @@ pub struct ChunkedFileCryptoReader {
     reader: Option<Box<dyn CryptoReader>>,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
     locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
     chunk_size: u64,
     chunk_index: u64,
@@ -301,7 +330,6 @@ impl ChunkedFileCryptoReader {
         file_dir: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
-        nonce_seed: u64,
         locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
     ) -> io::Result<Self> {
         Ok(Self {
@@ -312,12 +340,10 @@ impl ChunkedFileCryptoReader {
                 file_dir.to_owned(),
                 cipher,
                 key.clone(),
-                nonce_seed,
                 &locks,
             )?,
             cipher,
             key,
-            nonce_seed,
             locks,
             chunk_size: CHUNK_SIZE,
             chunk_index: 0,
@@ -330,7 +356,6 @@ impl ChunkedFileCryptoReader {
         file_dir: PathBuf,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
-        nonce_seed: u64,
         locks: &Option<Holder<Box<dyn SequenceLockProvider>>>,
     ) -> io::Result<Option<Box<dyn CryptoReader>>> {
         let chunk_index = pos / chunk_size;
@@ -344,7 +369,6 @@ impl ChunkedFileCryptoReader {
             file_dir.to_owned(),
             cipher,
             key.clone(),
-            nonce_seed,
             locks,
         )?))
     }
@@ -355,7 +379,6 @@ impl ChunkedFileCryptoReader {
         file_dir: PathBuf,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
-        nonce_seed: u64,
         locks: &Option<Holder<Box<dyn SequenceLockProvider>>>,
     ) -> io::Result<Box<dyn CryptoReader>> {
         let chunk_index = pos / chunk_size;
@@ -364,7 +387,6 @@ impl ChunkedFileCryptoReader {
             &chunk_file,
             cipher,
             key.clone(),
-            nonce_seed,
             locks.as_ref().map(|lock| lock.get(pos / chunk_size)),
         )?)
     }
@@ -404,7 +426,6 @@ impl Read for ChunkedFileCryptoReader {
                 self.file_dir.to_owned(),
                 self.cipher,
                 self.key.clone(),
-                self.nonce_seed,
                 &self.locks,
             )?;
         }
@@ -425,7 +446,6 @@ impl Read for ChunkedFileCryptoReader {
                 self.file_dir.to_owned(),
                 self.cipher,
                 self.key.clone(),
-                self.nonce_seed,
                 &self.locks,
             )?;
             if let Some(reader) = &mut self.reader {
@@ -487,7 +507,6 @@ impl Seek for ChunkedFileCryptoReader {
                     self.file_dir.to_owned(),
                     self.cipher,
                     self.key.clone(),
-                    self.nonce_seed,
                     &self.locks,
                 )?);
             }
@@ -506,7 +525,6 @@ impl Seek for ChunkedFileCryptoReader {
                     self.file_dir.to_owned(),
                     self.cipher,
                     self.key.clone(),
-                    self.nonce_seed,
                     &self.locks,
                 )?;
                 if self.reader.is_none() {
@@ -528,3 +546,40 @@ impl Seek for ChunkedFileCryptoReader {
 }
 
 impl CryptoReader for ChunkedFileCryptoReader {}
+
+#[cfg(test)]
+mod test {
+    use std::io::Write;
+    use std::io::{Read, Seek};
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use ring::aead::CHACHA20_POLY1305;
+    use secrecy::SecretVec;
+    use tokio::io::AsyncWriteExt;
+    use tracing_test::traced_test;
+
+    use crate::crypto;
+    use crate::crypto::writer::CryptoWriter;
+    use crate::crypto::Cipher;
+
+    #[test]
+    #[traced_test]
+    fn test_reader_writer() {
+        let mut key: Vec<u8> = vec![0; CHACHA20_POLY1305.key_len()];
+        crypto::create_rng().fill_bytes(&mut key);
+        let key = SecretVec::new(key);
+        let key = Arc::new(key);
+
+        let mut cursor = std::io::Cursor::new(vec![0; 0]);
+        let mut writer = crypto::create_writer(cursor, Cipher::ChaCha20, key.clone());
+        let data = "test42";
+        writer.write_all(&data.as_bytes()).unwrap();
+        cursor = writer.finish().unwrap();
+        cursor.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let mut reader = crypto::create_reader(cursor, Cipher::ChaCha20, key.clone());
+        let mut s = String::new();
+        reader.read_to_string(&mut s).unwrap();
+        assert_eq!(data, s);
+    }
+}

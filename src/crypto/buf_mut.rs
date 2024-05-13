@@ -43,6 +43,22 @@ impl BufMut {
     pub const fn available_read(&self) -> usize {
         self.available() - self.pos_read
     }
+
+    pub(crate) fn seek_read(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let new_pos = match pos {
+            SeekFrom::Start(pos) => pos as i64,
+            SeekFrom::End(pos) => self.buf.len() as i64 + pos,
+            SeekFrom::Current(pos) => self.pos_read as i64 + pos,
+        };
+        if new_pos < 0 || new_pos > self.buf.len() as i64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "position is out of bounds",
+            ));
+        }
+        self.pos_read = new_pos as usize;
+        Ok(self.pos_read as u64)
+    }
 }
 
 impl AsMut<[u8]> for BufMut {

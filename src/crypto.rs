@@ -49,8 +49,6 @@ pub enum Cipher {
     Aes256Gcm,
 }
 
-pub const ENCRYPT_FILENAME_OVERHEAD_CHARS: usize = 4;
-
 #[derive(Debug, Error)]
 pub enum Error {
     // #[error("cryptostream error: {source}")]
@@ -95,9 +93,8 @@ pub fn create_writer<W: Write + Send + Sync>(
     writer: W,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
 ) -> impl CryptoWriter<W> {
-    create_ring_writer(writer, cipher, key, nonce_seed)
+    create_ring_writer(writer, cipher, key)
 }
 
 /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
@@ -116,7 +113,6 @@ pub fn create_tmp_file_writer(
     tmp_dir: &Path,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
     callback: Option<Box<dyn FileCryptoWriterCallback>>,
     lock: Option<Holder<RwLock<bool>>>,
     metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
@@ -126,7 +122,6 @@ pub fn create_tmp_file_writer(
         tmp_dir,
         cipher,
         key,
-        nonce_seed,
         callback,
         lock,
         metadata_provider,
@@ -147,7 +142,6 @@ pub fn create_chunked_tmp_file_writer(
     tmp_dir: &Path,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
     callback: Option<Box<dyn FileCryptoWriterCallback>>,
     locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
     metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
@@ -157,7 +151,6 @@ pub fn create_chunked_tmp_file_writer(
         tmp_dir,
         cipher,
         key,
-        nonce_seed,
         callback,
         locks,
         metadata_provider,
@@ -172,11 +165,10 @@ pub fn create_chunked_file_reader(
     file_dir: &Path,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
     locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
 ) -> io::Result<Box<dyn CryptoReader>> {
     Ok(Box::new(ChunkedFileCryptoReader::new(
-        file_dir, cipher, key, nonce_seed, locks,
+        file_dir, cipher, key, locks,
     )?))
 }
 
@@ -184,26 +176,24 @@ fn create_ring_writer<W: Write + Send + Sync>(
     writer: W,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
 ) -> RingCryptoWriter<W> {
     let algorithm = match cipher {
         Cipher::ChaCha20 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoWriter::new(writer, algorithm, key, nonce_seed)
+    RingCryptoWriter::new(writer, algorithm, key)
 }
 
 fn create_ring_reader<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
 ) -> RingCryptoReader<R> {
     let algorithm = match cipher {
         Cipher::ChaCha20 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoReader::new(reader, algorithm, key, nonce_seed)
+    RingCryptoReader::new(reader, algorithm, key)
 }
 
 // fn _create_cryptostream_crypto_writer(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> impl CryptoWriter<File> {
@@ -227,9 +217,8 @@ pub fn create_reader<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
 ) -> impl CryptoReader {
-    create_ring_reader(reader, cipher, key, nonce_seed)
+    create_ring_reader(reader, cipher, key)
 }
 
 /// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read\
@@ -239,12 +228,9 @@ pub fn create_file_reader(
     file: &Path,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
     lock: Option<Holder<RwLock<bool>>>,
 ) -> io::Result<Box<dyn CryptoReader>> {
-    Ok(Box::new(FileCryptoReader::new(
-        file, cipher, key, nonce_seed, lock,
-    )?))
+    Ok(Box::new(FileCryptoReader::new(file, cipher, key, lock)?))
 }
 
 // fn _create_cryptostream_crypto_reader(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> CryptostreamCryptoReader<File> {
@@ -270,77 +256,24 @@ pub fn create_file_reader(
 //     CryptostreamCryptoReader::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
 // }
 
-/// `nonce_seed`: If we should include the nonce seed in the result so that it can be used when decrypting.
-#[allow(clippy::missing_errors_doc)]
-pub fn encrypt_string_with_nonce_seed(
-    s: &SecretString,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
-    include_nonce_seed: bool,
-) -> Result<String> {
-    let mut cursor = io::Cursor::new(vec![]);
-    let mut writer = create_writer(cursor, cipher, key, nonce_seed);
-    writer.write_all(s.expose_secret().as_bytes())?;
-    writer.flush()?;
-    cursor = writer.finish()?;
-    let v = cursor.into_inner();
-    if include_nonce_seed {
-        Ok(format!("{}.{}", BASE64.encode(v), nonce_seed))
-    } else {
-        Ok(BASE64.encode(v))
-    }
-}
-
-/// Encrypt a string with a random nonce seed. It will include the nonce seed in the result so that it can be used when decrypting.
 #[allow(clippy::missing_errors_doc)]
 pub fn encrypt_string(s: &SecretString, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<String> {
     let mut cursor = io::Cursor::new(vec![]);
-    let nonce_seed = create_rng().next_u64();
-    let mut writer = create_writer(cursor, cipher, key, nonce_seed);
+    let mut writer = create_writer(cursor, cipher, key);
     writer.write_all(s.expose_secret().as_bytes())?;
     writer.flush()?;
     cursor = writer.finish()?;
     let v = cursor.into_inner();
-    Ok(format!("{}.{}", BASE64.encode(v), nonce_seed))
+    Ok(BASE64.encode(v))
 }
 
-/// Decrypt a string that was encrypted with including the nonce seed.
 #[allow(clippy::missing_panics_doc)]
 #[allow(clippy::missing_errors_doc)]
 pub fn decrypt_string(s: &str, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<SecretString> {
-    // extract nonce seed
-    if !s.contains('.') {
-        return Err(Error::Generic("nonce seed is missing"));
-    }
-    let nonce_seed = s
-        .split('.')
-        .last()
-        .expect("missing nonce seed")
-        .parse::<u64>()?;
-    let s = s.split('.').next().unwrap();
-
     let vec = BASE64.decode(s)?;
     let cursor = io::Cursor::new(vec);
 
-    let mut reader = create_reader(cursor, cipher, key, nonce_seed);
-    let mut decrypted = String::new();
-    reader.read_to_string(&mut decrypted)?;
-    Ok(SecretString::new(decrypted))
-}
-
-/// Decrypt a string that was encrypted with a specific nonce seed.
-#[allow(clippy::missing_errors_doc)]
-pub fn decrypt_string_with_nonce_seed(
-    s: &str,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
-) -> Result<SecretString> {
-    let vec = BASE64.decode(s)?;
-    let cursor = io::Cursor::new(vec);
-
-    let mut reader = create_reader(cursor, cipher, key, nonce_seed);
+    let mut reader = create_reader(cursor, cipher, key);
     let mut decrypted = String::new();
     reader.read_to_string(&mut decrypted)?;
     Ok(SecretString::new(decrypted))
@@ -374,28 +307,19 @@ pub fn derive_key(
     Ok(SecretVec::new(dk))
 }
 
-/// Encrypt a file name with provided nonce seed. It will **INCLUDE** the nonce seed in the result so that it can be used when decrypting.
 #[allow(clippy::missing_errors_doc)]
 pub fn encrypt_file_name(
     name: &SecretString,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
 ) -> FsResult<String> {
-    // in order not to add too much to filename length we keep just 3 digits from nonce seed
-    let nonce_seed = nonce_seed % 1000;
-
     if name.expose_secret() != "$." && name.expose_secret() != "$.." {
         let normalized_name = SecretString::new(name.expose_secret().replace(['/', '\\'], " "));
-        let mut encrypted =
-            encrypt_string_with_nonce_seed(&normalized_name, cipher, key, nonce_seed, true)?;
+        let mut encrypted = encrypt_string(&normalized_name, cipher, key)?;
         encrypted = encrypted.replace('/', "|");
         Ok(encrypted)
     } else {
-        // add nonce seed
-        let mut name = name.expose_secret().clone();
-        name.push_str(&nonce_seed.to_string());
-        Ok(name)
+        Ok(name.expose_secret().clone())
     }
 }
 
@@ -449,11 +373,10 @@ pub fn copy_from_file_exact(
     len: u64,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
     w: &mut impl Write,
 ) -> io::Result<()> {
     debug!("");
-    copy_from_file(file, pos, len, cipher, key, nonce_seed, w, false)?;
+    copy_from_file(file, pos, len, cipher, key, w, false)?;
     Ok(())
 }
 
@@ -464,7 +387,6 @@ pub fn copy_from_file(
     len: u64,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    nonce_seed: u64,
     w: &mut impl Write,
     stop_on_eof: bool,
 ) -> io::Result<u64> {
@@ -473,12 +395,7 @@ pub fn copy_from_file(
         return Ok(0);
     }
     // create a new reader by reading from the beginning of the file
-    let mut reader = create_reader(
-        OpenOptions::new().read(true).open(file)?,
-        cipher,
-        key,
-        nonce_seed,
-    );
+    let mut reader = create_reader(OpenOptions::new().read(true).open(file)?, cipher, key);
     // move read position to the write position
     let pos2 = stream_util::seek_forward(&mut reader, pos, stop_on_eof)?;
     if pos2 < pos {
@@ -495,20 +412,6 @@ pub fn copy_from_file(
     // copy the rest of the file
     let len = stream_util::copy(&mut reader, w, len, stop_on_eof)?;
     Ok(len)
-}
-
-#[allow(clippy::missing_panics_doc)]
-#[allow(clippy::missing_errors_doc)]
-pub fn extract_nonce_from_encrypted_string(name: &str) -> Result<u64> {
-    if !name.contains('.') {
-        return Err(Error::Generic("nonce seed is missing"));
-    }
-    let nonce_seed = name
-        .split('.')
-        .last()
-        .expect("nonce seed missing")
-        .parse::<u64>()?;
-    Ok(nonce_seed)
 }
 
 #[must_use]

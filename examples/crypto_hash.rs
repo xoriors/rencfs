@@ -33,7 +33,6 @@ fn main() -> anyhow::Result<()> {
         &Path::new(&"/tmp").to_path_buf(),
         cipher,
         key.clone(),
-        42_u64,
         None,
         None,
         None,
@@ -46,7 +45,6 @@ fn main() -> anyhow::Result<()> {
         &Path::new(&path_out).to_path_buf(),
         cipher,
         key.clone(),
-        42_u64,
         None,
     )?;
     let hash1 = crypto::hash_reader(&mut File::open(path_in)?)?;

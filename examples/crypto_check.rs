@@ -20,7 +20,6 @@ use rencfs::encryptedfs::FsError;
 async fn main() -> Result<()> {
     let cipher = Cipher::ChaCha20;
     let key = Arc::new(get_key(cipher)?);
-    let nonce_seed = 3408692451508230642;
 
     let mut args = args();
     let _ = args.next(); // skip the program name
@@ -37,18 +36,13 @@ async fn main() -> Result<()> {
     // copy
     let mut file_in = File::open(path_in)?;
     let file_out = File::create(path_out.clone())?;
-    let mut writer = crypto::create_writer(file_out, cipher, key.clone(), nonce_seed);
+    let mut writer = crypto::create_writer(file_out, cipher, key.clone());
     io::copy(&mut file_in, &mut writer)?;
     writer.flush()?;
     writer.finish()?;
 
     // check hash
-    let mut reader = crypto::create_reader(
-        File::open(path_out).unwrap(),
-        cipher,
-        key.clone(),
-        nonce_seed,
-    );
+    let mut reader = crypto::create_reader(File::open(path_out).unwrap(), cipher, key.clone());
     file_in.seek(io::SeekFrom::Start(0))?;
     let hash1 = crypto::hash_reader(&mut file_in)?;
     let hash2 = crypto::hash_reader(&mut reader)?;
@@ -67,7 +61,6 @@ fn get_key(cipher: Cipher) -> io::Result<SecretVec<u8>> {
         File::open("/home/gnome/rencfs_data/security/key.enc").unwrap(),
         cipher,
         Arc::new(derived_key),
-        42_u64,
     );
     let key_store: KeyStore = bincode::deserialize_from(reader).unwrap();
     // check hash
