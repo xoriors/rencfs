@@ -96,7 +96,7 @@ fn create_attr_from_type(kind: FileType) -> CreateFileAttr {
     }
 }
 
-async fn read_to_string(path: PathBuf, fs: &EncryptedFs, ino: u64) -> String {
+async fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
     let mut buf: Vec<u8> = vec![];
     fs.create_file_reader(&path, None)
         .await
@@ -184,8 +184,7 @@ async fn test_write() {
                 data,
                 read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                    attr.ino
+                    &fs
                 )
                 .await
             );
@@ -204,8 +203,7 @@ async fn test_write() {
                 data,
                 &read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                    attr.ino
+                    &fs
                 )
                 .await[5..]
             );
@@ -222,8 +220,7 @@ async fn test_write() {
                 format!("test-37{}37", "\0".repeat(35)),
                 read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                    attr.ino
+                    &fs
                 )
                 .await
             );
@@ -258,8 +255,7 @@ async fn test_write() {
                 "test-01-02-42",
                 &read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                    attr.ino
+                    &fs
                 )
                 .await
             );
@@ -292,7 +288,6 @@ async fn test_write() {
             let new_content = read_to_string(
                 fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                 &fs,
-                attr.ino,
             )
             .await;
             assert_eq!("test-37-37-42", new_content);
@@ -549,8 +544,7 @@ async fn test_truncate() {
                 format!("test-37{}", "\0".repeat(3)),
                 read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                    attr.ino
+                    &fs
                 )
                 .await
             );
@@ -563,8 +557,7 @@ async fn test_truncate() {
                 format!("test-37{}", "\0".repeat(3)),
                 read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                    attr.ino
+                    &fs
                 )
                 .await
             );
@@ -581,8 +574,7 @@ async fn test_truncate() {
                 "37st",
                 read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                    attr.ino
+                    &fs
                 )
                 .await
             );
@@ -595,8 +587,7 @@ async fn test_truncate() {
                 "".to_string(),
                 read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                    attr.ino
+                    &fs
                 )
                 .await
             );
@@ -1113,7 +1104,7 @@ async fn test_read_find_by_name() {
 async fn test_read_exists_by_name() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}test_read_find_by_name"),
+            data_path: format!("{TESTS_DATA_DIR}test_read_exists_by_name"),
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));
@@ -1121,7 +1112,7 @@ async fn test_read_exists_by_name() {
             let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
             let test_file = SecretString::from_str("test-file").unwrap();
-            let (_fh, file_attr) = fs
+            let _ = fs
                 .create_nod(
                     ROOT_INODE,
                     &test_file,

@@ -1,7 +1,7 @@
 use std::cmp::max;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
-use std::fs::{File, OpenOptions, ReadDir};
+use std::fs::{DirEntry, File, OpenOptions, ReadDir};
 use std::io::ErrorKind::Other;
 use std::io::{SeekFrom, Write};
 use std::num::{NonZeroUsize, ParseIntError};
@@ -420,156 +420,24 @@ impl PartialEq for DirectoryEntryPlus {
 
 pub type FsResult<T> = Result<T, FsError>;
 
-pub struct DirectoryEntryIterator(
-    ReadDir,
-    Cipher,
-    Arc<SecretVec<u8>>,
-    Arc<std::sync::RwLock<ArcHashMap<String, std::sync::RwLock<bool>>>>,
-);
+pub struct DirectoryEntryIterator(VecDeque<FsResult<DirectoryEntry>>);
 
 impl Iterator for DirectoryEntryIterator {
     type Item = FsResult<DirectoryEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let entry = self.0.next()?;
-        if let Err(e) = entry {
-            return Some(Err(e.into()));
-        }
-        let entry = entry.unwrap();
-
-        let lock = self
-            .3
-            .read()
-            .unwrap()
-            .get_or_insert_with(entry.path().to_str().unwrap().to_string(), || {
-                std::sync::RwLock::new(false)
-            });
-        let _guard = lock.read().unwrap();
-
-        let file = File::open(entry.path());
-        if let Err(e) = file {
-            return Some(Err(e.into()));
-        }
-
-        let file = file.unwrap();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let name = {
-            if name == "$." {
-                SecretString::from_str(".").unwrap()
-            } else if name == "$.." {
-                SecretString::from_str("..").unwrap()
-            } else {
-                let name =
-                    crypto::decrypt_file_name(&name, self.1, self.2.clone()).map_err(|err| {
-                        error!(err = %err, "decrypting file name");
-                        err
-                    });
-                if name.is_err() {
-                    return Some(Err(FsError::InvalidInput("invalid file name")));
-                }
-                name.unwrap()
-            }
-        };
-
-        let res: bincode::Result<(u64, FileType)> =
-            bincode::deserialize_from(crypto::create_reader(file, self.1, self.2.clone()));
-        if let Err(e) = res {
-            return Some(Err(e.into()));
-        }
-        let (ino, kind): (u64, FileType) = res.unwrap();
-        Some(Ok(DirectoryEntry { ino, name, kind }))
+        self.0.pop_front()
     }
 }
 
-pub struct DirectoryEntryPlusIterator(
-    ReadDir,
-    PathBuf,
-    Cipher,
-    Arc<SecretVec<u8>>,
-    Arc<std::sync::RwLock<ArcHashMap<String, std::sync::RwLock<bool>>>>,
-    Arc<std::sync::RwLock<ArcHashMap<u64, std::sync::RwLock<bool>>>>,
-);
+pub struct DirectoryEntryPlusIterator(VecDeque<FsResult<DirectoryEntryPlus>>);
 
 impl Iterator for DirectoryEntryPlusIterator {
     type Item = FsResult<DirectoryEntryPlus>;
 
     #[instrument(name = "DirectoryEntryPlusIterator::next", skip(self))]
     fn next(&mut self) -> Option<Self::Item> {
-        let entry = self.0.next()?;
-        if let Err(e) = entry {
-            error!(err = %e, "reading directory entry");
-            return Some(Err(e.into()));
-        }
-        let entry = entry.unwrap();
-
-        let lock = self
-            .4
-            .read()
-            .unwrap()
-            .get_or_insert_with(entry.path().to_str().unwrap().to_string(), || {
-                std::sync::RwLock::new(false)
-            });
-        let _guard = lock.read().unwrap();
-
-        let file = File::open(entry.path());
-        if let Err(e) = file {
-            error!(err = %e, "opening file");
-            return Some(Err(e.into()));
-        }
-        let file = file.unwrap();
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        let name = {
-            if name.starts_with("$.") {
-                SecretString::from_str(".").unwrap()
-            } else if name.starts_with("$..") {
-                SecretString::from_str("..").unwrap()
-            } else {
-                let name =
-                    crypto::decrypt_file_name(&name, self.2, self.3.clone()).map_err(|err| {
-                        error!(err = %err, "decrypting file name");
-                        err
-                    });
-                if name.is_err() {
-                    return Some(Err(FsError::InvalidInput("invalid file name")));
-                }
-                name.unwrap()
-            }
-        };
-
-        let res: bincode::Result<(u64, FileType)> =
-            bincode::deserialize_from(crypto::create_reader(file, self.2, self.3.clone()));
-        if let Err(e) = res {
-            error!(err = %e, "deserializing directory entry");
-            return Some(Err(e.into()));
-        }
-        let (ino, kind): (u64, FileType) = res.unwrap();
-
-        let lock_ino = self
-            .5
-            .read()
-            .unwrap()
-            .get_or_insert_with(ino, || std::sync::RwLock::new(false));
-        let _guard_ino = lock_ino.read().unwrap();
-
-        let file = File::open(self.1.join(ino.to_string()));
-        if let Err(e) = file {
-            error!(err = %e, "opening file");
-            return Some(Err(e.into()));
-        }
-        let file = file.unwrap();
-        let attr = bincode::deserialize_from(crypto::create_reader(file, self.2, self.3.clone()));
-        if let Err(e) = attr {
-            error!(err = %e, "deserializing file attr");
-            return Some(Err(e.into()));
-        }
-        let attr = attr.unwrap();
-        Some(Ok(DirectoryEntryPlus {
-            ino,
-            name,
-            kind,
-            attr,
-        }))
+        self.0.pop_front()
     }
 }
 
@@ -673,14 +541,14 @@ pub struct EncryptedFs {
     // used for rw ops of actual serialization
     // use std::sync::RwLock instead of tokio::sync::RwLock because we need to use it also in sync code in `DirectoryEntryIterator` and `DirectoryEntryPlusIterator`
     // todo: remove external std::sync::RwLock, ArcHashMap is thread safe
-    serialize_inode_locks: Arc<std::sync::RwLock<ArcHashMap<u64, std::sync::RwLock<bool>>>>,
+    serialize_inode_locks: Arc<parking_lot::RwLock<ArcHashMap<u64, parking_lot::RwLock<bool>>>>,
     // used for the update op
     // todo: remove external Mutex, ArcHashMap is thread safe
     serialize_update_inode_locks: Mutex<ArcHashMap<u64, Mutex<bool>>>,
     // use std::sync::RwLock instead of tokio::sync::RwLock because we need to use it also in sync code in `DirectoryEntryIterator` and `DirectoryEntryPlusIterator`
     // todo: remove external std::sync::RwLock, ArcHashMap is thread safe
     serialize_dir_entries_locks:
-        Arc<std::sync::RwLock<ArcHashMap<String, std::sync::RwLock<bool>>>>,
+        Arc<parking_lot::RwLock<ArcHashMap<String, parking_lot::RwLock<bool>>>>,
     read_write_locks: ArcHashMap<u64, parking_lot::RwLock<bool>>,
     key: ExpireValue<SecretVec<u8>, FsError, KeyProvider>,
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
@@ -713,9 +581,9 @@ impl EncryptedFs {
             cipher,
             opened_files_for_read: RwLock::new(HashMap::new()),
             opened_files_for_write: RwLock::new(HashMap::new()),
-            serialize_inode_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::default())),
+            serialize_inode_locks: Arc::new(parking_lot::RwLock::new(ArcHashMap::default())),
             serialize_update_inode_locks: Mutex::new(ArcHashMap::default()),
-            serialize_dir_entries_locks: Arc::new(std::sync::RwLock::new(ArcHashMap::default())),
+            serialize_dir_entries_locks: Arc::new(parking_lot::RwLock::new(ArcHashMap::default())),
             // todo: take duration from param
             key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)),
             self_weak: std::sync::Mutex::new(None),
@@ -862,11 +730,10 @@ impl EncryptedFs {
             .read_dir_plus(parent)
             .await?
             .find(|entry| {
-                if entry.is_err() {
-                    false
-                } else {
-                    entry.as_ref().unwrap().name.expose_secret() == name.expose_secret()
-                }
+                entry
+                    .as_ref()
+                    .map(|entry| entry.name.expose_secret() == name.expose_secret())
+                    .unwrap_or(false)
             })
             .map(|entry| {
                 if entry.is_err() {
@@ -919,9 +786,8 @@ impl EncryptedFs {
             let lock = self
                 .serialize_inode_locks
                 .write()
-                .expect("cannot obtain lock")
-                .get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
-            let _guard = lock.write().unwrap();
+                .get_or_insert_with(attr.ino, || parking_lot::RwLock::new(false));
+            let _guard = lock.write();
             fs::remove_file(self.data_dir.join(INODES_DIR).join(&ino_str))?;
         }
 
@@ -965,9 +831,8 @@ impl EncryptedFs {
             let lock = self
                 .serialize_inode_locks
                 .write()
-                .expect("cannot obtain lock")
-                .get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
-            let _guard = lock.write().unwrap();
+                .get_or_insert_with(attr.ino, || parking_lot::RwLock::new(false));
+            let _guard = lock.write();
             fs::remove_file(self.data_dir.join(INODES_DIR).join(&ino_str))?;
         }
 
@@ -1010,12 +875,7 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(contents_dir)?;
-        Ok(DirectoryEntryIterator(
-            iter.into_iter(),
-            self.cipher,
-            self.key.get().await?,
-            self.serialize_dir_entries_locks.clone(),
-        ))
+        Ok(self.create_directory_entry_iterator(iter).await)
     }
 
     /// Like [`read_dir`](EncryptedFs::read_dir) but with [`FileAttr`] so we don't need to query again for those.
@@ -1026,14 +886,155 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(contents_dir)?;
-        Ok(DirectoryEntryPlusIterator(
-            iter.into_iter(),
-            self.data_dir.join(INODES_DIR),
+        Ok(self.create_directory_entry_plus_iterator(iter).await)
+    }
+
+    async fn create_directory_entry_plus(
+        &self,
+        entry: io::Result<DirEntry>,
+    ) -> FsResult<DirectoryEntryPlus> {
+        let entry = self.create_directory_entry(entry).await?;
+
+        let lock_ino = self
+            .serialize_inode_locks
+            .clone()
+            .read()
+            .get_or_insert_with(entry.ino, || parking_lot::RwLock::new(false));
+        let _guard_ino = lock_ino.read();
+
+        let file = File::open(self.data_dir.join(INODES_DIR).join(entry.ino.to_string()));
+        if let Err(e) = file {
+            error!(err = %e, "opening file");
+            return Err(e.into());
+        }
+        let file = file.unwrap();
+        let attr = bincode::deserialize_from(crypto::create_reader(
+            file,
             self.cipher,
             self.key.get().await?,
-            self.serialize_dir_entries_locks.clone(),
-            self.serialize_inode_locks.clone(),
-        ))
+        ));
+        if let Err(e) = attr {
+            error!(err = %e, "deserializing file attr");
+            return Err(e.into());
+        }
+        let attr = attr.unwrap();
+        Ok(DirectoryEntryPlus {
+            ino: entry.ino,
+            name: entry.name,
+            kind: entry.kind,
+            attr,
+        })
+    }
+
+    async fn create_directory_entry_plus_iterator(
+        &self,
+        read_dir: ReadDir,
+    ) -> DirectoryEntryPlusIterator {
+        let futures: Vec<_> = read_dir
+            .into_iter()
+            .map(|entry| {
+                let fs = {
+                    self.self_weak
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .upgrade()
+                        .unwrap()
+                };
+                tokio::spawn(async move { fs.create_directory_entry_plus(entry).await })
+            })
+            .collect();
+
+        // do these futures in parallel and return them
+        let mut res = VecDeque::with_capacity(futures.len());
+        for f in futures.into_iter() {
+            res.push_back(f.await.unwrap());
+        }
+        DirectoryEntryPlusIterator(res)
+    }
+
+    async fn create_directory_entry(
+        &self,
+        entry: io::Result<DirEntry>,
+    ) -> FsResult<DirectoryEntry> {
+        if entry.is_err() {
+            return Err(entry.err().unwrap().into());
+        }
+        if let Err(e) = entry {
+            error!(err = %e, "reading directory entry");
+            return Err(e.into());
+        }
+        let entry = entry.unwrap();
+        let lock = self
+            .serialize_dir_entries_locks
+            .clone()
+            .read()
+            .get_or_insert_with(entry.path().to_str().unwrap().to_string(), || {
+                parking_lot::RwLock::new(false)
+            });
+        let _guard = lock.read();
+        let file = File::open(entry.path());
+        if let Err(e) = file {
+            error!(err = %e, "opening file");
+            return Err(e.into());
+        }
+        let file = file.unwrap();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        let name = {
+            if name == "$." {
+                SecretString::from_str(".").unwrap()
+            } else if name == "$.." {
+                SecretString::from_str("..").unwrap()
+            } else {
+                let name = crypto::decrypt_file_name(&name, self.cipher, self.key.get().await?)
+                    .map_err(|err| {
+                        error!(err = %err, "decrypting file name");
+                        err
+                    });
+                if name.is_err() {
+                    return Err(FsError::InvalidInput("invalid file name"));
+                }
+                name.unwrap()
+            }
+        };
+
+        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(
+            crypto::create_reader(file, self.cipher, self.key.get().await?),
+        );
+        if let Err(e) = res {
+            error!(err = %e, "deserializing directory entry");
+            return Err(e.into());
+        }
+        let (ino, kind): (u64, FileType) = res.unwrap();
+
+        Ok(DirectoryEntry { ino, name, kind })
+    }
+
+    async fn create_directory_entry_iterator(&self, read_dir: ReadDir) -> DirectoryEntryIterator {
+        let futures: Vec<_> = read_dir
+            .into_iter()
+            .map(|entry| {
+                let fs = {
+                    self.self_weak
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .upgrade()
+                        .unwrap()
+                };
+                tokio::spawn(async move { fs.create_directory_entry(entry).await })
+            })
+            .collect();
+
+        // do these futures in parallel and return them
+        let mut res = VecDeque::with_capacity(futures.len());
+        for f in futures.into_iter() {
+            res.push_back(f.await.unwrap());
+        }
+        DirectoryEntryIterator(res)
     }
 
     #[allow(clippy::missing_errors_doc)]
@@ -1041,9 +1042,8 @@ impl EncryptedFs {
         let lock = self
             .serialize_inode_locks
             .read()
-            .unwrap()
-            .get_or_insert_with(ino, || std::sync::RwLock::new(false));
-        let _guard = lock.read().unwrap();
+            .get_or_insert_with(ino, || parking_lot::RwLock::new(false));
+        let _guard = lock.read();
 
         let path = self.data_dir.join(INODES_DIR).join(ino.to_string());
         if !path.is_file() {
@@ -1076,7 +1076,7 @@ impl EncryptedFs {
     pub async fn get_inode(&self, ino: u64) -> FsResult<FileAttr> {
         let mut attr = self.get_inode_from_cache_or_storage(ino).await?;
 
-        // merge time info and size with any open read handles
+        // merge time info with any open read handles
         let open_reads = { self.opened_files_for_read.read().await.contains_key(&ino) };
         if open_reads {
             let fhs = self.opened_files_for_read.read().await.get(&ino).cloned();
@@ -1130,9 +1130,8 @@ impl EncryptedFs {
         let lock = self
             .serialize_inode_locks
             .write()
-            .unwrap()
-            .get_or_insert_with(attr.ino, || std::sync::RwLock::new(false));
-        let _guard = lock.write().unwrap();
+            .get_or_insert_with(attr.ino, || parking_lot::RwLock::new(false));
+        let _guard = lock.write();
 
         let path = self.data_dir.join(INODES_DIR).join(attr.ino.to_string());
         let tmp = NamedTempFile::new_in(self.tmp_dir.clone())?;
@@ -1963,11 +1962,11 @@ impl EncryptedFs {
         let name = crypto::encrypt_file_name(&entry.name, self.cipher, key.clone())?;
         let file_path = parent_path.join(name);
 
-        let map = self.serialize_dir_entries_locks.write().unwrap();
+        let map = self.serialize_dir_entries_locks.write();
         let lock = map.get_or_insert_with(file_path.to_str().unwrap().to_string(), || {
-            std::sync::RwLock::new(false)
+            parking_lot::RwLock::new(false)
         });
-        let _guard = lock.write().unwrap();
+        let _guard = lock.write();
 
         // write inode and file type
         let entry = (entry.ino, entry.kind);
@@ -1985,11 +1984,11 @@ impl EncryptedFs {
         let name = crypto::encrypt_file_name(name, self.cipher, self.key.get().await?)?;
         let file_path = parent_path.join(name);
 
-        let map = self.serialize_dir_entries_locks.write().unwrap();
+        let map = self.serialize_dir_entries_locks.write();
         let lock = map.get_or_insert_with(file_path.to_str().unwrap().to_string(), || {
-            std::sync::RwLock::new(false)
+            parking_lot::RwLock::new(false)
         });
-        let _guard = lock.write().unwrap();
+        let _guard = lock.write();
 
         fs::remove_file(file_path)?;
         Ok(())
@@ -2021,7 +2020,6 @@ fn read_or_create_key(
     let derived_key = crypto::derive_key(password, cipher, salt)?;
     if path.exists() {
         // read key
-
         let reader = crypto::create_reader(File::open(path)?, cipher, Arc::new(derived_key));
         let key_store: KeyStore =
             bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
@@ -2032,7 +2030,6 @@ fn read_or_create_key(
         Ok(key_store.key)
     } else {
         // first time, create a random key and encrypt it with the derived key from password
-
         let mut key: Vec<u8> = vec![];
         let key_len = match cipher {
             Cipher::ChaCha20 => CHACHA20_POLY1305.key_len(),
@@ -2163,25 +2160,6 @@ impl FileCryptoWriterCallback for LocalFileCryptoWriterCallback {
                 Err(io::Error::new(Other, "fs dropped"))
             }
         })
-    }
-}
-
-struct LocalSequenceLockProvider {
-    locks: ArcHashMap<u64, parking_lot::RwLock<bool>>,
-}
-
-impl Default for LocalSequenceLockProvider {
-    fn default() -> Self {
-        Self {
-            locks: ArcHashMap::default(),
-        }
-    }
-}
-
-impl SequenceLockProvider for LocalSequenceLockProvider {
-    fn get(&self, _sequence: u64) -> Holder<parking_lot::RwLock<bool>> {
-        self.locks
-            .get_or_insert_with(_sequence, || parking_lot::RwLock::new(false))
     }
 }
 

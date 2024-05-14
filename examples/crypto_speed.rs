@@ -117,6 +117,7 @@ fn file_speed(
         key.clone(),
         None,
         None,
+        None,
     )?;
     let size = file_in.metadata()?.len();
     let f = || {
@@ -149,7 +150,6 @@ fn chunks_speed(
         &Path::new(&"/tmp").to_path_buf(),
         cipher,
         key.clone(),
-        42_u64,
         None,
         None,
         None,
@@ -160,7 +160,6 @@ fn chunks_speed(
             &Path::new(&path_out).to_path_buf(),
             cipher,
             key.clone(),
-            42_u64,
             None,
         )
         .unwrap()
@@ -212,5 +211,5 @@ where
 fn get_key(cipher: Cipher) -> io::Result<SecretVec<u8>> {
     let password = SecretString::new("pass42".to_string());
     let salt = crypto::hash_secret_string(&password);
-    Ok(crypto::derive_key(&password, cipher, salt)?)
+    Ok(crypto::derive_key(&password, cipher, salt).unwrap())
 }
