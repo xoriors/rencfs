@@ -1,5 +1,10 @@
 # RencFs
 
+> ⚠️ **Warning**
+> ***This is early in development. Please do not use it with sensitive data just yet. Please wait for a
+stable release.
+> It's mostly ideal for experimental and learning projects.***
+
 [![rencfs-bin](https://img.shields.io/aur/version/rencfs-bin?color=1793d1&label=rencfs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/rencfs-bin/)
 [![crates.io](https://img.shields.io/crates/v/rencfs.svg)](https://crates.io/crates/rencfs)
 [![docs.rs](https://img.shields.io/docsrs/rencfs?label=docs.rs)](https://docs.rs/rencfs/)
@@ -12,11 +17,6 @@ An encrypted file system that mounts with FUSE on Linux. It can be used to creat
 
 You can then safely backup the encrypted folder on an untrusted server without worrying about the data being exposed.\
 You can also store it in any cloud storage like Google Drive, Dropbox, etc. and have it synced across multiple devices.
-
-> ⚠️ **Warning**
-> ***This is early in development. Please do not use it with sensitive data just yet. Please wait for a
-stable release.
-> It's mostly ideal for experimental and learning projects.***
 
 # Functionality
 
