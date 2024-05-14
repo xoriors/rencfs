@@ -220,7 +220,7 @@ sudo apt-get update && sudo apt-get install fuse3 build-essential
 
 ```bash
 cargo build
-```
+```https://crypto.stackexchange.com/questions/31793/plain-text-size-limits-for-aes-gcm-mode-just-64gb
 
 ## Build release
 
@@ -252,7 +252,15 @@ and run the app.
 # Contribution
 
 Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like
-sharing pull requests are always apporeciated.
+sharing pull requests are always appreciated.
+
+# Limitations
+
+- `Aes256Gcm` cipher can save files up to 64GB. This is because of the 32-bit counter used in the
+  GCM mode. For more details
+  see [here](https://crypto.stackexchange.com/questions/31793/plain-text-size-limits-for-aes-gcm-mode-just-64gb)
+- `ChaCha20Poly1305` cipher can save files up to 256GB, it uses a 32-bit counter. See
+  more details [here](https://datatracker.ietf.org/doc/html/rfc7539)
 
 # Security
 

@@ -18,7 +18,7 @@ use fuse3::raw::{Filesystem, Request};
 use fuse3::{Errno, Inode, Result, SetAttr, Timestamp};
 use futures_util::stream;
 use futures_util::stream::Iter;
-use libc::{EACCES, EEXIST, EIO, EISDIR, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
+use libc::{EACCES, EEXIST, EFBIG, EIO, EISDIR, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
 use tracing::Level;
 use tracing::{debug, error, instrument, trace, warn};
@@ -991,7 +991,10 @@ impl Filesystem for EncryptedFsFuse3 {
             .await
             .map_err(|err| {
                 error!(err = %err);
-                EIO
+                match err {
+                    FsError::MaxFilesizeExceeded(_) => EFBIG,
+                    _ => EIO,
+                }
             })?;
 
         Ok(ReplyWrite {

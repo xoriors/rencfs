@@ -45,8 +45,26 @@ pub static BASE64: GeneralPurpose = GeneralPurpose::new(&STANDARD, NO_PAD);
     Debug, Clone, Copy, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq, Eq,
 )]
 pub enum Cipher {
-    ChaCha20,
+    ChaCha20Poly1305,
     Aes256Gcm,
+}
+
+impl Cipher {
+    /// In bytes.
+    pub fn key_len(&self) -> usize {
+        match self {
+            Cipher::ChaCha20Poly1305 => CHACHA20_POLY1305.key_len(),
+            Cipher::Aes256Gcm => AES_256_GCM.key_len(),
+        }
+    }
+
+    /// Max length (in bytes) of the plaintext that can be encrypted before becoming unsafe.
+    pub fn max_plaintext_len(&self) -> usize {
+        match self {
+            Cipher::ChaCha20Poly1305 => (2_usize.pow(32) - 1) * 64,
+            Cipher::Aes256Gcm => (2_usize.pow(39) - 256) / 8,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -178,7 +196,7 @@ fn create_ring_writer<W: Write + Send + Sync>(
     key: Arc<SecretVec<u8>>,
 ) -> RingCryptoWriter<W> {
     let algorithm = match cipher {
-        Cipher::ChaCha20 => &CHACHA20_POLY1305,
+        Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
     RingCryptoWriter::new(writer, algorithm, key)
@@ -190,7 +208,7 @@ fn create_ring_reader<R: Read + Seek + Send + Sync>(
     key: Arc<SecretVec<u8>>,
 ) -> RingCryptoReader<R> {
     let algorithm = match cipher {
-        Cipher::ChaCha20 => &CHACHA20_POLY1305,
+        Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
     RingCryptoReader::new(reader, algorithm, key)
@@ -297,9 +315,7 @@ pub fn derive_key(
     salt: [u8; 32],
 ) -> Result<SecretVec<u8>> {
     let mut dk = vec![];
-    let key_len = match cipher {
-        Cipher::ChaCha20 | Cipher::Aes256Gcm => 32,
-    };
+    let key_len = cipher.key_len();
     dk.resize(key_len, 0);
     Argon2::default()
         .hash_password_into(password.expose_secret().as_bytes(), &salt, &mut dk)

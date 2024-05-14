@@ -1,3 +1,6 @@
+#[cfg(unix)]
+use atomic_write_file::unix::OpenOptionsExt;
+use atomic_write_file::AtomicWriteFile;
 use futures_util::TryStreamExt;
 use std::io;
 use std::path::Path;
@@ -31,4 +34,11 @@ pub async fn rename_dir_content(src: &Path, dst: &Path) -> io::Result<()> {
     }
     tokio::fs::remove_dir(src).await?;
     Ok(())
+}
+
+pub fn open_atomic_write(file: &Path) -> io::Result<AtomicWriteFile> {
+    let mut w = AtomicWriteFile::options();
+    #[cfg(unix)]
+    w.preserve_mode(true).preserve_owner(true);
+    w.open(file)
 }

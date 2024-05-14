@@ -12,7 +12,7 @@ use rencfs::crypto::Cipher;
 fn main() -> anyhow::Result<()> {
     let password = SecretString::new("password".to_string());
     let salt = crypto::hash_secret_string(&password);
-    let cipher = Cipher::ChaCha20;
+    let cipher = Cipher::ChaCha20Poly1305;
     let key = Arc::new(crypto::derive_key(&password, cipher, salt).unwrap());
 
     let mut args = args();

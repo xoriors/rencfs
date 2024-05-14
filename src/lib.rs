@@ -44,7 +44,7 @@
 //!         }
 //!     }
 //!     run_fuse(Path::new(&"/tmp/rencfs").to_path_buf(), Path::new(&"/tmp/rencfs_data").to_path_buf(), Path::new(&"/tmp/rencfs_tmp").to_path_buf(),
-//!         Box::new(PasswordProviderImpl{}), Cipher::ChaCha20, false, false, false, false).await.unwrap();
+//!         Box::new(PasswordProviderImpl{}), Cipher::ChaCha20Poly1305, false, false, false, false).await.unwrap();
 //! }
 //! ```
 //!
@@ -126,7 +126,7 @@
 //!     let  _ = fs::remove_dir_all(data_dir.to_str().unwrap());
 //!     let  _ = fs::remove_dir_all(tmp_dir.to_str().unwrap());
 //!     let password = SecretString::from_str("password").unwrap();
-//!     let cipher = Cipher::ChaCha20;
+//!     let cipher = Cipher::ChaCha20Poly1305;
 //!     let mut fs = EncryptedFs::new(data_dir.clone(), tmp_dir.clone(), Box::new(PasswordProviderImpl{}), cipher ).await?;
 //!
 //!     let  file1 = SecretString::from_str("file1").unwrap();
@@ -169,7 +169,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     use std::path::Path;
-//! match EncryptedFs::change_password(Path::new(&"/tmp/rencfs_data"), SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20).await {
+//! match EncryptedFs::change_password(Path::new(&"/tmp/rencfs_data"), SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20Poly1305).await {
 //!         Ok(_) => println!("Password changed successfully"),
 //!         Err(FsError::InvalidPassword) => println!("Invalid old password"),
 //!         Err(FsError::InvalidDataDirStructure) => println!("Invalid structure of data directory"),
@@ -208,7 +208,7 @@
 //!         return;
 //!     }
 //!     println!("Changing password...");
-//!     match EncryptedFs::change_password(Path::new(&"/tmp/rencfs_data"), SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20).await {
+//!     match EncryptedFs::change_password(Path::new(&"/tmp/rencfs_data"), SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20Poly1305).await {
 //!         Ok(_) => println!("Password changed successfully"),
 //!         Err(FsError::InvalidPassword) => println!("Invalid old password"),
 //!         Err(FsError::InvalidDataDirStructure) => println!("Invalid structure of data directory"),

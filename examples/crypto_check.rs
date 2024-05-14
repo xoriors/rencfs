@@ -18,7 +18,7 @@ use rencfs::encryptedfs::FsError;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cipher = Cipher::ChaCha20;
+    let cipher = Cipher::ChaCha20Poly1305;
     let key = Arc::new(get_key(cipher)?);
 
     let mut args = args();

@@ -10,7 +10,7 @@ async fn main() {
         Path::new("/tmp/rencfs_data"),
         SecretString::from_str("old-pass").unwrap(),
         SecretString::from_str("new-pass").unwrap(),
-        Cipher::ChaCha20,
+        Cipher::ChaCha20Poly1305,
     )
     .await
     {

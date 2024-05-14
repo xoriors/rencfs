@@ -559,7 +559,7 @@ mod test {
     use tracing_test::traced_test;
 
     use crate::crypto;
-    use crate::crypto::writer::CryptoWriter;
+    use crate::crypto::writer::{CryptoWriter, BUF_SIZE};
     use crate::crypto::Cipher;
 
     #[test]
@@ -570,15 +570,30 @@ mod test {
         let key = SecretVec::new(key);
         let key = Arc::new(key);
 
+        // simple text
         let mut cursor = std::io::Cursor::new(vec![0; 0]);
-        let mut writer = crypto::create_writer(cursor, Cipher::ChaCha20, key.clone());
-        let data = "test42";
+        let mut writer = crypto::create_writer(cursor, Cipher::ChaCha20Poly1305, key.clone());
+        let data = "hello, this is my secret message";
         writer.write_all(&data.as_bytes()).unwrap();
         cursor = writer.finish().unwrap();
         cursor.seek(std::io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, Cipher::ChaCha20, key.clone());
+        let mut reader = crypto::create_reader(cursor, Cipher::ChaCha20Poly1305, key.clone());
         let mut s = String::new();
         reader.read_to_string(&mut s).unwrap();
         assert_eq!(data, s);
+
+        // larger data
+        let mut cursor = std::io::Cursor::new(vec![]);
+        let mut writer = crypto::create_writer(cursor, Cipher::ChaCha20Poly1305, key.clone());
+        let mut data: [u8; BUF_SIZE + 42] = [0; BUF_SIZE + 42];
+        crypto::create_rng().fill_bytes(&mut data);
+        writer.write_all(&data).unwrap();
+        cursor = writer.finish().unwrap();
+        cursor.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let mut reader = crypto::create_reader(cursor, Cipher::ChaCha20Poly1305, key.clone());
+        let mut data2 = vec![];
+        reader.read_to_end(&mut data2).unwrap();
+        assert_eq!(data.len(), data2.len());
+        assert_eq!(crypto::hash(&data), crypto::hash(&data2));
     }
 }
