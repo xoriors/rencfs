@@ -720,7 +720,7 @@ async fn test_read_dir() {
                 .await
                 .unwrap();
             let mut entries: Vec<FsResult<DirectoryEntry>> =
-                fs.read_dir(dir_attr.ino).await.unwrap().collect();
+                fs.read_dir(dir_attr.ino, 0).await.unwrap().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
                     .unwrap()
@@ -746,7 +746,7 @@ async fn test_read_dir() {
                 entries
             );
 
-            let iter = fs.read_dir(ROOT_INODE).await.unwrap();
+            let iter = fs.read_dir(ROOT_INODE, 0).await.unwrap();
             let mut entries: Vec<FsResult<DirectoryEntry>> = iter.into_iter().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
@@ -803,7 +803,7 @@ async fn test_read_dir() {
                 .await
                 .unwrap();
             let mut entries: Vec<FsResult<DirectoryEntry>> =
-                fs.read_dir(dir_attr.ino).await.unwrap().collect();
+                fs.read_dir(dir_attr.ino, 0).await.unwrap().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
                     .unwrap()
@@ -829,7 +829,7 @@ async fn test_read_dir() {
                 entries
             );
 
-            let iter = fs.read_dir(parent).await.unwrap();
+            let iter = fs.read_dir(parent, 0).await.unwrap();
             let mut entries: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
             entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
             let mut sample = vec![
@@ -899,7 +899,7 @@ async fn test_read_dir_plus() {
                 .await
                 .unwrap();
             let mut entries: Vec<FsResult<DirectoryEntryPlus>> =
-                fs.read_dir_plus(dir_attr.ino).await.unwrap().collect();
+                fs.read_dir_plus(dir_attr.ino, 0).await.unwrap().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
                     .unwrap()
@@ -929,7 +929,7 @@ async fn test_read_dir_plus() {
                 entries
             );
 
-            let iter = fs.read_dir_plus(ROOT_INODE).await.unwrap();
+            let iter = fs.read_dir_plus(ROOT_INODE, 0).await.unwrap();
             let mut entries: Vec<FsResult<DirectoryEntryPlus>> = iter.into_iter().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
@@ -994,7 +994,7 @@ async fn test_read_dir_plus() {
             let dir_attr = fs.get_inode(dir_attr.ino).await.unwrap();
             let attr_parent = fs.get_inode(attr_parent.ino).await.unwrap();
             let mut entries: Vec<FsResult<DirectoryEntryPlus>> =
-                fs.read_dir_plus(dir_attr.ino).await.unwrap().collect();
+                fs.read_dir_plus(dir_attr.ino, 0).await.unwrap().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
                     .unwrap()
@@ -1023,7 +1023,7 @@ async fn test_read_dir_plus() {
                 entries
             );
 
-            let iter = fs.read_dir_plus(parent).await.unwrap();
+            let iter = fs.read_dir_plus(parent, 0).await.unwrap();
             let mut entries: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
             entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
             let mut sample = vec![

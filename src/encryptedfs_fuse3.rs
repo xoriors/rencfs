@@ -1118,7 +1118,7 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
         trace!("");
 
-        let iter = match self.get_fs().read_dir(inode).await {
+        let iter = match self.get_fs().read_dir(inode, offset as usize).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());
@@ -1209,7 +1209,7 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyDirectoryPlus<Self::DirEntryPlusStream<'_>>> {
         trace!("");
 
-        let iter = match self.get_fs().read_dir_plus(parent).await {
+        let iter = match self.get_fs().read_dir_plus(parent, offset as usize).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());

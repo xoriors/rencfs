@@ -556,7 +556,6 @@ mod test {
     use rand::RngCore;
     use ring::aead::CHACHA20_POLY1305;
     use secrecy::SecretVec;
-    use tokio::io::AsyncWriteExt;
     use tracing_test::traced_test;
 
     use crate::crypto;

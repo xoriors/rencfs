@@ -727,7 +727,7 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
         Ok(self
-            .read_dir_plus(parent)
+            .read_dir_plus(parent, 0)
             .await?
             .find(|entry| {
                 entry
@@ -773,9 +773,7 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
         // check if it's empty
-        let iter = self.read_dir(attr.ino).await?;
-        let count_children = iter.into_iter().take(3).count();
-        if count_children > 2 {
+        if self.children_count(attr.ino).await? > 0 {
             return Err(FsError::NotEmpty);
         }
 
@@ -861,32 +859,38 @@ impl EncryptedFs {
         if !self.is_dir(parent).await? {
             return Err(FsError::InvalidInodeType);
         }
-        Ok(self.read_dir(parent).await?.any(|entry| {
+        Ok(self.read_dir(parent, 0).await?.any(|entry| {
             let entry = entry.expect("cannot read entry");
             entry.name.expose_secret() == name.expose_secret()
         }))
     }
 
     #[allow(clippy::missing_errors_doc)]
-    pub async fn read_dir(&self, ino: u64) -> FsResult<DirectoryEntryIterator> {
+    pub async fn read_dir(&self, ino: u64, offset: usize) -> FsResult<DirectoryEntryIterator> {
         let contents_dir = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         if !contents_dir.is_dir() {
             return Err(FsError::InvalidInodeType);
         }
 
         let iter = fs::read_dir(contents_dir)?;
-        Ok(self.create_directory_entry_iterator(iter).await)
+        Ok(self.create_directory_entry_iterator(iter, offset).await)
     }
 
     /// Like [`read_dir`](EncryptedFs::read_dir) but with [`FileAttr`] so we don't need to query again for those.
-    pub async fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
+    pub async fn read_dir_plus(
+        &self,
+        ino: u64,
+        offset: usize,
+    ) -> FsResult<DirectoryEntryPlusIterator> {
         let contents_dir = self.data_dir.join(CONTENTS_DIR).join(ino.to_string());
         if !contents_dir.is_dir() {
             return Err(FsError::InvalidInodeType);
         }
 
         let iter = fs::read_dir(contents_dir)?;
-        Ok(self.create_directory_entry_plus_iterator(iter).await)
+        Ok(self
+            .create_directory_entry_plus_iterator(iter, offset)
+            .await)
     }
 
     async fn create_directory_entry_plus(
@@ -929,6 +933,7 @@ impl EncryptedFs {
     async fn create_directory_entry_plus_iterator(
         &self,
         read_dir: ReadDir,
+        offset: usize,
     ) -> DirectoryEntryPlusIterator {
         let futures: Vec<_> = read_dir
             .into_iter()
@@ -944,6 +949,7 @@ impl EncryptedFs {
                 };
                 tokio::spawn(async move { fs.create_directory_entry_plus(entry).await })
             })
+            .skip(offset)
             .collect();
 
         // do these futures in parallel and return them
@@ -1012,7 +1018,11 @@ impl EncryptedFs {
         Ok(DirectoryEntry { ino, name, kind })
     }
 
-    async fn create_directory_entry_iterator(&self, read_dir: ReadDir) -> DirectoryEntryIterator {
+    async fn create_directory_entry_iterator(
+        &self,
+        read_dir: ReadDir,
+        offset: usize,
+    ) -> DirectoryEntryIterator {
         let futures: Vec<_> = read_dir
             .into_iter()
             .map(|entry| {
@@ -1027,6 +1037,7 @@ impl EncryptedFs {
                 };
                 tokio::spawn(async move { fs.create_directory_entry(entry).await })
             })
+            .skip(offset)
             .collect();
 
         // do these futures in parallel and return them
