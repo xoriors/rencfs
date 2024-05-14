@@ -19,7 +19,7 @@ stable release.***
 
 # Functionality
 
-I keeps all encrypted data and master encryption key in a dedicated directory with files structured on inodes (with meta
+It keeps all encrypted data and master encryption key in a dedicated directory with files structured on inodes (with meta
 info), files for binary content and directories with files/directories entries. All data, metadata and also filenames
 are encrypted. For new files it generates inode number randomly in `u64` space so it reduces the chance of conflicts
 when used offline and synced later.
