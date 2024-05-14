@@ -19,4 +19,4 @@ jobs:
     - name: Check
       run: cargo check --verbose
     - name: Clippy
-      run: cargo clippy -- -W clippy::pedantic -W warnings --verbose
+      run: cargo clippy --all-features --verbose
