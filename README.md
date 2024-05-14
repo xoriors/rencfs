@@ -9,6 +9,7 @@ You can also store it in any cloud storage like Google Drive, Dropbox, etc. and 
 [![crates.io](https://img.shields.io/crates/v/rencfs.svg)](https://crates.io/crates/rencfs)
 [![docs.rs](https://img.shields.io/docsrs/rencfs?label=docs.rs)](https://docs.rs/rencfs/)
 [![check](https://github.com/radumarias/rencfs/actions/workflows/test.yml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/check.yml)
+[![test](https://github.com/radumarias/rencfs/actions/workflows/test.yml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/test.yml)
 [![Discord](https://img.shields.io/discord/1236855443486277653)](https://discord.com/channels/1236855443486277653/1236855448515252306)
 [![](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg)](https://rencfs.zulipchat.com)
 
