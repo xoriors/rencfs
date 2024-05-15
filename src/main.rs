@@ -176,7 +176,7 @@ fn get_cli_args() -> ArgMatches {
                         .long("cipher")
                         .short('c')
                         .value_name("cipher")
-                        .default_value("ChaCha20")
+                        .default_value("ChaCha20Poly1305")
                         .help(format!("Cipher used for encryption, possible values: {}",
                                       Cipher::iter().fold(String::new(), |mut acc, x| {
                                           acc.push_str(format!("{acc}{}{x}", if acc.is_empty() { "" } else { ", " }).as_str());
@@ -200,7 +200,7 @@ fn get_cli_args() -> ArgMatches {
                     .long("cipher")
                     .short('c')
                     .value_name("cipher")
-                    .default_value("ChaCha20")
+                    .default_value("ChaCha20Poly1305")
                     .help(format!("Cipher used for encryption, possible values: {}",
                                   Cipher::iter().fold(String::new(), |mut acc, x| {
                                       acc.push_str(format!("{acc}{}{x}", if acc.is_empty() { "" } else { ", " }).as_str());
