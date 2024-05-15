@@ -128,14 +128,6 @@ fn get_cli_args() -> ArgMatches {
                         .help("Where to store the encrypted data"),
                 )
                 .arg(
-                    Arg::new("tmp-dir")
-                        .long("tmp-dir")
-                        .short('t')
-                        .required(true)
-                        .value_name("TMP_DIR")
-                        .help("Where keep temp data. This should be in a different directory than data-dir as you don't want to sync this with the sync provider. But it needs to be on the same filesystem as the data-dir."),
-                )
-                .arg(
                     Arg::new("umount-on-start")
                         .long("umount-on-start")
                         .short('u')
@@ -294,8 +286,6 @@ async fn run_mount(matches: &ArgMatches) -> Result<()> {
 
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
 
-    let tmp_dir: String = matches.get_one::<String>("tmp-dir").unwrap().to_string();
-
     let cipher: String = matches.get_one::<String>("cipher").unwrap().to_string();
     let cipher = Cipher::from_str(cipher.as_str());
     if cipher.is_err() {
@@ -390,7 +380,6 @@ async fn run_mount(matches: &ArgMatches) -> Result<()> {
     rencfs::run_fuse(
         Path::new(&mountpoint).to_path_buf(),
         Path::new(&data_dir).to_path_buf(),
-        Path::new(&tmp_dir).to_path_buf(),
         Box::new(PasswordProviderImpl {}),
         cipher,
         matches.get_flag("allow-root"),

@@ -110,7 +110,7 @@ fn file_speed(
     println!("file speed");
     let _ = fs::remove_file(path_out);
     let mut file_in = File::open(path_in)?;
-    let mut writer = crypto::create_tmp_file_writer(
+    let mut writer = crypto::create_file_writer(
         &Path::new(&path_out).to_path_buf(),
         &Path::new(&"/tmp").to_path_buf(),
         cipher,

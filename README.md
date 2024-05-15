@@ -83,13 +83,12 @@ cargo install rencfs
 A basic example of how to use the encrypted file system is shown below
 
 ```
-rencfs mount --mount-point MOUNT_POINT --data-dir DATA_DIR --tmp-dir TMP_DIR
+rencfs mount --mount-point MOUNT_POINT --data-dir DATA_DIR
 
 ```
 
 - `MOUNT_POINT` act as a client, and mount FUSE at given path
 - `DATA_DIR` where to store the encrypted data
-- `TMP_DIR` where keep temp data. This should be in a different directory than `DATA_DIR` as you don't want to sync this
   with the sync provider. But it needs to be on the same filesystem as the data-dir
 
 It will prompt you to enter a password to encrypt/decrypt the data.

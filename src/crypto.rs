@@ -29,11 +29,12 @@ use crate::crypto::reader::{
     ChunkedFileCryptoReader, CryptoReader, FileCryptoReader, RingCryptoReader,
 };
 use crate::crypto::writer::{
-    ChunkedTmpFileCryptoWriter, CryptoWriter, CryptoWriterSeek, FileCryptoWriterCallback,
-    FileCryptoWriterMetadataProvider, RingCryptoWriter, SequenceLockProvider, TmpFileCryptoWriter,
+    ChunkedTmpFileCryptoWriter, CryptoWriter, CryptoWriterSeek, FileCryptoWriter,
+    FileCryptoWriterCallback, FileCryptoWriterMetadataProvider, RingCryptoWriter,
+    SequenceLockProvider,
 };
 use crate::encryptedfs::FsResult;
-use crate::stream_util;
+use crate::{fs_util, stream_util};
 
 pub mod buf_mut;
 pub mod reader;
@@ -99,6 +100,12 @@ pub enum Error {
         source: ParseIntError,
         // backtrace: Backtrace,
     },
+    #[error("serialize error: {source}")]
+    SerializeError {
+        #[from]
+        source: bincode::Error,
+        // backtrace: Backtrace,
+    },
     #[error("generic error: {0}")]
     Generic(&'static str),
     #[error("generic error: {0}")]
@@ -122,22 +129,17 @@ pub fn create_writer<W: Write + Send + Sync>(
 ///
 /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
 ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
-///
-/// **`tmp_dir`** is used to store the temporary file while writing. It **MUST** be on the same filesystem as the **`file_dir`**\
-///     New changes are written to a temporary file and on **`finish`** the tmp file is renamed to the original file
 #[allow(clippy::missing_errors_doc)]
-pub fn create_tmp_file_writer(
+pub fn create_file_writer(
     file: &Path,
-    tmp_dir: &Path,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     callback: Option<Box<dyn FileCryptoWriterCallback>>,
     lock: Option<Holder<RwLock<bool>>>,
     metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
 ) -> io::Result<Box<dyn CryptoWriterSeek<File>>> {
-    Ok(Box::new(TmpFileCryptoWriter::new(
+    Ok(Box::new(FileCryptoWriter::new(
         file,
-        tmp_dir,
         cipher,
         key,
         callback,
@@ -146,18 +148,17 @@ pub fn create_tmp_file_writer(
     )?))
 }
 
-/// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position\
+/// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
+///
 /// **`locks`** is used to write lock the chunks files when accessing them. This ensures that we have exclusive write to a given chunk when we need to change it's content\
 ///     If not provided, it will not ensure that other instances are not accessing the chunks while we do\
-///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks\
+///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks
+///
 /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
 ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it\
-/// **`tmp_dir`** is used to store temporary files while writing to chunks. It **MUST** be on the same filesystem as the `file_dir`\
-///   New changes are written to a temporary file and on **`finish`** or when we write to another chunk the tmp file is renamed to the original chunk
 #[allow(clippy::missing_errors_doc)]
 pub fn create_chunked_tmp_file_writer(
     file_dir: &Path,
-    tmp_dir: &Path,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     callback: Option<Box<dyn FileCryptoWriterCallback>>,
@@ -166,7 +167,6 @@ pub fn create_chunked_tmp_file_writer(
 ) -> io::Result<Box<dyn CryptoWriterSeek<File>>> {
     Ok(Box::new(ChunkedTmpFileCryptoWriter::new(
         file_dir,
-        tmp_dir,
         cipher,
         key,
         callback,
@@ -329,13 +329,22 @@ pub fn encrypt_file_name(
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
 ) -> FsResult<String> {
-    if name.expose_secret() != "$." && name.expose_secret() != "$.." {
+    if name.expose_secret() == "$." || name.expose_secret() == "$.." {
+        Ok(name.expose_secret().clone())
+    } else {
         let normalized_name = SecretString::new(name.expose_secret().replace(['/', '\\'], " "));
         let mut encrypted = encrypt_string(&normalized_name, cipher, key)?;
         encrypted = encrypted.replace('/', "|");
         Ok(encrypted)
-    } else {
+    }
+}
+
+#[allow(clippy::missing_errors_doc)]
+pub fn hash_file_name(name: &SecretString) -> FsResult<String> {
+    if name.expose_secret() == "$." || name.expose_secret() == "$.." {
         Ok(name.expose_secret().clone())
+    } else {
+        Ok(hex::encode(hash_secret_string(name)))
     }
 }
 
@@ -433,4 +442,38 @@ pub fn copy_from_file(
 #[must_use]
 pub fn create_rng() -> impl RngCore + CryptoRng {
     ChaCha20Rng::from_entropy()
+}
+
+pub fn serialize_encrypt_into<W, T: ?Sized>(
+    writer: W,
+    value: &T,
+    cipher: Cipher,
+    key: Arc<SecretVec<u8>>,
+) -> Result<()>
+where
+    W: Write + Send + Sync,
+    T: serde::Serialize,
+{
+    let mut writer = create_writer(writer, cipher, key);
+    bincode::serialize_into(&mut writer, value)?;
+    writer.flush()?;
+    writer.finish()?;
+    Ok(())
+}
+
+pub fn atomic_serialize_encrypt_into<T: ?Sized>(
+    file: &Path,
+    value: &T,
+    cipher: Cipher,
+    key: Arc<SecretVec<u8>>,
+) -> Result<()>
+where
+    T: serde::Serialize,
+{
+    let parent = file.parent().ok_or(Error::Generic("file has no parent"))?;
+    let mut file = fs_util::open_atomic_write(&file)?;
+    serialize_encrypt_into(&mut file, value, cipher, key)?;
+    file.commit()?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
 }

@@ -132,7 +132,6 @@ pub struct EncryptedFsFuse3 {
 impl EncryptedFsFuse3 {
     pub async fn new(
         data_dir: PathBuf,
-        tmp_dir: PathBuf,
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
         direct_io: bool,
@@ -141,7 +140,7 @@ impl EncryptedFsFuse3 {
         #[cfg(feature = "abi-7-26")]
         {
             Ok(Self {
-                fs: EncryptedFs::new(data_dir, tmp_dir, password_provider, cipher).await?,
+                fs: EncryptedFs::new(data_dir, password_provider, cipher).await?,
                 direct_io,
                 suid_support,
             })
@@ -149,7 +148,7 @@ impl EncryptedFsFuse3 {
         #[cfg(not(feature = "abi-7-26"))]
         {
             Ok(Self {
-                fs: EncryptedFs::new(data_dir, tmp_dir, password_provider, cipher).await?,
+                fs: EncryptedFs::new(data_dir, password_provider, cipher).await?,
                 direct_io,
                 suid_support: false,
             })

@@ -1,3 +1,4 @@
+use atomic_write_file::AtomicWriteFile;
 use num_format::{Locale, ToFormattedString};
 use parking_lot::RwLock;
 use std::fs::File;
@@ -7,14 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::{fs, io};
 
 use crate::arc_hashmap::Holder;
-use crate::{crypto, stream_util};
+use crate::{crypto, fs_util, stream_util};
 use rand_chacha::rand_core::RngCore;
 use ring::aead::{
     Aad, Algorithm, BoundKey, Nonce, NonceSequence, SealingKey, UnboundKey, NONCE_LEN,
 };
 use ring::error::Unspecified;
 use secrecy::{ExposeSecret, SecretVec};
-use tempfile::NamedTempFile;
 use tracing::{debug, error};
 
 use crate::crypto::buf_mut::BufMut;
@@ -227,20 +227,18 @@ pub trait FileCryptoWriterMetadataProvider: Send + Sync {
 }
 
 #[allow(clippy::module_name_repetitions)]
-pub struct TmpFileCryptoWriter {
+pub struct FileCryptoWriter {
     file_path: PathBuf,
-    tmp_dir: PathBuf,
-    writer: Option<Box<dyn CryptoWriter<BufWriter<File>>>>,
+    writer: Option<Box<dyn CryptoWriter<BufWriter<AtomicWriteFile>>>>,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    tmp_file_path: Option<PathBuf>,
     callback: Option<Box<dyn FileCryptoWriterCallback>>,
     lock: Option<Holder<RwLock<bool>>>,
     metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
     pos: u64,
 }
 
-impl TmpFileCryptoWriter {
+impl FileCryptoWriter {
     /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
     ///
     /// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do\
@@ -248,13 +246,9 @@ impl TmpFileCryptoWriter {
     ///
     /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
     ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
-    ///
-    /// **`tmp_dir`** is used to store the temporary files while writing the chunks. It **MUST** be on the same filesystem as the **`file_dir`**\
-    ///    New changes are written to a temporary file and on **`finish`** the tmp file is renamed to the original file\
     #[allow(clippy::missing_errors_doc)]
     pub fn new(
         file_path: &Path,
-        tmp_dir: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
         callback: Option<Box<dyn FileCryptoWriterCallback>>,
@@ -266,11 +260,9 @@ impl TmpFileCryptoWriter {
         }
         Ok(Self {
             file_path: file_path.to_owned(),
-            tmp_dir: tmp_dir.to_owned(),
             writer: None,
             cipher,
             key,
-            tmp_file_path: None,
             callback,
             lock,
             metadata_provider,
@@ -288,22 +280,8 @@ impl TmpFileCryptoWriter {
 
     fn ensure_writer_created(&mut self) -> io::Result<()> {
         if self.writer.is_none() {
-            // delete any existing tmp file
-            if let Some(tmp_file_path) = self.tmp_file_path.take() {
-                if tmp_file_path.exists() {
-                    fs::remove_file(tmp_file_path).map_err(|err| {
-                        error!("error removing tmp file: {}", err);
-                        err
-                    })?;
-                }
-            }
-            let tmp_path = NamedTempFile::new_in(self.tmp_dir.clone())?
-                .into_temp_path()
-                .to_path_buf();
-            self.tmp_file_path = Some(tmp_path.clone());
-            let tmp_file = BufWriter::new(File::create(tmp_path)?);
             self.writer = Some(Box::new(crypto::create_writer(
-                tmp_file,
+                BufWriter::new(fs_util::open_atomic_write(&self.file_path)?),
                 self.cipher,
                 self.key.clone(),
             )));
@@ -380,7 +358,9 @@ impl TmpFileCryptoWriter {
             // finish writer
             let mut writer = self.writer.take().unwrap();
             writer.flush()?;
-            writer.finish()?;
+            let mut file = writer.finish()?;
+            file.flush()?;
+            let file = file.into_inner()?;
             self.pos = 0;
             {
                 let _guard = if let Some(lock) = &self.lock {
@@ -388,11 +368,7 @@ impl TmpFileCryptoWriter {
                 } else {
                     None
                 };
-                // move tmp file to file
-                fs::rename(
-                    self.tmp_file_path.as_ref().unwrap().clone(),
-                    self.file_path.clone(),
-                )?;
+                file.commit()?;
             }
 
             if let Some(callback) = &self.callback {
@@ -423,7 +399,7 @@ impl TmpFileCryptoWriter {
     }
 }
 
-impl Write for TmpFileCryptoWriter {
+impl Write for FileCryptoWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.ensure_writer_created()?;
         let len = self.writer.as_mut().unwrap().write(buf)?;
@@ -440,7 +416,7 @@ impl Write for TmpFileCryptoWriter {
     }
 }
 
-impl CryptoWriter<File> for TmpFileCryptoWriter {
+impl CryptoWriter<File> for FileCryptoWriter {
     fn finish(&mut self) -> io::Result<File> {
         self.flush()?;
         self.seek(SeekFrom::Start(0))?; // this will handle moving the tmp file to the original file
@@ -451,7 +427,7 @@ impl CryptoWriter<File> for TmpFileCryptoWriter {
     }
 }
 
-impl Seek for TmpFileCryptoWriter {
+impl Seek for FileCryptoWriter {
     #[allow(clippy::cast_possible_wrap)]
     #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
@@ -475,20 +451,7 @@ impl Seek for TmpFileCryptoWriter {
     }
 }
 
-impl Drop for TmpFileCryptoWriter {
-    fn drop(&mut self) {
-        if let Some(tmp_file_path) = self.tmp_file_path.take() {
-            if tmp_file_path.exists() {
-                if let Err(err) = fs::remove_file(tmp_file_path) {
-                    // we cannot use tracing here because of some error accessing thread local info
-                    eprintln!("error removing tmp file: {}", err);
-                }
-            }
-        }
-    }
-}
-
-impl CryptoWriterSeek<File> for TmpFileCryptoWriter {}
+impl CryptoWriterSeek<File> for FileCryptoWriter {}
 
 // todo: expose as param
 #[cfg(test)]
@@ -507,7 +470,6 @@ pub trait SequenceLockProvider: Send + Sync {
 #[allow(clippy::module_name_repetitions)]
 pub struct ChunkedTmpFileCryptoWriter {
     file_dir: PathBuf,
-    tmp_dir: PathBuf,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     callback: Option<Arc<Box<dyn FileCryptoWriterCallback>>>,
@@ -561,12 +523,8 @@ impl ChunkedTmpFileCryptoWriter {
     ///
     /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
     ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
-    ///
-    /// **`tmp_dir`** is used to store temporary file while writing to chunks. It **MUST** be on the same filesystem as the **`file_dir`**\
-    ///    New changes are written to a temporary file and on **`finish`** or when we write to another chunk the tmp file is renamed to the original chunk\
     pub fn new(
         file_dir: &Path,
-        tmp_dir: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
         callback: Option<Box<dyn FileCryptoWriterCallback>>,
@@ -578,7 +536,6 @@ impl ChunkedTmpFileCryptoWriter {
         }
         Ok(Self {
             file_dir: file_dir.to_owned(),
-            tmp_dir: tmp_dir.to_owned(),
             cipher,
             key: key.clone(),
             callback: callback.map(|c| Arc::new(c)),
@@ -594,7 +551,6 @@ impl ChunkedTmpFileCryptoWriter {
         Self::create_writer(
             pos,
             &self.file_dir,
-            &self.tmp_dir,
             self.cipher,
             self.key.clone(),
             self.chunk_size,
@@ -614,7 +570,6 @@ impl ChunkedTmpFileCryptoWriter {
     fn create_writer(
         pos: u64,
         file_dir: &Path,
-        tmp_dir: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
         chunk_size: u64,
@@ -646,9 +601,8 @@ impl ChunkedTmpFileCryptoWriter {
                 File::create(&chunk_file)?;
             }
         }
-        crypto::create_tmp_file_writer(
+        crypto::create_file_writer(
             chunk_file.as_path(),
-            tmp_dir,
             cipher,
             key.clone(),
             callback.as_ref().map(|c| {

@@ -29,7 +29,6 @@ struct SetupResult {
 async fn setup(setup: TestSetup) -> SetupResult {
     let data_dir_str = setup.data_path.as_str();
     let _ = fs::remove_dir_all(data_dir_str);
-    let tmp = Path::new(data_dir_str).join("tmp");
 
     struct PasswordProviderImpl {}
     impl PasswordProvider for PasswordProviderImpl {
@@ -40,7 +39,6 @@ async fn setup(setup: TestSetup) -> SetupResult {
 
     let fs = EncryptedFs::new(
         Path::new(data_dir_str).to_path_buf(),
-        tmp,
         Box::new(PasswordProviderImpl {}),
         Cipher::ChaCha20Poly1305,
     )
@@ -1062,10 +1060,10 @@ async fn test_read_dir_plus() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
-async fn test_read_find_by_name() {
+async fn test_find_by_name() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}test_read_find_by_name"),
+            data_path: format!("{TESTS_DATA_DIR}test_find_by_name"),
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));

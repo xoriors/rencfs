@@ -49,10 +49,11 @@ num-format = "0.4.4"
 ring = "0.17.8"
 hex = "0.4.3"
 rand_chacha = "0.3.1"
-tempfile = "3.10.1"
 parking_lot = { version = "0.12.2", features = ["send_guard"] }
 test-log = "0.2.16"
 lru = "0.12.3"
+okaywal = "0.3.1"
+atomic-write-file = "0.1.4"
 
 [package.metadata.aur]
 depends = ["fuse3"]

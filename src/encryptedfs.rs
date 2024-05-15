@@ -20,7 +20,6 @@ use rand::thread_rng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use tempfile::NamedTempFile;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 use tokio_stream::wrappers::ReadDirStream;
@@ -535,7 +534,6 @@ pub trait PasswordProvider: Send + Sync + 'static {
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
 pub struct EncryptedFs {
     pub(crate) data_dir: PathBuf,
-    tmp_dir: PathBuf,
     write_handles: RwLock<HashMap<u64, Mutex<WriteHandleContext>>>,
     read_handles: RwLock<HashMap<u64, Mutex<ReadHandleContext>>>,
     current_handle: AtomicU64,
@@ -565,7 +563,6 @@ impl EncryptedFs {
     #[allow(clippy::missing_errors_doc)]
     pub async fn new(
         data_dir: PathBuf,
-        tmp_dir: PathBuf,
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
     ) -> FsResult<Arc<Self>> {
@@ -575,11 +572,10 @@ impl EncryptedFs {
             cipher,
         };
 
-        ensure_structure_created(&data_dir.clone(), &tmp_dir.clone(), &key_provider).await?;
+        ensure_structure_created(&data_dir.clone(), &key_provider).await?;
 
         let fs = Self {
             data_dir,
-            tmp_dir,
             write_handles: RwLock::new(HashMap::new()),
             read_handles: RwLock::new(HashMap::new()),
             current_handle: AtomicU64::new(1),
@@ -611,15 +607,11 @@ impl EncryptedFs {
     }
 
     pub async fn is_dir(&self, ino: u64) -> FsResult<bool> {
-        self.get_inode_from_cache_or_storage(ino)
-            .await
-            .map(|attr| attr.kind == FileType::Directory)
+        Ok(self.contents_path(ino).is_dir())
     }
 
     pub async fn is_file(&self, ino: u64) -> FsResult<bool> {
-        self.get_inode_from_cache_or_storage(ino)
-            .await
-            .map(|attr| attr.kind == FileType::RegularFile)
+        Ok(self.contents_path(ino).is_file())
     }
 
     /// Create a new node in the filesystem
@@ -732,23 +724,32 @@ impl EncryptedFs {
         if !self.is_dir(parent).await? {
             return Err(FsError::InvalidInodeType);
         }
-        Ok(self
-            .read_dir_plus(parent, 0)
-            .await?
-            .find(|entry| {
-                entry
-                    .as_ref()
-                    .map(|entry| entry.name.expose_secret() == name.expose_secret())
-                    .unwrap_or(false)
-            })
-            .map(|entry| {
-                if entry.is_err() {
-                    None
-                } else {
-                    Some(entry.as_ref().unwrap().attr)
-                }
-            })
-            .flatten())
+        let hash = hex::encode(crypto::hash_secret_string(name));
+        let hash_path = self.contents_path(parent).join(HASH_DIR).join(hash);
+        if !hash_path.is_file() {
+            return Ok(None);
+        }
+        let lock = self
+            .serialize_dir_entries_locks
+            .read()
+            .get_or_insert_with(hash_path.to_str().unwrap().to_string(), || {
+                parking_lot::RwLock::new(false)
+            });
+        let _guard = lock.read();
+        let hash_file = File::open(hash_path)?;
+        let entry: (u64, FileType) = bincode::deserialize_from(crypto::create_reader(
+            hash_file,
+            self.cipher,
+            self.key.get().await?,
+        ))?;
+        let buf = self.ino_file(entry.0);
+        let path = buf.as_path();
+        let attr_file = File::open(path)?;
+        Ok(Some(bincode::deserialize_from(crypto::create_reader(
+            attr_file,
+            self.cipher,
+            self.key.get().await?,
+        ))?))
     }
 
     /// Count children of a directory. This **EXCLUDES** "." and "..".
@@ -976,7 +977,6 @@ impl EncryptedFs {
         let entry = entry.unwrap();
         let lock = self
             .serialize_dir_entries_locks
-            .clone()
             .read()
             .get_or_insert_with(entry.path().to_str().unwrap().to_string(), || {
                 parking_lot::RwLock::new(false)
@@ -1066,11 +1066,11 @@ impl EncryptedFs {
             error!(err = %err, "opening file");
             FsError::InodeNotFound
         })?;
-        Ok(
-            bincode::deserialize_from::<Box<dyn CryptoReader>, FileAttr>(Box::new(
-                crypto::create_reader(file, self.cipher, key),
-            ))?,
-        )
+        Ok(bincode::deserialize_from(crypto::create_reader(
+            file,
+            self.cipher,
+            key,
+        ))?)
     }
 
     async fn get_inode_from_cache_or_storage(&self, ino: u64) -> FsResult<FileAttr> {
@@ -1145,13 +1145,7 @@ impl EncryptedFs {
             .write()
             .get_or_insert_with(attr.ino, || parking_lot::RwLock::new(false));
         let _guard = lock.write();
-
-        let mut file = fs_util::open_atomic_write(&self.ino_file(attr.ino))?;
-        let mut writer = crypto::create_writer(file, self.cipher, key);
-        bincode::serialize_into(&mut writer, &attr)?;
-        writer.flush()?;
-        file = writer.finish()?;
-        file.commit()?;
+        crypto::atomic_serialize_encrypt_into(&self.ino_file(attr.ino), attr, self.cipher, key)?;
         // update cache also
         {
             let mut guard = self.attr_cache.lock();
@@ -1671,16 +1665,15 @@ impl EncryptedFs {
     ///
     /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
     ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
-    pub async fn create_tmp_file_writer(
+    pub async fn create_file_writer(
         &self,
         file: &Path,
         callback: Option<Box<dyn FileCryptoWriterCallback>>,
         lock: Option<Holder<parking_lot::RwLock<bool>>>,
         metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
     ) -> FsResult<Box<dyn CryptoWriterSeek<File>>> {
-        Ok(crypto::create_tmp_file_writer(
+        Ok(crypto::create_file_writer(
             file,
-            &self.tmp_dir,
             self.cipher,
             self.key.get().await?,
             *Box::new(callback),
@@ -1708,7 +1701,6 @@ impl EncryptedFs {
     ) -> FsResult<Box<dyn CryptoWriterSeek<File>>> {
         Ok(crypto::create_chunked_tmp_file_writer(
             file_dir,
-            &self.tmp_dir,
             self.cipher,
             self.key.get().await?,
             callback,
@@ -1793,12 +1785,12 @@ impl EncryptedFs {
         // encrypt it with new key derived from new password
         let salt = crypto::hash_secret_string(&new_password);
         let new_key = crypto::derive_key(&new_password, cipher, salt)?;
-        let tmp = NamedTempFile::new_in(data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME))?;
-        let mut writer = crypto::create_writer(tmp, cipher, Arc::new(new_key));
-        bincode::serialize_into(&mut writer, &key_store)?;
-        writer.flush()?;
-        let tmp = writer.finish()?;
-        fs::rename(tmp.into_temp_path(), enc_file)?;
+        crypto::atomic_serialize_encrypt_into(
+            &data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
+            &key_store,
+            cipher,
+            Arc::new(new_key),
+        )?;
         Ok(())
     }
 
@@ -1903,7 +1895,7 @@ impl EncryptedFs {
                     .read_write_locks
                     .get_or_insert_with(ino, || parking_lot::RwLock::new(false));
                 let writer = self
-                    .create_tmp_file_writer(
+                    .create_file_writer(
                         &path,
                         Some(Box::new(callback)),
                         Some(lock),
@@ -1976,22 +1968,32 @@ impl EncryptedFs {
         key: Arc<SecretVec<u8>>,
     ) -> FsResult<()> {
         let parent_path = self.contents_path(ino_contents_dir);
-        let name = crypto::encrypt_file_name(&entry.name, self.cipher, key.clone())?;
         // add to LS directory
-        let ls_file_path = parent_path.join(LS_DIR).join(name);
-        let map = self.serialize_dir_entries_locks.write();
-        let lock = map.get_or_insert_with(ls_file_path.to_str().unwrap().to_string(), || {
-            parking_lot::RwLock::new(false)
-        });
-        let _guard = lock.write();
-        // write inode and file type
-        let entry = (entry.ino, entry.kind);
-        let mut ls_file = fs_util::open_atomic_write(&ls_file_path)?;
-        let mut writer = crypto::create_writer(ls_file, self.cipher, key);
-        bincode::serialize_into(&mut writer, &entry)?;
-        writer.flush()?;
-        ls_file = writer.finish()?;
-        ls_file.commit()?;
+        {
+            let name = crypto::encrypt_file_name(&entry.name, self.cipher, key.clone())?;
+            let file_path = parent_path.join(LS_DIR).join(name.clone());
+            let map = self.serialize_dir_entries_locks.write();
+            let lock = map.get_or_insert_with(file_path.to_str().unwrap().to_string(), || {
+                parking_lot::RwLock::new(false)
+            });
+            let _guard = lock.write();
+            // write inode and file type
+            let entry = (entry.ino, entry.kind);
+            crypto::atomic_serialize_encrypt_into(&file_path, &entry, self.cipher, key.clone())?;
+        }
+        // add to HASH directory
+        {
+            let name = crypto::hash_file_name(&entry.name)?;
+            let file_path = parent_path.join(HASH_DIR).join(name);
+            let map = self.serialize_dir_entries_locks.write();
+            let lock = map.get_or_insert_with(file_path.to_str().unwrap().to_string(), || {
+                parking_lot::RwLock::new(false)
+            });
+            let _guard = lock.write();
+            // write inode and file type
+            let entry = (entry.ino, entry.kind);
+            crypto::atomic_serialize_encrypt_into(&file_path, &entry, self.cipher, key)?;
+        }
         Ok(())
     }
 
@@ -2080,11 +2082,7 @@ fn read_or_create_key(
     }
 }
 
-async fn ensure_structure_created(
-    data_dir: &PathBuf,
-    tmp_dir: &PathBuf,
-    key_provider: &KeyProvider,
-) -> FsResult<()> {
+async fn ensure_structure_created(data_dir: &PathBuf, key_provider: &KeyProvider) -> FsResult<()> {
     if data_dir.exists() {
         check_structure(data_dir, true).await?;
     } else {
@@ -2099,7 +2097,6 @@ async fn ensure_structure_created(
             tokio::fs::create_dir_all(path).await?;
         }
     }
-    tokio::fs::create_dir_all(tmp_dir).await?;
 
     // create encryption key
     key_provider.provide()?;

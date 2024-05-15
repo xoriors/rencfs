@@ -43,7 +43,7 @@
 //!             Some(SecretString::from_str("password").unwrap())
 //!         }
 //!     }
-//!     run_fuse(Path::new(&"/tmp/rencfs").to_path_buf(), Path::new(&"/tmp/rencfs_data").to_path_buf(), Path::new(&"/tmp/rencfs_tmp").to_path_buf(),
+//!     run_fuse(Path::new(&"/tmp/rencfs").to_path_buf(), Path::new(&"/tmp/rencfs_data").to_path_buf(),
 //!         Box::new(PasswordProviderImpl{}), Cipher::ChaCha20Poly1305, false, false, false, false).await.unwrap();
 //! }
 //! ```
@@ -75,7 +75,7 @@
 //!     let mount_path = OsStr::new(mountpoint.to_str().unwrap());
 //!
 //!     Session::new(mount_options)
-//!         .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, tmp_dir, password_provider, cipher, direct_io, suid_support).await.unwrap(), mount_path)
+//!         .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, password_provider, cipher, direct_io, suid_support).await.unwrap(), mount_path)
 //!         .await?
 //!         .await?;
 //!    Ok(())
@@ -122,12 +122,10 @@
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
 //!     let data_dir = Path::new("/tmp/rencfs_data_test").to_path_buf();
-//!     let tmp_dir = Path::new("/tmp/rencfs_data_test_tmp").to_path_buf();
 //!     let  _ = fs::remove_dir_all(data_dir.to_str().unwrap());
-//!     let  _ = fs::remove_dir_all(tmp_dir.to_str().unwrap());
 //!     let password = SecretString::from_str("password").unwrap();
 //!     let cipher = Cipher::ChaCha20Poly1305;
-//!     let mut fs = EncryptedFs::new(data_dir.clone(), tmp_dir.clone(), Box::new(PasswordProviderImpl{}), cipher ).await?;
+//!     let mut fs = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl{}), cipher ).await?;
 //!
 //!     let  file1 = SecretString::from_str("file1").unwrap();
 //!     let (fh, attr) = fs.create_nod(ROOT_INODE, &file1, file_attr(), false, true).await?;
@@ -141,7 +139,6 @@
 //!     fs.release(fh).await?;
 //!     assert_eq!(data, String::from_utf8(buf)?);
 //!     fs::remove_dir_all(data_dir)?;
-//!     fs::remove_dir_all(tmp_dir)?;
 //!
 //!    Ok(())
 //! }
@@ -251,7 +248,6 @@ pub const fn is_debug() -> bool {
 pub async fn run_fuse(
     mountpoint: PathBuf,
     data_dir: PathBuf,
-    tmp_dir: PathBuf,
     password_provider: Box<dyn PasswordProvider>,
     cipher: Cipher,
     allow_root: bool,
@@ -276,15 +272,8 @@ pub async fn run_fuse(
     info!("Checking password and mounting FUSE filesystem");
     Session::new(mount_options)
         .mount_with_unprivileged(
-            EncryptedFsFuse3::new(
-                data_dir,
-                tmp_dir,
-                password_provider,
-                cipher,
-                direct_io,
-                suid_support,
-            )
-            .await?,
+            EncryptedFsFuse3::new(data_dir, password_provider, cipher, direct_io, suid_support)
+                .await?,
             mount_path,
         )
         .await?
