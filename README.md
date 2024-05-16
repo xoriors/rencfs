@@ -20,7 +20,8 @@ You can also store it in any cloud storage like Google Drive, Dropbox, etc. and 
 
 # Functionality
 
-It keeps all encrypted data and master encryption key in a dedicated directory with files structured on inodes (with meta
+It keeps all encrypted data and master encryption key in a dedicated directory with files structured on inodes (with
+meta
 info), files for binary content and directories with files/directories entries. All data, metadata and also filenames
 are encrypted. For new files it generates inode number randomly in `u64` space so it reduces the chance of conflicts
 when used offline and synced later.
@@ -96,9 +97,9 @@ It will prompt you to enter a password to encrypt/decrypt the data.
 
 ### Change Password
 
-The encryption key is stored in a file and encrypted with a key derived from the password.
-This offers the possibility to change the password without needing to decrypt and re-encrypt the whole data.
-This is done by decrypting the key with the old password and re-encrypting it with the new password.
+The master encryption key is stored in a file and encrypted with a key derived from the password.
+This offers the possibility to change the password without needing to re-encrypt the whole data. This is done by
+decrypting the master key with the old password and re-encrypting it with the new password.
 
 To change the password, you can run the following command
 
@@ -141,25 +142,20 @@ docker pull xorio42/rencfs
 ```
 
 Start a container to set up mount in it
-
 `docker run -it --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined xorio42/rencfs:latest /bin/sh`
 
 In the container create mount and data directories
-
 `mkdir fsmnt && mkdir fsdata`
 
 Start `rencfs`
-
 `rencfs --mount-point fsmnt --data-dir fsdata`
 
 Enter a password for encryption.
 
 Get the container ID
-
 `docker ps`
 
 In another terminal attach to running container with the above ID
-
 `docker exec -it <ID> /bin/sh`
 
 From here you can play with it by creating files in `fsmnt` directory
@@ -177,7 +173,7 @@ cat 1/test
 ## Getting the sources
 
 ```bash
-git@github.com:radumarias/rencfs.git
+git clone git@github.com:radumarias/rencfs.git
 ````
 
 ## Dependencies
@@ -202,7 +198,7 @@ In that case please add it to the `PATH` manually.
 
 ### Other dependencies
 
-Also these deps are required (or based on your distribution):
+Also, these deps are required (or based on your distribution):
 
 Arch
 
@@ -220,7 +216,7 @@ sudo apt-get update && sudo apt-get install fuse3 build-essential
 
 ```bash
 cargo build
-```https://crypto.stackexchange.com/questions/31793/plain-text-size-limits-for-aes-gcm-mode-just-64gb
+```
 
 ## Build release
 

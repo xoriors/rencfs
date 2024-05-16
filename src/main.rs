@@ -195,7 +195,7 @@ fn get_cli_args() -> ArgMatches {
                 )
         ).subcommand(
         Command::new("change-password")
-            .about("Change password for the encrypted data")
+            .about("Change password for the master key used to encrypt the data")
             .arg(
                 Arg::new("data-dir")
                     .long("data-dir")
