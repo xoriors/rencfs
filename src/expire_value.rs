@@ -24,7 +24,7 @@ pub struct ExpireValue<
     monitor: Option<JoinHandle<()>>,
     provider: P,
     duration: Duration,
-    _marker: std::marker::PhantomData<E>,
+    _marker: PhantomData<E>,
 }
 
 impl<T: Send + Sync + 'static, E: Error + Send + Sync + 'static, P: Provider<T, E>>

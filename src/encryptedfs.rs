@@ -1,5 +1,6 @@
 use std::cmp::max;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::convert::Infallible;
 use std::fmt::Debug;
 use std::fs::{DirEntry, File, OpenOptions, ReadDir};
 use std::io::ErrorKind::Other;
@@ -22,22 +23,22 @@ use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
+use tokio::task::JoinError;
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::arc_hashmap::{ArcHashMap, Holder};
 use crate::async_util::call_async;
 use crate::crypto::reader::CryptoReader;
 use crate::crypto::writer::{
     CryptoWriter, CryptoWriterSeek, FileCryptoWriterCallback, FileCryptoWriterMetadataProvider,
-    SequenceLockProvider,
 };
 use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, Provider};
 use crate::{crypto, fs_util, stream_util};
 
 #[cfg(test)]
-mod test;
+pub(crate) mod test;
 
 pub(crate) const INODES_DIR: &str = "inodes";
 pub(crate) const CONTENTS_DIR: &str = "contents";
@@ -62,7 +63,7 @@ async fn reset_handles(
         // if we wrote pass the filesize we need to update the filesize
         if last_write_pos > attr.size {
             attr.size = last_write_pos;
-            fs.write_inode_to_storage(&attr, fs.key.get().await?)?;
+            fs.write_inode_to_storage(&attr).await?;
         }
     }
     fs.reset_handles(ino, changed_from_pos, Some(fh)).await?;
@@ -70,7 +71,12 @@ async fn reset_handles(
 }
 
 async fn get_metadata(fs: Arc<EncryptedFs>, ino: u64) -> FsResult<FileAttr> {
-    let mut guard = fs.attr_cache.lock();
+    let lock = fs
+        .attr_cache
+        .get()
+        .await
+        .map_err(|_| FsError::Other("should not happen"))?;
+    let mut guard = lock.lock();
     let attr = guard.get(&ino);
     if let Some(attr) = attr {
         Ok(*attr)
@@ -334,6 +340,12 @@ pub enum FsError {
         source: ParseIntError,
         // backtrace: Backtrace,
     },
+    #[error("tokio join error: {source}")]
+    JoinError {
+        #[from]
+        source: JoinError,
+        // backtrace: Backtrace,
+    },
     #[error("max filesize exceeded, max allowed {0}")]
     MaxFilesizeExceeded(usize),
 }
@@ -389,7 +401,7 @@ impl From<TimeAndSizeFileAttr> for SetFileAttr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DirectoryEntry {
     pub ino: u64,
     pub name: SecretString,
@@ -531,6 +543,26 @@ pub trait PasswordProvider: Send + Sync + 'static {
     fn get_password(&self) -> Option<SecretString>;
 }
 
+struct DirEntriesCacheProvider {}
+impl Provider<parking_lot::Mutex<LruCache<String, SecretString>>, Infallible>
+    for DirEntriesCacheProvider
+{
+    fn provide(&self) -> Result<parking_lot::Mutex<LruCache<String, SecretString>>, Infallible> {
+        Ok(parking_lot::Mutex::new(LruCache::new(
+            NonZeroUsize::new(1000).unwrap(),
+        )))
+    }
+}
+
+struct AttrCacheProvider {}
+impl Provider<parking_lot::Mutex<LruCache<u64, FileAttr>>, Infallible> for AttrCacheProvider {
+    fn provide(&self) -> Result<parking_lot::Mutex<LruCache<u64, FileAttr>>, Infallible> {
+        Ok(parking_lot::Mutex::new(LruCache::new(
+            NonZeroUsize::new(1000).unwrap(),
+        )))
+    }
+}
+
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
 pub struct EncryptedFs {
     pub(crate) data_dir: PathBuf,
@@ -550,12 +582,22 @@ pub struct EncryptedFs {
     serialize_update_inode_locks: Mutex<ArcHashMap<u64, Mutex<bool>>>,
     // use std::sync::RwLock instead of tokio::sync::RwLock because we need to use it also in sync code in `DirectoryEntryIterator` and `DirectoryEntryPlusIterator`
     // todo: remove external std::sync::RwLock, ArcHashMap is thread safe
-    serialize_dir_entries_locks:
+    serialize_dir_entries_ls_locks:
+        Arc<parking_lot::RwLock<ArcHashMap<String, parking_lot::RwLock<bool>>>>,
+    // todo: remove external std::sync::RwLock, ArcHashMap is thread safe
+    serialize_dir_entries_hash_locks:
         Arc<parking_lot::RwLock<ArcHashMap<String, parking_lot::RwLock<bool>>>>,
     read_write_locks: ArcHashMap<u64, parking_lot::RwLock<bool>>,
     key: ExpireValue<SecretVec<u8>, FsError, KeyProvider>,
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
-    attr_cache: parking_lot::Mutex<LruCache<u64, FileAttr>>,
+    attr_cache:
+        ExpireValue<parking_lot::Mutex<LruCache<u64, FileAttr>>, Infallible, AttrCacheProvider>,
+    dir_entries_name_cache: ExpireValue<
+        parking_lot::Mutex<LruCache<String, SecretString>>,
+        Infallible,
+        DirEntriesCacheProvider,
+    >,
+    dir_entries_meta_cache: parking_lot::Mutex<LruCache<String, (u64, FileType)>>,
 }
 
 impl EncryptedFs {
@@ -584,21 +626,35 @@ impl EncryptedFs {
             opened_files_for_write: RwLock::new(HashMap::new()),
             serialize_inode_locks: Arc::new(parking_lot::RwLock::new(ArcHashMap::default())),
             serialize_update_inode_locks: Mutex::new(ArcHashMap::default()),
-            serialize_dir_entries_locks: Arc::new(parking_lot::RwLock::new(ArcHashMap::default())),
+            serialize_dir_entries_ls_locks: Arc::new(parking_lot::RwLock::new(
+                ArcHashMap::default(),
+            )),
+            serialize_dir_entries_hash_locks: Arc::new(parking_lot::RwLock::new(
+                ArcHashMap::default(),
+            )),
             // todo: take duration from param
             key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)),
             self_weak: std::sync::Mutex::new(None),
             read_write_locks: ArcHashMap::default(),
-            attr_cache: parking_lot::Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap())),
+            // todo: take duration from param
+            attr_cache: ExpireValue::new(AttrCacheProvider {}, Duration::from_secs(10 * 60)),
+            dir_entries_name_cache: ExpireValue::new(
+                DirEntriesCacheProvider {},
+                Duration::from_secs(10 * 60),
+            ),
+            dir_entries_meta_cache: parking_lot::Mutex::new(LruCache::new(
+                NonZeroUsize::new(1000).unwrap(),
+            )),
         };
-
-        fs.ensure_root_exists().await?;
 
         let arc = Arc::new(fs);
         arc.self_weak
             .lock()
             .expect("cannot obtain lock")
             .replace(Arc::downgrade(&arc));
+
+        arc.ensure_root_exists().await?;
+
         Ok(arc)
     }
 
@@ -631,70 +687,119 @@ impl EncryptedFs {
         if !self.node_exists(parent) {
             return Err(FsError::InodeNotFound);
         }
-        if self.find_by_name(parent, name).await?.is_some() {
+        if self.exists_by_name(parent, name).await? {
             return Err(FsError::AlreadyExists);
         }
 
         let mut attr: FileAttr = create_attr.into();
         attr.ino = self.generate_next_inode();
 
+        let fs = self
+            .self_weak
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        let mut handles = vec![];
+
         // write inode
-        self.write_inode_to_storage(&attr, self.key.get().await?)?;
+        let self_clone = fs.clone();
+        let attr_clone = attr;
+        // handles.push(tokio::spawn(async move {
+        self_clone.write_inode_to_storage(&attr_clone).await?;
+        // Ok::<(), FsError>(())
+        // }));
 
         match attr.kind {
             FileType::RegularFile => {
-                // create in contents directory
-                let file = tokio::fs::File::create(self.contents_path(attr.ino)).await?;
-                file.sync_all().await?;
+                let self_clone = fs.clone();
+                handles.push(tokio::spawn(async move {
+                    // create in contents directory
+                    let file = File::create(self_clone.contents_path(attr.ino))?;
+                    // sync_all file and parent
+                    // these operations are a bit slow, but are needed to make sure the file is correctly created
+                    // i.e. creating 100 files takes 0.965 sec with sync_all and 0.130 sec without
+                    file.sync_all()?;
+                    File::open(
+                        self_clone
+                            .contents_path(attr.ino)
+                            .parent()
+                            .expect("we don't have parent"),
+                    )?
+                    .sync_all()?;
+                    Ok::<(), FsError>(())
+                }));
             }
             FileType::Directory => {
-                // create in contents directory
-                let contents_dir = self.contents_path(attr.ino);
-                tokio::fs::create_dir(contents_dir.clone()).await?;
-                // used to keep encrypted file names used by [`read_dir`] and [`read_dir_plus`]
-                tokio::fs::create_dir(contents_dir.join(LS_DIR)).await?;
-                // used to keep hashes of encrypted file names used by [`exists_by_name`] and [`find_by_name`]
-                // this optimizes the search process as we don't need to decrypt all file names and search
-                tokio::fs::create_dir(contents_dir.join(HASH_DIR)).await?;
-                // add "." and ".." entries
-                self.insert_directory_entry(
-                    attr.ino,
-                    &DirectoryEntry {
-                        ino: attr.ino,
-                        name: SecretString::from_str("$.").expect("cannot parse"),
-                        kind: FileType::Directory,
-                    },
-                    self.key.get().await?,
-                )?;
-                self.insert_directory_entry(
-                    attr.ino,
-                    &DirectoryEntry {
-                        ino: parent,
-                        name: SecretString::from_str("$..").expect("cannot parse"),
-                        kind: FileType::Directory,
-                    },
-                    self.key.get().await?,
-                )?;
+                let self_clone = fs.clone();
+                handles.push(tokio::spawn(async move {
+                    // create in contents directory
+                    let contents_dir = self_clone.contents_path(attr.ino);
+                    fs::create_dir(contents_dir.clone())?;
+                    // used to keep encrypted file names used by [`read_dir`] and [`read_dir_plus`]
+                    fs::create_dir(contents_dir.join(LS_DIR))?;
+                    // used to keep hashes of encrypted file names used by [`exists_by_name`] and [`find_by_name`]
+                    // this optimizes the search process as we don't need to decrypt all file names and search
+                    fs::create_dir(contents_dir.join(HASH_DIR))?;
+
+                    // add "." and ".." entries
+                    self_clone
+                        .insert_directory_entry(
+                            attr_clone.ino,
+                            &DirectoryEntry {
+                                ino: attr_clone.ino,
+                                name: SecretString::from_str("$.").expect("cannot parse"),
+                                kind: FileType::Directory,
+                            },
+                        )
+                        .await?;
+                    self_clone
+                        .insert_directory_entry(
+                            attr_clone.ino,
+                            &DirectoryEntry {
+                                ino: parent,
+                                name: SecretString::from_str("$..").expect("cannot parse"),
+                                kind: FileType::Directory,
+                            },
+                        )
+                        .await?;
+                    Ok::<(), FsError>(())
+                }));
             }
         }
 
         // edd entry in parent directory, used for listing
-        self.insert_directory_entry(
-            parent,
-            &DirectoryEntry {
-                ino: attr.ino,
-                name: SecretString::new(name.expose_secret().to_owned()),
-                kind: attr.kind,
-            },
-            self.key.get().await?,
-        )?;
-        self.update_inode(
-            parent,
-            SetFileAttr::default()
-                .with_mtime(SystemTime::now())
-                .with_ctime(SystemTime::now()),
-        )
-        .await?;
+        let self_clone = fs.clone();
+        let attr_clone = attr;
+        let name_clone = name.clone();
+        handles.push(tokio::spawn(async move {
+            self_clone
+                .insert_directory_entry(
+                    parent,
+                    &DirectoryEntry {
+                        ino: attr_clone.ino,
+                        name: name_clone,
+                        kind: attr_clone.kind,
+                    },
+                )
+                .await?;
+            Ok::<(), FsError>(())
+        }));
+
+        let self_clone = fs.clone();
+        handles.push(tokio::spawn(async move {
+            self_clone
+                .update_inode(
+                    parent,
+                    SetFileAttr::default()
+                        .with_mtime(SystemTime::now())
+                        .with_ctime(SystemTime::now()),
+                )
+                .await?;
+            Ok::<(), FsError>(())
+        }));
 
         let handle = if attr.kind == FileType::RegularFile {
             if read || write {
@@ -707,6 +812,11 @@ impl EncryptedFs {
             // we don't use handle for directories
             0
         };
+
+        // wait for all tasks to finish
+        for h in handles {
+            h.await??;
+        }
 
         Ok((handle, attr))
     }
@@ -730,26 +840,17 @@ impl EncryptedFs {
             return Ok(None);
         }
         let lock = self
-            .serialize_dir_entries_locks
+            .serialize_dir_entries_hash_locks
             .read()
             .get_or_insert_with(hash_path.to_str().unwrap().to_string(), || {
                 parking_lot::RwLock::new(false)
             });
-        let _guard = lock.read();
-        let hash_file = File::open(hash_path)?;
-        let entry: (u64, FileType) = bincode::deserialize_from(crypto::create_reader(
-            hash_file,
-            self.cipher,
-            self.key.get().await?,
-        ))?;
-        let buf = self.ino_file(entry.0);
-        let path = buf.as_path();
-        let attr_file = File::open(path)?;
-        Ok(Some(bincode::deserialize_from(crypto::create_reader(
-            attr_file,
-            self.cipher,
-            self.key.get().await?,
-        ))?))
+        let guard = lock.read();
+        let (ino, _, _): (u64, FileType, String) = bincode::deserialize_from(
+            crypto::create_reader(File::open(hash_path)?, self.cipher, self.key.get().await?),
+        )?;
+        drop(guard);
+        self.get_inode_from_cache_or_storage(ino).await.map(Some)
     }
 
     /// Count children of a directory. This **EXCLUDES** "." and "..".
@@ -758,7 +859,15 @@ impl EncryptedFs {
         if !self.is_dir(ino).await? {
             return Err(FsError::InvalidInodeType);
         }
-        Ok(fs::read_dir(self.contents_path(ino).join(LS_DIR))?.count())
+        let mut count = fs::read_dir(self.contents_path(ino).join(LS_DIR))?.count();
+        if ino == ROOT_INODE {
+            // we don't count "."
+            count -= 1;
+        } else {
+            // we don't count "." and ".."
+            count -= 2;
+        }
+        Ok(count)
     }
 
     #[allow(clippy::missing_panics_doc)]
@@ -862,10 +971,9 @@ impl EncryptedFs {
         if !self.is_dir(parent).await? {
             return Err(FsError::InvalidInodeType);
         }
-        Ok(self.read_dir(parent, 0).await?.any(|entry| {
-            let entry = entry.expect("cannot read entry");
-            entry.name.expose_secret() == name.expose_secret()
-        }))
+        let hash = hex::encode(crypto::hash_secret_string(name));
+        let hash_path = self.contents_path(parent).join(HASH_DIR).join(hash);
+        Ok(hash_path.is_file())
     }
 
     #[allow(clippy::missing_errors_doc)]
@@ -901,30 +1009,13 @@ impl EncryptedFs {
         entry: io::Result<DirEntry>,
     ) -> FsResult<DirectoryEntryPlus> {
         let entry = self.create_directory_entry(entry).await?;
-
         let lock_ino = self
             .serialize_inode_locks
             .clone()
             .read()
             .get_or_insert_with(entry.ino, || parking_lot::RwLock::new(false));
         let _guard_ino = lock_ino.read();
-
-        let file = File::open(self.ino_file(entry.ino));
-        if let Err(e) = file {
-            error!(err = %e, "opening file");
-            return Err(e.into());
-        }
-        let file = file.unwrap();
-        let attr = bincode::deserialize_from(crypto::create_reader(
-            file,
-            self.cipher,
-            self.key.get().await?,
-        ));
-        if let Err(e) = attr {
-            error!(err = %e, "deserializing file attr");
-            return Err(e.into());
-        }
-        let attr = attr.unwrap();
+        let attr = self.get_inode_from_cache_or_storage(entry.ino).await?;
         Ok(DirectoryEntryPlus {
             ino: entry.ino,
             name: entry.name,
@@ -952,7 +1043,7 @@ impl EncryptedFs {
                 };
                 tokio::spawn(async move { fs.create_directory_entry_plus(entry).await })
             })
-            .skip(offset)
+            // .skip(offset)
             .collect();
 
         // do these futures in parallel and return them
@@ -975,19 +1066,12 @@ impl EncryptedFs {
             return Err(e.into());
         }
         let entry = entry.unwrap();
+        let file_path = entry.path().to_str().unwrap().to_string();
         let lock = self
-            .serialize_dir_entries_locks
+            .serialize_dir_entries_ls_locks
             .read()
-            .get_or_insert_with(entry.path().to_str().unwrap().to_string(), || {
-                parking_lot::RwLock::new(false)
-            });
+            .get_or_insert_with(file_path.clone(), || parking_lot::RwLock::new(false));
         let _guard = lock.read();
-        let file = File::open(entry.path());
-        if let Err(e) = file {
-            error!(err = %e, "opening file");
-            return Err(e.into());
-        }
-        let file = file.unwrap();
         let name = entry.file_name().to_string_lossy().to_string();
 
         let name = {
@@ -996,28 +1080,64 @@ impl EncryptedFs {
             } else if name == "$.." {
                 SecretString::from_str("..").unwrap()
             } else {
-                let name = crypto::decrypt_file_name(&name, self.cipher, self.key.get().await?)
-                    .map_err(|err| {
-                        error!(err = %err, "decrypting file name");
-                        err
-                    });
-                if name.is_err() {
-                    return Err(FsError::InvalidInput("invalid file name"));
+                // try from cache
+                let lock = self.get_dir_entries_name_cache().await?;
+                let mut cache = lock.lock();
+                if let Some(name_cached) = cache.get(&name).cloned() {
+                    name_cached
+                } else {
+                    drop(cache);
+                    if let Ok(decrypted_name) =
+                        crypto::decrypt_file_name(&name, self.cipher, self.key.get().await?)
+                            .map_err(|err| {
+                                error!(err = %err, "decrypting file name");
+                                err
+                            })
+                    {
+                        lock.lock().put(name.clone(), decrypted_name.clone());
+                        decrypted_name
+                    } else {
+                        return Err(FsError::InvalidInput("invalid file name"));
+                    }
                 }
-                name.unwrap()
             }
         };
 
-        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(
-            crypto::create_reader(file, self.cipher, self.key.get().await?),
-        );
-        if let Err(e) = res {
-            error!(err = %e, "deserializing directory entry");
-            return Err(e.into());
+        // try from cache
+        let mut cache = self.dir_entries_meta_cache.lock();
+        if let Some(meta) = cache.get(&file_path) {
+            return Ok(DirectoryEntry {
+                ino: meta.0,
+                name,
+                kind: meta.1,
+            });
+        } else {
+            drop(cache);
+            let file = File::open(entry.path())?;
+            let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(
+                crypto::create_reader(file, self.cipher, self.key.get().await?),
+            );
+            if let Err(e) = res {
+                error!(err = %e, "deserializing directory entry");
+                return Err(e.into());
+            }
+            let (ino, kind): (u64, FileType) = res.unwrap();
+            // add to cache
+            self.dir_entries_meta_cache
+                .lock()
+                .put(file_path, (ino, kind));
+            Ok(DirectoryEntry { ino, name, kind })
         }
-        let (ino, kind): (u64, FileType) = res.unwrap();
+    }
 
-        Ok(DirectoryEntry { ino, name, kind })
+    async fn get_dir_entries_name_cache(
+        &self,
+    ) -> FsResult<Arc<parking_lot::Mutex<LruCache<String, SecretString>>>> {
+        Ok(self
+            .dir_entries_name_cache
+            .get()
+            .await
+            .map_err(|_| FsError::Other("should not happen"))?)
     }
 
     async fn create_directory_entry_iterator(
@@ -1039,7 +1159,7 @@ impl EncryptedFs {
                 };
                 tokio::spawn(async move { fs.create_directory_entry(entry).await })
             })
-            .skip(offset)
+            // .skip(offset)
             .collect();
 
         // do these futures in parallel and return them
@@ -1074,7 +1194,12 @@ impl EncryptedFs {
     }
 
     async fn get_inode_from_cache_or_storage(&self, ino: u64) -> FsResult<FileAttr> {
-        let mut guard = self.attr_cache.lock();
+        let lock = self
+            .attr_cache
+            .get()
+            .await
+            .map_err(|_| FsError::Other("should not happen"))?;
+        let mut guard = lock.lock();
         let attr = guard.get(&ino);
         if let Some(attr) = attr {
             Ok(*attr)
@@ -1131,24 +1256,31 @@ impl EncryptedFs {
         let mut attr = self.get_inode(ino).await?;
         merge_attr(&mut attr, &set_attr);
 
-        self.write_inode_to_storage(&attr, self.key.get().await?)?;
+        self.write_inode_to_storage(&attr).await?;
         Ok(())
     }
 
-    fn write_inode_to_storage(
-        &self,
-        attr: &FileAttr,
-        key: Arc<SecretVec<u8>>,
-    ) -> Result<(), FsError> {
+    async fn write_inode_to_storage(&self, attr: &FileAttr) -> Result<(), FsError> {
         let lock = self
             .serialize_inode_locks
             .write()
             .get_or_insert_with(attr.ino, || parking_lot::RwLock::new(false));
-        let _guard = lock.write();
-        crypto::atomic_serialize_encrypt_into(&self.ino_file(attr.ino), attr, self.cipher, key)?;
+        let guard = lock.write();
+        crypto::atomic_serialize_encrypt_into(
+            &self.ino_file(attr.ino),
+            attr,
+            self.cipher,
+            self.key.get().await?,
+        )?;
+        drop(guard);
         // update cache also
         {
-            let mut guard = self.attr_cache.lock();
+            let lock = self
+                .attr_cache
+                .get()
+                .await
+                .map_err(|_| FsError::Other("should not happen"))?;
+            let mut guard = lock.lock();
             guard.put(attr.ino, attr.clone());
         }
         Ok(())
@@ -1296,12 +1428,12 @@ impl EncryptedFs {
         self.write_handles.read().await.contains_key(&fh)
     }
 
-    /// Writes the contents of `buf` to the file at `ino` starting at `offset`.\
+    /// Writes the contents of `buf` to the file at `ino` starting at `offset`.  
     /// Depending on the encryption type we might need to re-write bytes until the 'offset', in some case even
     /// from the beginning of the file to the desired `offset`. This will slow down the write operation if we
-    /// write to very distanced offsets.\
-    /// The most speed is obtained when we write sequentially from the beginning of the file.\
-    /// If we write outside of file size, we fill up with zeros until offset.\
+    /// write to very distanced offsets.  
+    /// The most speed is obtained when we write sequentially from the beginning of the file.  
+    /// If we write outside of file size, we fill up with zeros until offset.  
     /// If the file is not opened for write, it will return an error of type ['FsError::InvalidFileHandle'].
     #[instrument(skip(self, buf))]
     pub async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
@@ -1612,11 +1744,11 @@ impl EncryptedFs {
             new_parent,
             &DirectoryEntry {
                 ino: attr.ino,
-                name: SecretString::new(new_name.expose_secret().to_owned()),
+                name: new_name.clone(),
                 kind: attr.kind,
             },
-            self.key.get().await?,
-        )?;
+        )
+        .await?;
 
         let mut parent_attr = self.get_inode(parent).await?;
         parent_attr.mtime = SystemTime::now();
@@ -1637,8 +1769,8 @@ impl EncryptedFs {
                     name: SecretString::from_str("$..").expect("cannot parse"),
                     kind: FileType::Directory,
                 },
-                self.key.get().await?,
-            )?;
+            )
+            .await?;
         }
 
         Ok(())
@@ -1660,10 +1792,10 @@ impl EncryptedFs {
     ///
     /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
     ///
-    /// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do\
+    /// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do  
     ///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
     ///
-    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
+    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file  
     ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
     pub async fn create_file_writer(
         &self,
@@ -1679,50 +1811,6 @@ impl EncryptedFs {
             *Box::new(callback),
             lock,
             metadata_provider,
-        )?)
-    }
-
-    /// Create a crypto writer that writes to a file in chunks using internal encryption info.
-    ///
-    /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
-    ///
-    /// **`locks`** is used to write lock the chunks files when accessing them. This ensures that we have exclusive write to a given chunk when we need to change it's content\
-    ///     If not provided, it will not ensure that other instances are not accessing the chunks while we do\
-    ///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks
-    ///
-    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
-    ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
-    pub async fn create_chunked_tmp_file_writer(
-        &self,
-        file_dir: &Path,
-        callback: Option<Box<dyn FileCryptoWriterCallback>>,
-        locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
-        metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
-    ) -> FsResult<Box<dyn CryptoWriterSeek<File>>> {
-        Ok(crypto::create_chunked_tmp_file_writer(
-            file_dir,
-            self.cipher,
-            self.key.get().await?,
-            callback,
-            locks,
-            metadata_provider,
-        )?)
-    }
-
-    /// Create a crypto reader that reads from a file in chunks using internal encryption info.\
-    /// **`locks`** is used to read lock the chunks files when accessing them. This ensures offer multiple reads but exclusive writes to a given chunk\
-    ///     If not provided, it will not ensure that other instances are not writing the chunks while we read them\
-    ///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks
-    pub async fn create_chunked_file_reader(
-        &self,
-        file_dir: &Path,
-        locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
-    ) -> FsResult<Box<dyn CryptoReader>> {
-        Ok(crypto::create_chunked_file_reader(
-            file_dir,
-            self.cipher,
-            self.key.get().await?,
-            locks,
         )?)
     }
 
@@ -1939,7 +2027,7 @@ impl EncryptedFs {
                 attr.gid = libc::getgid();
             }
 
-            self.write_inode_to_storage(&attr, self.key.get().await?)?;
+            self.write_inode_to_storage(&attr).await?;
 
             // create in contents directory
             tokio::fs::create_dir(self.contents_path(attr.ino)).await?;
@@ -1954,46 +2042,84 @@ impl EncryptedFs {
                     name: SecretString::from_str("$.").unwrap(),
                     kind: FileType::Directory,
                 },
-                self.key.get().await?,
-            )?;
+            )
+            .await?;
         }
 
         Ok(())
     }
 
-    fn insert_directory_entry(
+    async fn insert_directory_entry(
         &self,
         ino_contents_dir: u64,
         entry: &DirectoryEntry,
-        key: Arc<SecretVec<u8>>,
     ) -> FsResult<()> {
         let parent_path = self.contents_path(ino_contents_dir);
+        let encrypted_name =
+            crypto::encrypt_file_name(&entry.name, self.cipher, self.key.get().await?)?;
         // add to LS directory
-        {
-            let name = crypto::encrypt_file_name(&entry.name, self.cipher, key.clone())?;
-            let file_path = parent_path.join(LS_DIR).join(name.clone());
-            let map = self.serialize_dir_entries_locks.write();
+        let self_clone = self
+            .self_weak
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        let parent_path_clone = parent_path.clone();
+        let encrypted_name_clone = encrypted_name.clone();
+        let entry_clone = entry.clone();
+        // spawn a task to do concurrently with adding to HASH directory
+        let h = tokio::spawn(async move {
+            let file_path = parent_path_clone
+                .join(LS_DIR)
+                .join(encrypted_name_clone.clone());
+            let map = self_clone.serialize_dir_entries_ls_locks.write();
             let lock = map.get_or_insert_with(file_path.to_str().unwrap().to_string(), || {
                 parking_lot::RwLock::new(false)
             });
             let _guard = lock.write();
             // write inode and file type
-            let entry = (entry.ino, entry.kind);
-            crypto::atomic_serialize_encrypt_into(&file_path, &entry, self.cipher, key.clone())?;
-        }
+            let entry = (entry_clone.ino, entry_clone.kind);
+            crypto::atomic_serialize_encrypt_into(
+                &file_path,
+                &entry,
+                self_clone.cipher,
+                self_clone.key.get().await?,
+            )?;
+            Ok::<(), FsError>(())
+        });
         // add to HASH directory
-        {
-            let name = crypto::hash_file_name(&entry.name)?;
+        let self_clone = self
+            .self_weak
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        let entry_hash = entry.clone();
+        tokio::spawn(async move {
+            let name = crypto::hash_file_name(&entry_hash.name)?;
             let file_path = parent_path.join(HASH_DIR).join(name);
-            let map = self.serialize_dir_entries_locks.write();
+            let map = self_clone.serialize_dir_entries_hash_locks.write();
             let lock = map.get_or_insert_with(file_path.to_str().unwrap().to_string(), || {
                 parking_lot::RwLock::new(false)
             });
             let _guard = lock.write();
             // write inode and file type
-            let entry = (entry.ino, entry.kind);
-            crypto::atomic_serialize_encrypt_into(&file_path, &entry, self.cipher, key)?;
-        }
+            // we save the encrypted name also because we need it to remove the entry on [`remove_directory_entry`]
+            let entry = (entry_hash.ino, entry_hash.kind, encrypted_name);
+            crypto::atomic_serialize_encrypt_into(
+                &file_path,
+                &entry,
+                self_clone.cipher,
+                self_clone.key.get().await?,
+            )?;
+            Ok::<(), FsError>(())
+        })
+        .await??;
+        h.await??;
         Ok(())
     }
 
@@ -2007,16 +2133,31 @@ impl EncryptedFs {
 
     async fn remove_directory_entry(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         let parent_path = self.contents_path(parent);
-        let name = crypto::encrypt_file_name(name, self.cipher, self.key.get().await?)?;
-        let ls_file_path = parent_path.join(LS_DIR).join(name);
-
-        let map = self.serialize_dir_entries_locks.write();
-        let lock = map.get_or_insert_with(ls_file_path.to_str().unwrap().to_string(), || {
+        // remove from HASH
+        let name = crypto::hash_file_name(name)?;
+        let path = parent_path.join(HASH_DIR).join(name);
+        let map = self.serialize_dir_entries_hash_locks.write();
+        let lock = map.get_or_insert_with(path.to_str().unwrap().to_string(), || {
+            parking_lot::RwLock::new(false)
+        });
+        let guard = lock.write();
+        let (_, _, name): (u64, FileType, String) =
+            bincode::deserialize_from(crypto::create_reader(
+                File::open(path.clone())?,
+                self.cipher,
+                self.key.get().await?,
+            ))?;
+        fs::remove_file(path)?;
+        drop(guard);
+        drop(map);
+        // remove from LS
+        let path = parent_path.join(LS_DIR).join(name);
+        let map = self.serialize_dir_entries_ls_locks.write();
+        let lock = map.get_or_insert_with(path.to_str().unwrap().to_string(), || {
             parking_lot::RwLock::new(false)
         });
         let _guard = lock.write();
-
-        fs::remove_file(ls_file_path)?;
+        fs::remove_file(path)?;
         Ok(())
     }
 

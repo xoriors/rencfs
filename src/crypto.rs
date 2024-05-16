@@ -25,13 +25,10 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tracing::{debug, error, instrument};
 
-use crate::crypto::reader::{
-    ChunkedFileCryptoReader, CryptoReader, FileCryptoReader, RingCryptoReader,
-};
+use crate::crypto::reader::{CryptoReader, FileCryptoReader, RingCryptoReader};
 use crate::crypto::writer::{
-    ChunkedTmpFileCryptoWriter, CryptoWriter, CryptoWriterSeek, FileCryptoWriter,
-    FileCryptoWriterCallback, FileCryptoWriterMetadataProvider, RingCryptoWriter,
-    SequenceLockProvider,
+    CryptoWriter, CryptoWriterSeek, FileCryptoWriter, FileCryptoWriterCallback,
+    FileCryptoWriterMetadataProvider, RingCryptoWriter,
 };
 use crate::encryptedfs::FsResult;
 use crate::{fs_util, stream_util};
@@ -124,10 +121,10 @@ pub fn create_writer<W: Write + Send + Sync>(
 
 /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
 ///
-/// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do\
+/// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do  
 ///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
 ///
-/// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
+/// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file  
 ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
 #[allow(clippy::missing_errors_doc)]
 pub fn create_file_writer(
@@ -145,48 +142,6 @@ pub fn create_file_writer(
         callback,
         lock,
         metadata_provider,
-    )?))
-}
-
-/// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
-///
-/// **`locks`** is used to write lock the chunks files when accessing them. This ensures that we have exclusive write to a given chunk when we need to change it's content\
-///     If not provided, it will not ensure that other instances are not accessing the chunks while we do\
-///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks
-///
-/// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file\
-///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it\
-#[allow(clippy::missing_errors_doc)]
-pub fn create_chunked_tmp_file_writer(
-    file_dir: &Path,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-    callback: Option<Box<dyn FileCryptoWriterCallback>>,
-    locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
-    metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
-) -> io::Result<Box<dyn CryptoWriterSeek<File>>> {
-    Ok(Box::new(ChunkedTmpFileCryptoWriter::new(
-        file_dir,
-        cipher,
-        key,
-        callback,
-        locks,
-        metadata_provider,
-    )?))
-}
-
-/// **`locks`** is used to read lock the chunks files when accessing them. This ensures offer multiple reads but exclusive writes to a given chunk\
-///     If not provided, it will not ensure that other instances are not writing the chunks while we read them\
-///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks
-#[allow(clippy::missing_errors_doc)]
-pub fn create_chunked_file_reader(
-    file_dir: &Path,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-    locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
-) -> io::Result<Box<dyn CryptoReader>> {
-    Ok(Box::new(ChunkedFileCryptoReader::new(
-        file_dir, cipher, key, locks,
     )?))
 }
 
@@ -214,23 +169,6 @@ fn create_ring_reader<R: Read + Seek + Send + Sync>(
     RingCryptoReader::new(reader, algorithm, key)
 }
 
-// fn _create_cryptostream_crypto_writer(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> impl CryptoWriter<File> {
-//     let iv_len = match cipher {
-//         Cipher::ChaCha20 => 16,
-//         Cipher::Aes256Gcm => 16,
-//     };
-//     let mut iv: Vec<u8> = vec![0; iv_len];
-//     if file.metadata().unwrap().size() == 0 {
-//         // generate random IV
-//         thread_rng().fill_bytes(&mut iv);
-//         file.write_all(&iv).unwrap();
-//     } else {
-//         // read IV from file
-//         file.read_exact(&mut iv).unwrap();
-//     }
-//     CryptostreamCryptoWriter::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
-// }
-
 pub fn create_reader<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: Cipher,
@@ -239,7 +177,7 @@ pub fn create_reader<R: Read + Seek + Send + Sync>(
     create_ring_reader(reader, cipher, key)
 }
 
-/// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read\
+/// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read  
 ///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
 #[allow(clippy::missing_errors_doc)]
 pub fn create_file_reader(
@@ -250,29 +188,6 @@ pub fn create_file_reader(
 ) -> io::Result<Box<dyn CryptoReader>> {
     Ok(Box::new(FileCryptoReader::new(file, cipher, key, lock)?))
 }
-
-// fn _create_cryptostream_crypto_reader(mut file: File, cipher: &Cipher, key: &SecretVec<u8>) -> CryptostreamCryptoReader<File> {
-//     let iv_len = match cipher {
-//         Cipher::ChaCha20 => 16,
-//         Cipher::Aes256Gcm => 16,
-//     };
-//     let mut iv: Vec<u8> = vec![0; iv_len];
-//     if file.metadata().unwrap().size() == 0 {
-//         // generate random IV
-//         thread_rng().fill_bytes(&mut iv);
-//         file.write_all(&iv).map_err(|err| {
-//             error!("{err}");
-//             err
-//         }).unwrap();
-//     } else {
-//         // read IV from file
-//         file.read_exact(&mut iv).map_err(|err| {
-//             error!("{err}");
-//             err
-//         }).unwrap();
-//     }
-//     CryptostreamCryptoReader::new(file, get_cipher(cipher), &key.expose_secret(), &iv).unwrap()
-// }
 
 #[allow(clippy::missing_errors_doc)]
 pub fn encrypt_string(s: &SecretString, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<String> {

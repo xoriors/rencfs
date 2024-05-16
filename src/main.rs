@@ -65,19 +65,25 @@ async fn main() -> Result<()> {
         Ok(Ok(Err(err))) => {
             let err2 = err.downcast_ref::<ExitStatusError>();
             if let Some(ExitStatusError::Failure(code)) = err2 {
+                drop(guard);
                 process::exit(*code);
             }
             error!("{err}");
             if let Some(mount_point) = mount_point {
-                umount(mount_point)?;
+                let _ = umount(mount_point).map_err(|err| {
+                    warn!("Cannot umount, maybe it was not mounted: {err}");
+                    err
+                });
             }
-            drop(guard);
             Err(err)
         }
         Ok(Err(err)) => {
             error!("{err:#?}");
             if let Some(mount_point) = mount_point {
-                umount(mount_point)?;
+                let _ = umount(mount_point).map_err(|err| {
+                    warn!("Cannot umount, maybe it was not mounted: {err}");
+                    err
+                });
             }
             drop(guard);
             panic!("{err:#?}");
@@ -85,7 +91,10 @@ async fn main() -> Result<()> {
         Err(err) => {
             error!("{err}");
             if let Some(mount_point) = mount_point {
-                umount(mount_point)?;
+                let _ = umount(mount_point).map_err(|err| {
+                    warn!("Cannot umount, maybe it was not mounted: {err}");
+                    err
+                });
             }
             drop(guard);
             panic!("{err}");
@@ -329,7 +338,10 @@ async fn run_mount(matches: &ArgMatches) -> Result<()> {
     })?;
 
     if matches.get_flag("umount-on-start") {
-        umount(mountpoint.as_str())?;
+        let _ = umount(mountpoint.as_str()).map_err(|err| {
+            warn!("Cannot umount, maybe it was not mounted: {err}");
+            err
+        });
     }
 
     let auto_unmount = matches.get_flag("auto_unmount");
@@ -391,13 +403,41 @@ async fn run_mount(matches: &ArgMatches) -> Result<()> {
 }
 
 fn umount(mountpoint: &str) -> Result<()> {
-    let output = process::Command::new("umount").arg(mountpoint).output()?;
-
-    if !output.status.success() {
-        warn!("Cannot umount, maybe it was not mounted");
+    // try normal umount
+    if process::Command::new("umount")
+        .arg(mountpoint)
+        .output()?
+        .status
+        .success()
+    {
+        return Ok(());
     }
-
-    Ok(())
+    // force umount
+    if process::Command::new("umount")
+        .arg("-f")
+        .arg(mountpoint)
+        .output()?
+        .status
+        .success()
+    {
+        return Ok(());
+    }
+    // lazy umount
+    if process::Command::new("umount")
+        .arg("-l")
+        .arg(mountpoint)
+        .output()?
+        .status
+        .success()
+    {
+        return Ok(());
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("cannot umount {}", mountpoint),
+        )
+        .into());
+    }
 }
 
 #[allow(clippy::missing_panics_doc)]

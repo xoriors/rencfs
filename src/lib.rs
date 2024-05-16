@@ -1,3 +1,4 @@
+#![feature(test)]
 // #![feature(error_generic_member_access)]
 #![deny(clippy::all)]
 #![deny(clippy::pedantic)]
@@ -225,6 +226,8 @@ use crate::crypto::Cipher;
 use crate::encryptedfs::PasswordProvider;
 use crate::encryptedfs_fuse3::EncryptedFsFuse3;
 
+extern crate test;
+
 pub mod arc_hashmap;
 pub mod async_util;
 pub mod crypto;
@@ -233,6 +236,7 @@ pub mod encryptedfs_fuse3;
 pub mod expire_value;
 pub mod fs_util;
 pub mod stream_util;
+pub(crate) mod test_util;
 
 #[allow(unreachable_code)]
 #[must_use]

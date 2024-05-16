@@ -77,7 +77,7 @@
 //
 // #[test]
 // fn test_write_and_get_inode() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_write_and_get_inode") }, |setup| {
+//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_write_and_get_inode") }, |setup| {
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         let attr = create_attr(42, FileType::RegularFile);
@@ -113,7 +113,7 @@
 //
 // #[test]
 // fn test_create_structure_and_root() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_create_structure_and_root") }, |setup| {
+//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_create_structure_and_root") }, |setup| {
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         assert!(fs.node_exists(ROOT_INODE));
@@ -130,7 +130,7 @@
 //
 // #[test]
 // fn test_create_nod() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_create_nod") }, |setup| {
+//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_create_nod") }, |setup| {
 //         let mut fs = setup.fs.as_mut().unwrap();
 //
 //         // file in root
@@ -201,7 +201,7 @@
 //
 // #[test]
 // fn test_find_by_name() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_find_by_name") }, |setup| {
+//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_find_by_name") }, |setup| {
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         let test_file = SecretString::from_str("test-file").unwrap();
@@ -213,7 +213,7 @@
 //
 // #[test]
 // fn test_remove_dir() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_remove_dir") }, |setup| {
+//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_remove_dir") }, |setup| {
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         let test_dir = SecretString::from_str("test-dir").unwrap();
@@ -237,7 +237,7 @@
 //
 // #[test]
 // fn test_remove_file() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_remove_file") }, |setup| {
+//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_remove_file") }, |setup| {
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         let test_file = SecretString::from_str("test-file").unwrap();
@@ -258,7 +258,7 @@
 //
 // #[test]
 // fn test_rename() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_rename") }, |setup| {
+//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_rename") }, |setup| {
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         // new file in same directory
@@ -499,7 +499,7 @@
 //
 // #[test]
 // fn test_open() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_open") }, |setup| {
+//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_open") }, |setup| {
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         let test_file = SecretString::from_str("test-file").unwrap();
@@ -520,7 +520,7 @@
 // #[allow(dead_code)]
 // // #[test]
 // fn test_sample() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}test_sample") }, |setup| {
+//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_sample") }, |setup| {
 //         let _fs = setup.fs.as_mut().unwrap();
 //     });
 // }

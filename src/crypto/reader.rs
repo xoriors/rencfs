@@ -15,7 +15,7 @@ use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::Holder;
 use crate::crypto::buf_mut::BufMut;
-use crate::crypto::writer::{SequenceLockProvider, BUF_SIZE, CHUNK_SIZE, WHOLE_FILE_CHUNK_INDEX};
+use crate::crypto::writer::BUF_SIZE;
 use crate::crypto::Cipher;
 use crate::{crypto, stream_util};
 
@@ -149,6 +149,7 @@ impl<R: Read + Seek + Send + Sync> Read for RingCryptoReader<R> {
                 return Ok(0);
             }
             let data = &mut buffer[..len];
+            let aad = Aad::from((self.pos / BUF_SIZE as u64).to_le_bytes());
             // extract nonce
             self.last_nonce
                 .lock()
@@ -157,7 +158,7 @@ impl<R: Read + Seek + Send + Sync> Read for RingCryptoReader<R> {
             let data = &mut data[NONCE_LEN..];
             let plaintext = self
                 .opening_key
-                .open_within(Aad::empty(), data, 0..)
+                .open_within(aad, data, 0..)
                 .map_err(|err| {
                     error!("error opening within: {}", err);
                     io::Error::new(io::ErrorKind::Other, "error opening within")
@@ -231,7 +232,7 @@ pub struct FileCryptoReader {
 }
 
 impl FileCryptoReader {
-    /// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read\
+    /// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read  
     ///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
     #[allow(clippy::missing_errors_doc)]
     pub fn new(
@@ -307,245 +308,245 @@ impl Seek for FileCryptoReader {
 
 impl CryptoReader for FileCryptoReader {}
 
-/// Chunked reader
-/// File is split into chunks files. This reader iterates over the chunks and reads them one by one.
-
-#[allow(clippy::module_name_repetitions)]
-pub struct ChunkedFileCryptoReader {
-    file_dir: PathBuf,
-    reader: Option<Box<dyn CryptoReader>>,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-    locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
-    chunk_size: u64,
-    chunk_index: u64,
-}
-
-impl ChunkedFileCryptoReader {
-    /// **`locks`** is used to read lock the chunks files when accessing them. This ensures offer multiple reads but exclusive writes to a given chunk\
-    ///     If not provided, it will not ensure that other instances are not writing the chunks while we read them\
-    ///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks
-    #[allow(clippy::missing_errors_doc)]
-    pub fn new(
-        file_dir: &Path,
-        cipher: Cipher,
-        key: Arc<SecretVec<u8>>,
-        locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
-    ) -> io::Result<Self> {
-        Ok(Self {
-            file_dir: file_dir.to_owned(),
-            reader: Self::try_create_reader(
-                0,
-                CHUNK_SIZE,
-                file_dir.to_owned(),
-                cipher,
-                key.clone(),
-                &locks,
-            )?,
-            cipher,
-            key,
-            locks,
-            chunk_size: CHUNK_SIZE,
-            chunk_index: 0,
-        })
-    }
-
-    fn try_create_reader(
-        pos: u64,
-        chunk_size: u64,
-        file_dir: PathBuf,
-        cipher: Cipher,
-        key: Arc<SecretVec<u8>>,
-        locks: &Option<Holder<Box<dyn SequenceLockProvider>>>,
-    ) -> io::Result<Option<Box<dyn CryptoReader>>> {
-        let chunk_index = pos / chunk_size;
-        let chunk_file = file_dir.join(chunk_index.to_string());
-        if !chunk_file.exists() {
-            return Ok(None);
-        }
-        Ok(Some(Self::create_reader(
-            pos,
-            chunk_size,
-            file_dir.to_owned(),
-            cipher,
-            key.clone(),
-            locks,
-        )?))
-    }
-
-    fn create_reader(
-        pos: u64,
-        chunk_size: u64,
-        file_dir: PathBuf,
-        cipher: Cipher,
-        key: Arc<SecretVec<u8>>,
-        locks: &Option<Holder<Box<dyn SequenceLockProvider>>>,
-    ) -> io::Result<Box<dyn CryptoReader>> {
-        let chunk_index = pos / chunk_size;
-        let chunk_file = file_dir.join(chunk_index.to_string());
-        Ok(crypto::create_file_reader(
-            &chunk_file,
-            cipher,
-            key.clone(),
-            locks.as_ref().map(|lock| lock.get(pos / chunk_size)),
-        )?)
-    }
-
-    fn pos(&mut self) -> io::Result<u64> {
-        if self.reader.is_none() {
-            return Ok(self.chunk_index * self.chunk_size);
-        }
-        Ok(self.chunk_index * self.chunk_size + self.reader.as_mut().unwrap().stream_position()?)
-    }
-}
-
-impl Read for ChunkedFileCryptoReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-
-        // obtain a read lock to whole file, we ue a special value to indicate this.
-        // this helps if someone is truncating the file while we are using it, they will to a write lock
-        let mut _lock = None;
-        let _guard_all = {
-            if let Some(locks) = &self.locks {
-                _lock = Some(locks.get(WHOLE_FILE_CHUNK_INDEX));
-                Some(_lock.as_ref().unwrap().read())
-            } else {
-                None
-            }
-        };
-
-        if self.reader.is_none() {
-            // create the reader
-            let current_pos = self.pos()?;
-            self.reader = Self::try_create_reader(
-                current_pos,
-                self.chunk_size,
-                self.file_dir.to_owned(),
-                self.cipher,
-                self.key.clone(),
-                &self.locks,
-            )?;
-        }
-        if self.reader.is_none() {
-            // we don't have any more chunks
-            return Ok(0);
-        }
-
-        debug!(len = buf.len().to_formatted_string(&Locale::en), "reading");
-        let mut len = self.reader.as_mut().unwrap().read(buf)?;
-
-        if len == 0 {
-            debug!("switching to next chunk");
-            self.chunk_index += 1;
-            self.reader = Self::try_create_reader(
-                self.chunk_index * self.chunk_size,
-                self.chunk_size,
-                self.file_dir.to_owned(),
-                self.cipher,
-                self.key.clone(),
-                &self.locks,
-            )?;
-            if let Some(reader) = &mut self.reader {
-                debug!(len = len.to_formatted_string(&Locale::en), "reading");
-                len = reader.read(buf)?;
-            }
-        }
-
-        Ok(len)
-    }
-}
-
-impl Seek for ChunkedFileCryptoReader {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let new_pos = match pos {
-            SeekFrom::Start(pos) => pos,
-            SeekFrom::End(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "can't seek from end",
-                ))
-            }
-            SeekFrom::Current(pos) => {
-                let new_pos = self.pos()? as i64 + pos;
-                if new_pos < 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "can't seek before start",
-                    ));
-                }
-                new_pos as u64
-            }
-        };
-        if self.pos()? != new_pos {
-            debug!(
-                pos = self.pos()?.to_formatted_string(&Locale::en),
-                new_pos = new_pos.to_formatted_string(&Locale::en),
-                "seeking"
-            );
-
-            // obtain a read lock to whole file, we ue a special value to indicate this.
-            // this helps if someone is truncating the file while we are using it, they will use a write lock
-            let mut _lock = None;
-            let _guard_all = {
-                if let Some(locks) = &self.locks {
-                    _lock = Some(locks.get(WHOLE_FILE_CHUNK_INDEX));
-                    Some(_lock.as_ref().unwrap().read())
-                } else {
-                    None
-                }
-            };
-
-            if self.reader.is_none() {
-                // create the reader
-                let current_pos = self.pos()?;
-                self.reader = Some(Self::create_reader(
-                    current_pos,
-                    self.chunk_size,
-                    self.file_dir.to_owned(),
-                    self.cipher,
-                    self.key.clone(),
-                    &self.locks,
-                )?);
-            }
-            let pos = self.pos()?;
-            if self.chunk_index == new_pos / self.chunk_size {
-                // seek in current chunk as much as we can
-                let reader = self.reader.as_mut().unwrap();
-                let new_pos_in_chunk = new_pos % self.chunk_size;
-                reader.seek(SeekFrom::Start(new_pos_in_chunk))?;
-            } else {
-                // we need to switch to another chunk
-                debug!("switching to another chunk");
-                self.reader = Self::try_create_reader(
-                    new_pos,
-                    self.chunk_size,
-                    self.file_dir.to_owned(),
-                    self.cipher,
-                    self.key.clone(),
-                    &self.locks,
-                )?;
-                if self.reader.is_none() {
-                    return Ok(pos);
-                }
-                let reader = self.reader.as_mut().unwrap();
-                // seek in chunk
-                let new_pos_in_chunk = new_pos % self.chunk_size;
-                debug!(
-                    new_pos_in_chunk = new_pos_in_chunk.to_formatted_string(&Locale::en),
-                    "seeking in new chunk"
-                );
-                reader.seek(SeekFrom::Start(new_pos_in_chunk))?;
-                self.chunk_index = new_pos / self.chunk_size;
-            }
-        }
-        Ok(self.pos()?)
-    }
-}
-
-impl CryptoReader for ChunkedFileCryptoReader {}
+// /// Chunked reader
+// /// File is split into chunks files. This reader iterates over the chunks and reads them one by one.
+//
+// #[allow(clippy::module_name_repetitions)]
+// pub struct ChunkedFileCryptoReader {
+//     file_dir: PathBuf,
+//     reader: Option<Box<dyn CryptoReader>>,
+//     cipher: Cipher,
+//     key: Arc<SecretVec<u8>>,
+//     locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
+//     chunk_size: u64,
+//     chunk_index: u64,
+// }
+//
+// impl ChunkedFileCryptoReader {
+//     /// **`locks`** is used to read lock the chunks files when accessing them. This ensures offer multiple reads but exclusive writes to a given chunk
+//     ///     If not provided, it will not ensure that other instances are not writing the chunks while we read them
+//     ///     You need to provide the same locks to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same locks
+//     #[allow(clippy::missing_errors_doc)]
+//     pub fn new(
+//         file_dir: &Path,
+//         cipher: Cipher,
+//         key: Arc<SecretVec<u8>>,
+//         locks: Option<Holder<Box<dyn SequenceLockProvider>>>,
+//     ) -> io::Result<Self> {
+//         Ok(Self {
+//             file_dir: file_dir.to_owned(),
+//             reader: Self::try_create_reader(
+//                 0,
+//                 CHUNK_SIZE,
+//                 file_dir.to_owned(),
+//                 cipher,
+//                 key.clone(),
+//                 &locks,
+//             )?,
+//             cipher,
+//             key,
+//             locks,
+//             chunk_size: CHUNK_SIZE,
+//             chunk_index: 0,
+//         })
+//     }
+//
+//     fn try_create_reader(
+//         pos: u64,
+//         chunk_size: u64,
+//         file_dir: PathBuf,
+//         cipher: Cipher,
+//         key: Arc<SecretVec<u8>>,
+//         locks: &Option<Holder<Box<dyn SequenceLockProvider>>>,
+//     ) -> io::Result<Option<Box<dyn CryptoReader>>> {
+//         let chunk_index = pos / chunk_size;
+//         let chunk_file = file_dir.join(chunk_index.to_string());
+//         if !chunk_file.exists() {
+//             return Ok(None);
+//         }
+//         Ok(Some(Self::create_reader(
+//             pos,
+//             chunk_size,
+//             file_dir.to_owned(),
+//             cipher,
+//             key.clone(),
+//             locks,
+//         )?))
+//     }
+//
+//     fn create_reader(
+//         pos: u64,
+//         chunk_size: u64,
+//         file_dir: PathBuf,
+//         cipher: Cipher,
+//         key: Arc<SecretVec<u8>>,
+//         locks: &Option<Holder<Box<dyn SequenceLockProvider>>>,
+//     ) -> io::Result<Box<dyn CryptoReader>> {
+//         let chunk_index = pos / chunk_size;
+//         let chunk_file = file_dir.join(chunk_index.to_string());
+//         Ok(crypto::create_file_reader(
+//             &chunk_file,
+//             cipher,
+//             key.clone(),
+//             locks.as_ref().map(|lock| lock.get(pos / chunk_size)),
+//         )?)
+//     }
+//
+//     fn pos(&mut self) -> io::Result<u64> {
+//         if self.reader.is_none() {
+//             return Ok(self.chunk_index * self.chunk_size);
+//         }
+//         Ok(self.chunk_index * self.chunk_size + self.reader.as_mut().unwrap().stream_position()?)
+//     }
+// }
+//
+// impl Read for ChunkedFileCryptoReader {
+//     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+//         if buf.is_empty() {
+//             return Ok(0);
+//         }
+//
+//         // obtain a read lock to whole file, we ue a special value to indicate this.
+//         // this helps if someone is truncating the file while we are using it, they will to a write lock
+//         let mut _lock = None;
+//         let _guard_all = {
+//             if let Some(locks) = &self.locks {
+//                 _lock = Some(locks.get(WHOLE_FILE_CHUNK_INDEX));
+//                 Some(_lock.as_ref().unwrap().read())
+//             } else {
+//                 None
+//             }
+//         };
+//
+//         if self.reader.is_none() {
+//             // create the reader
+//             let current_pos = self.pos()?;
+//             self.reader = Self::try_create_reader(
+//                 current_pos,
+//                 self.chunk_size,
+//                 self.file_dir.to_owned(),
+//                 self.cipher,
+//                 self.key.clone(),
+//                 &self.locks,
+//             )?;
+//         }
+//         if self.reader.is_none() {
+//             // we don't have any more chunks
+//             return Ok(0);
+//         }
+//
+//         debug!(len = buf.len().to_formatted_string(&Locale::en), "reading");
+//         let mut len = self.reader.as_mut().unwrap().read(buf)?;
+//
+//         if len == 0 {
+//             debug!("switching to next chunk");
+//             self.chunk_index += 1;
+//             self.reader = Self::try_create_reader(
+//                 self.chunk_index * self.chunk_size,
+//                 self.chunk_size,
+//                 self.file_dir.to_owned(),
+//                 self.cipher,
+//                 self.key.clone(),
+//                 &self.locks,
+//             )?;
+//             if let Some(reader) = &mut self.reader {
+//                 debug!(len = len.to_formatted_string(&Locale::en), "reading");
+//                 len = reader.read(buf)?;
+//             }
+//         }
+//
+//         Ok(len)
+//     }
+// }
+//
+// impl Seek for ChunkedFileCryptoReader {
+//     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+//         let new_pos = match pos {
+//             SeekFrom::Start(pos) => pos,
+//             SeekFrom::End(_) => {
+//                 return Err(io::Error::new(
+//                     io::ErrorKind::InvalidInput,
+//                     "can't seek from end",
+//                 ))
+//             }
+//             SeekFrom::Current(pos) => {
+//                 let new_pos = self.pos()? as i64 + pos;
+//                 if new_pos < 0 {
+//                     return Err(io::Error::new(
+//                         io::ErrorKind::InvalidInput,
+//                         "can't seek before start",
+//                     ));
+//                 }
+//                 new_pos as u64
+//             }
+//         };
+//         if self.pos()? != new_pos {
+//             debug!(
+//                 pos = self.pos()?.to_formatted_string(&Locale::en),
+//                 new_pos = new_pos.to_formatted_string(&Locale::en),
+//                 "seeking"
+//             );
+//
+//             // obtain a read lock to whole file, we ue a special value to indicate this.
+//             // this helps if someone is truncating the file while we are using it, they will use a write lock
+//             let mut _lock = None;
+//             let _guard_all = {
+//                 if let Some(locks) = &self.locks {
+//                     _lock = Some(locks.get(WHOLE_FILE_CHUNK_INDEX));
+//                     Some(_lock.as_ref().unwrap().read())
+//                 } else {
+//                     None
+//                 }
+//             };
+//
+//             if self.reader.is_none() {
+//                 // create the reader
+//                 let current_pos = self.pos()?;
+//                 self.reader = Some(Self::create_reader(
+//                     current_pos,
+//                     self.chunk_size,
+//                     self.file_dir.to_owned(),
+//                     self.cipher,
+//                     self.key.clone(),
+//                     &self.locks,
+//                 )?);
+//             }
+//             let pos = self.pos()?;
+//             if self.chunk_index == new_pos / self.chunk_size {
+//                 // seek in current chunk as much as we can
+//                 let reader = self.reader.as_mut().unwrap();
+//                 let new_pos_in_chunk = new_pos % self.chunk_size;
+//                 reader.seek(SeekFrom::Start(new_pos_in_chunk))?;
+//             } else {
+//                 // we need to switch to another chunk
+//                 debug!("switching to another chunk");
+//                 self.reader = Self::try_create_reader(
+//                     new_pos,
+//                     self.chunk_size,
+//                     self.file_dir.to_owned(),
+//                     self.cipher,
+//                     self.key.clone(),
+//                     &self.locks,
+//                 )?;
+//                 if self.reader.is_none() {
+//                     return Ok(pos);
+//                 }
+//                 let reader = self.reader.as_mut().unwrap();
+//                 // seek in chunk
+//                 let new_pos_in_chunk = new_pos % self.chunk_size;
+//                 debug!(
+//                     new_pos_in_chunk = new_pos_in_chunk.to_formatted_string(&Locale::en),
+//                     "seeking in new chunk"
+//                 );
+//                 reader.seek(SeekFrom::Start(new_pos_in_chunk))?;
+//                 self.chunk_index = new_pos / self.chunk_size;
+//             }
+//         }
+//         Ok(self.pos()?)
+//     }
+// }
+//
+// impl CryptoReader for ChunkedFileCryptoReader {}
 
 #[cfg(test)]
 mod test {

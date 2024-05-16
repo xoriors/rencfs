@@ -2,7 +2,7 @@
 
 An encrypted file system that mounts with FUSE on Linux. It can be used to create encrypted directories.
 
-You can then safely backup the encrypted folder on an untrusted server without worrying about the data being exposed.\
+You can then safely backup the encrypted folder on an untrusted server without worrying about the data being exposed.  
 You can also store it in any cloud storage like Google Drive, Dropbox, etc. and have it synced across multiple devices.
 
 [![rencfs-bin](https://img.shields.io/aur/version/rencfs-bin?color=1793d1&label=rencfs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/rencfs-bin/)
@@ -14,7 +14,7 @@ You can also store it in any cloud storage like Google Drive, Dropbox, etc. and 
 
 > ⚠️ **Warning**
 > ***This is early in development. Please do not use it with sensitive data just yet. Please wait for a
-stable release.\
+stable release.  
 > It's mostly ideal for experimental and learning projects.***
 
 # Functionality
@@ -117,10 +117,10 @@ You can specify the encryption algorithm adding this argument to the command lin
 --cipher CIPHER
 ```
 
-Where `CIPHER` is the encryption algorithm.\
+Where `CIPHER` is the encryption algorithm.  
 You can check the available ciphers with `rencfs --help`.
 
-Default values are `ChaCha20` and `600_000` respectively.
+Default value is `ChaCha20Poly1305`.
 
 ### Log level
 
@@ -235,7 +235,7 @@ cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
 
 ## Developing inside a Container
 
-See here how to configure for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers)\
+See here how to configure for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers)  
 And here for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html)
 
 You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build
@@ -268,7 +268,7 @@ sharing pull requests are always appreciated.
   see [here](https://pubs.opengroup.org/onlinepubs/009695399/functions/rename.html) `That specification requires that the action of the function be atomic.`
 - Phantom reads: reading older content from a file, this is not possible. While writing, data is kept in a buffer and
   tmp file and on releasing the file handle we write the new content to the file (as per above the tmp file is moved
-  into place with `mv`). After that we reset all opened readers so any reads after that will pick up the new content\
+  into place with `mv`). After that we reset all opened readers so any reads after that will pick up the new content  
   One problem that may occur is if we do a truncate we change the content of the file but the process is killed before
   we write the metadata with the new filesize. In this case next time we mount the system we are still seeing the old
   filesize but the content of the file could be bigger, and we read until the old size offset, se we would not pick up
