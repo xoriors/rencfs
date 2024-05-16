@@ -117,7 +117,7 @@ It will prompt you to enter the old password and then the new password.
 
 You can specify the encryption algorithm adding this argument to the command line
 ```bash
---cipher CIPHER
+--cipher CIPHER ...
 ```
 
 Where `CIPHER` is the encryption algorithm. You can check the available ciphers with `rencfs --help`.  
