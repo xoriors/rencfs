@@ -118,9 +118,7 @@ You can specify the encryption algorithm adding this argument to the command lin
 --cipher CIPHER
 ```
 
-Where `CIPHER` is the encryption algorithm.  
-You can check the available ciphers with `rencfs --help`.
-
+Where `CIPHER` is the encryption algorithm. You can check the available ciphers with `rencfs --help`.  
 Default value is `ChaCha20Poly1305`.
 
 ### Log level
