@@ -1,4 +1,4 @@
-name: check
+name: clippy
 
 on:
   push:
@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
+  clippy:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
