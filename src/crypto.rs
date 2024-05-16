@@ -43,7 +43,7 @@ pub static BASE64: GeneralPurpose = GeneralPurpose::new(&STANDARD, NO_PAD);
 )]
 pub enum Cipher {
     ChaCha20Poly1305,
-    Aes256Gcm,
+    Aes256GCM,
 }
 
 impl Cipher {
@@ -53,7 +53,7 @@ impl Cipher {
     pub fn key_len(&self) -> usize {
         match self {
             Cipher::ChaCha20Poly1305 => CHACHA20_POLY1305.key_len(),
-            Cipher::Aes256Gcm => AES_256_GCM.key_len(),
+            Cipher::Aes256GCM => AES_256_GCM.key_len(),
         }
     }
 
@@ -63,7 +63,7 @@ impl Cipher {
     pub const fn max_plaintext_len(&self) -> usize {
         match self {
             Cipher::ChaCha20Poly1305 => (2_usize.pow(32) - 1) * 64,
-            Cipher::Aes256Gcm => (2_usize.pow(39) - 256) / 8,
+            Cipher::Aes256GCM => (2_usize.pow(39) - 256) / 8,
         }
     }
 }
@@ -155,7 +155,7 @@ fn create_ring_writer<W: Write + Send + Sync>(
 ) -> RingCryptoWriter<W> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
-        Cipher::Aes256Gcm => &AES_256_GCM,
+        Cipher::Aes256GCM => &AES_256_GCM,
     };
     RingCryptoWriter::new(writer, algorithm, key)
 }
@@ -167,7 +167,7 @@ fn create_ring_reader<R: Read + Seek + Send + Sync>(
 ) -> RingCryptoReader<R> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
-        Cipher::Aes256Gcm => &AES_256_GCM,
+        Cipher::Aes256GCM => &AES_256_GCM,
     };
     RingCryptoReader::new(reader, algorithm, key)
 }

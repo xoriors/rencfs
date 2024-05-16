@@ -2239,7 +2239,7 @@ fn read_or_create_key(
         let mut key: Vec<u8> = vec![];
         let key_len = match cipher {
             Cipher::ChaCha20Poly1305 => CHACHA20_POLY1305.key_len(),
-            Cipher::Aes256Gcm => AES_256_GCM.key_len(),
+            Cipher::Aes256GCM => AES_256_GCM.key_len(),
         };
         key.resize(key_len, 0);
         crypto::create_rng().fill_bytes(&mut key);

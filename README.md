@@ -267,7 +267,7 @@ sharing pull requests are always appreciated.
 
 # Limitations
 
-- `Aes256Gcm` cipher can save files up to 64GB. This is because of the 32-bit counter used in the
+- `Aes256GCM` cipher can save files up to 64GB. This is because of the 32-bit counter used in the
   GCM mode. For more details
   see [here](https://en.wikipedia.org/wiki/Galois/Counter_Mode#:~:text=For%20any%20given%20key%2C%20GCM,plain%20text%20(64%20GiB).)
   and [here](https://crypto.stackexchange.com/questions/31793/plain-text-size-limits-for-aes-gcm-mode-just-64gb)
