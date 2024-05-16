@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use num_format::{Locale, ToFormattedString};
-use parking_lot::RwLock;
 use ring::aead::{
     Aad, Algorithm, BoundKey, Nonce, NonceSequence, OpeningKey, UnboundKey, NONCE_LEN,
 };
 use ring::error;
 use secrecy::{ExposeSecret, SecretVec};
+use tokio::sync::RwLock;
 use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::Holder;
@@ -214,7 +214,7 @@ impl ExistingNonceSequence {
 
 impl NonceSequence for ExistingNonceSequence {
     fn advance(&mut self) -> Result<Nonce, error::Unspecified> {
-        Nonce::try_assume_unique_for_key(&self.last_nonce.lock().unwrap().as_mut().unwrap())
+        Nonce::try_assume_unique_for_key(self.last_nonce.lock().unwrap().as_mut().unwrap())
     }
 }
 
@@ -257,13 +257,7 @@ impl FileCryptoReader {
 
 impl Read for FileCryptoReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let _guard = {
-            if let Some(lock) = &self.lock {
-                Some(lock.read())
-            } else {
-                None
-            }
-        };
+        let _guard = self.lock.as_ref().map(|lock| lock.read());
         let len = self.reader.read(buf)?;
         Ok(len)
     }
@@ -302,7 +296,7 @@ impl Seek for FileCryptoReader {
             ));
         }
         self.reader.seek(SeekFrom::Start(pos))?;
-        Ok(self.reader.stream_position()?)
+        self.reader.stream_position()
     }
 }
 

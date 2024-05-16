@@ -1610,7 +1610,6 @@ dependencies = [
  "mio",
  "num-format",
  "okaywal",
- "parking_lot",
  "rand",
  "rand_chacha",
  "retainer",

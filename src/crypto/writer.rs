@@ -1,6 +1,5 @@
 use atomic_write_file::AtomicWriteFile;
 use num_format::{Locale, ToFormattedString};
-use parking_lot::RwLock;
 use std::fs::File;
 use std::io;
 use std::io::{BufWriter, Error, Seek, SeekFrom, Write};
@@ -15,6 +14,7 @@ use ring::aead::{
 };
 use ring::error::Unspecified;
 use secrecy::{ExposeSecret, SecretVec};
+use tokio::sync::RwLock;
 use tracing::{debug, error};
 
 use crate::crypto::buf_mut::BufMut;
@@ -75,6 +75,7 @@ pub struct RingCryptoWriter<W: Write + Send + Sync> {
 
 impl<W: Write + Send + Sync> RingCryptoWriter<W> {
     #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(w: W, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>) -> Self {
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).expect("unbound key");
         let nonce_sequence = Arc::new(Mutex::new(RandomNonceSequence::default()));
@@ -140,9 +141,9 @@ impl<W: Write + Send + Sync> RingCryptoWriter<W> {
             .out
             .as_mut()
             .expect("encrypt_and_write called on already finished writer");
-        let _guard = self.nonce_sequence.lock().unwrap();
-        let nonce = _guard.last_nonce.as_ref().unwrap();
-        out.write_all(&nonce)?;
+        let nonce_sequence = self.nonce_sequence.lock().unwrap();
+        let nonce = nonce_sequence.last_nonce.as_ref().unwrap();
+        out.write_all(nonce)?;
         out.write_all(data)?;
         self.buf.clear();
         out.write_all(tag.as_ref())?;
@@ -191,8 +192,8 @@ impl NonceSequence for RandomNonceSequence {
         self.rng
             .lock()
             .unwrap()
-            .fill_bytes(&mut self.last_nonce.as_mut().unwrap());
-        Nonce::try_assume_unique_for_key(&self.last_nonce.as_mut().unwrap())
+            .fill_bytes(self.last_nonce.as_mut().unwrap());
+        Nonce::try_assume_unique_for_key(self.last_nonce.as_mut().unwrap())
     }
 }
 
@@ -274,8 +275,9 @@ impl FileCryptoWriter {
         })
     }
 
+    #[allow(clippy::unnecessary_wraps)] // remove this when we will seek the inner writer
     fn pos(&self) -> io::Result<u64> {
-        if let Some(_) = &self.writer {
+        if self.writer.is_some() {
             Ok(self.pos)
         } else {
             Ok(0)
@@ -367,11 +369,7 @@ impl FileCryptoWriter {
             let file = file.into_inner()?;
             self.pos = 0;
             {
-                let _guard = if let Some(lock) = &self.lock {
-                    Some(lock.write())
-                } else {
-                    None
-                };
+                let _guard = self.lock.as_ref().map(|lock| lock.write());
                 file.commit()?;
             }
 
@@ -399,7 +397,7 @@ impl FileCryptoWriter {
                 )?;
             }
         }
-        Ok(self.pos()?)
+        self.pos()
     }
 }
 

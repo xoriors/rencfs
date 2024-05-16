@@ -409,13 +409,13 @@ fn umount(mountpoint: &str) -> Result<()> {
         .status
         .success()
     {
-        return Ok(());
+        Ok(())
     } else {
-        return Err(io::Error::new(
+        Err(io::Error::new(
             io::ErrorKind::Other,
             format!("cannot umount {}", mountpoint),
         )
-        .into());
+        .into())
     }
 }
 

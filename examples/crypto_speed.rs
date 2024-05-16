@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
         fs::remove_file(&out)?;
     }
 
-    stream_speed(&path_in, &path_out, cipher, key.clone())?;
+    stream_speed(&path_in, &path_out, cipher, &key)?;
     println!();
     file_speed(&path_in, &path_out, cipher, key.clone())?;
     // println!();
@@ -85,7 +85,7 @@ fn stream_speed(
     path_in: &str,
     path_out: &str,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &Arc<SecretVec<u8>>,
 ) -> Result<()> {
     println!("stream speed");
     let _ = fs::remove_file(path_out);

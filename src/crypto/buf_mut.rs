@@ -44,6 +44,9 @@ impl BufMut {
         self.available() - self.pos_read
     }
 
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss)]
     pub(crate) fn seek_read(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let new_pos = match pos {
             SeekFrom::Start(pos) => pos as i64,

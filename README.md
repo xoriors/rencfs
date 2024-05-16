@@ -116,6 +116,7 @@ It will prompt you to enter the old password and then the new password.
 ### Encryption info
 
 You can specify the encryption algorithm adding this argument to the command line
+
 ```bash
 --cipher CIPHER ...
 ```
@@ -135,21 +136,25 @@ rencfs --log-level LEVEL ...
 ## Start it in docker
 
 Get the image
+
 ```bash
 docker pull xorio42/rencfs
 ```
 
 Start a container to set up mount in it
+
 ```bash
 docker run -it --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined xorio42/rencfs:latest /bin/sh
 ```
 
 In the container create mount and data directories
+
 ```bash
 mkdir fsmnt && mkdir fsdata
 ```
 
 Start `rencfs`
+
 ```bash
 rencfs --mount-point fsmnt --data-dir fsdata
 ```
@@ -157,11 +162,13 @@ rencfs --mount-point fsmnt --data-dir fsdata
 Enter a password for encryption.
 
 Get the container ID
+
 ```bash
 docker ps
 ```
 
 In another terminal attach to running container with the above ID
+
 ```bash
 docker exec -it <ID> /bin/sh
 ```
@@ -209,11 +216,13 @@ In that case please add it to the `PATH` manually.
 Also, these deps are required (or based on your distribution):
 
 Arch
+
 ```bash
 sudo pacman -Syu && sudo pacman -S fuse3 base-devel
 ```
 
 Ubuntu
+
 ```bash
 sudo apt-get update && sudo apt-get install fuse3 build-essential
 ```
@@ -260,8 +269,9 @@ sharing pull requests are always appreciated.
 
 - `Aes256Gcm` cipher can save files up to 64GB. This is because of the 32-bit counter used in the
   GCM mode. For more details
-  see [here](https://crypto.stackexchange.com/questions/31793/plain-text-size-limits-for-aes-gcm-mode-just-64gb)
-- `ChaCha20Poly1305` cipher can save files up to 256GB, it uses a 32-bit counter. See
+  see [here](https://en.wikipedia.org/wiki/Galois/Counter_Mode#:~:text=For%20any%20given%20key%2C%20GCM,plain%20text%20(64%20GiB).)
+  and [here](https://crypto.stackexchange.com/questions/31793/plain-text-size-limits-for-aes-gcm-mode-just-64gb)
+- `ChaCha20Poly1305` cipher can save files up to 256GB, it uses a 64-bit counter. See
   more details [here](https://datatracker.ietf.org/doc/html/rfc7539)
 
 # Security

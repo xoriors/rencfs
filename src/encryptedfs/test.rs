@@ -9,7 +9,7 @@ use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::Mutex;
 use tracing_test::traced_test;
 
-use crate::{async_util, test_util};
+use crate::async_util;
 use rand::Rng;
 use test::{black_box, Bencher};
 
@@ -18,7 +18,6 @@ use crate::encryptedfs::{
     Cipher, CreateFileAttr, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType, FsError,
     FsResult, PasswordProvider, CONTENTS_DIR, ROOT_INODE,
 };
-use crate::test_util::block_on;
 
 pub(crate) const TESTS_DATA_DIR: &str = "/tmp/rencfs-test-data";
 
@@ -85,6 +84,15 @@ where
     teardown().await.unwrap();
 
     // assert!(res.is_ok());
+}
+
+pub fn block_on<F: Future>(future: F, worker_threads: usize) -> F::Output {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(future)
 }
 
 pub(crate) fn test<F: Future>(key: &str, worker_threads: usize, f: F) {
@@ -1142,11 +1150,10 @@ async fn test_exists_by_name() {
                 .await
                 .unwrap();
 
-            assert!(fs.exists_by_name(ROOT_INODE, &test_file).await.unwrap());
+            assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
             assert_eq!(
                 false,
                 (fs.exists_by_name(ROOT_INODE, &SecretString::from_str("42").unwrap())
-                    .await
                     .unwrap())
             );
         },
@@ -1178,12 +1185,9 @@ async fn test_remove_dir() {
                 .await
                 .unwrap();
 
-            assert!(fs.exists_by_name(ROOT_INODE, &test_dir).await.unwrap());
+            assert!(fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
             fs.remove_dir(ROOT_INODE, &test_dir).await.unwrap();
-            assert_eq!(
-                false,
-                fs.exists_by_name(ROOT_INODE, &test_dir).await.unwrap()
-            );
+            assert_eq!(false, fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
             assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_dir).await.unwrap());
             assert_eq!(
                 0,
@@ -1224,12 +1228,9 @@ async fn test_remove_file() {
                 .await
                 .unwrap();
 
-            assert!(fs.exists_by_name(ROOT_INODE, &test_file).await.unwrap());
+            assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
             fs.remove_file(ROOT_INODE, &test_file).await.unwrap();
-            assert_eq!(
-                false,
-                fs.exists_by_name(ROOT_INODE, &test_file).await.unwrap()
-            );
+            assert_eq!(false, fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
             assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_file).await.unwrap());
             assert_eq!(
                 0,
@@ -1273,7 +1274,7 @@ async fn test_find_by_name_exists_by_name_many_files() {
             }
 
             let test_file = SecretString::from_str("test-file-42").unwrap();
-            assert!(fs.exists_by_name(ROOT_INODE, &test_file).await.unwrap());
+            assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
             assert!(matches!(
                 fs.find_by_name(ROOT_INODE, &test_file).await.unwrap(),
                 Some(_)
@@ -1335,7 +1336,6 @@ fn bench_exists_by_name(b: &mut Bencher) {
                             ))
                             .unwrap(),
                         )
-                        .await
                         .unwrap();
                 });
             })
@@ -1411,7 +1411,7 @@ fn bench_read_dir(b: &mut Bencher) {
             black_box({
                 async_util::call_async(async {
                     let iter = fs.read_dir(ROOT_INODE, 0).await.unwrap();
-                    let v: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
+                    let _: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
                 });
             })
         });
@@ -1443,7 +1443,7 @@ fn bench_read_dir_plus(b: &mut Bencher) {
             black_box({
                 async_util::call_async(async {
                     let iter = fs.read_dir_plus(ROOT_INODE, 0).await.unwrap();
-                    let v: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
+                    let _: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
                 });
             })
         });

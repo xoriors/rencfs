@@ -13,7 +13,6 @@ use base64::engine::GeneralPurpose;
 use base64::{DecodeError, Engine};
 use hex::FromHexError;
 use num_format::{Locale, ToFormattedString};
-use parking_lot::RwLock;
 use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
@@ -22,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::sync::RwLock;
 use tracing::{debug, error, instrument};
 
 use crate::crypto::reader::{CryptoReader, FileCryptoReader, RingCryptoReader};
@@ -49,6 +48,8 @@ pub enum Cipher {
 
 impl Cipher {
     /// In bytes.
+    #[must_use]
+    #[allow(clippy::use_self)]
     pub fn key_len(&self) -> usize {
         match self {
             Cipher::ChaCha20Poly1305 => CHACHA20_POLY1305.key_len(),
@@ -57,7 +58,9 @@ impl Cipher {
     }
 
     /// Max length (in bytes) of the plaintext that can be encrypted before becoming unsafe.
-    pub fn max_plaintext_len(&self) -> usize {
+    #[must_use]
+    #[allow(clippy::use_self)]
+    pub const fn max_plaintext_len(&self) -> usize {
         match self {
             Cipher::ChaCha20Poly1305 => (2_usize.pow(32) - 1) * 64,
             Cipher::Aes256Gcm => (2_usize.pow(39) - 256) / 8,
@@ -278,22 +281,6 @@ pub fn hash_reader<R: Read + ?Sized>(r: &mut R) -> io::Result<[u8; 32]> {
     Ok(hasher.finalize().into())
 }
 
-#[allow(clippy::missing_panics_doc)]
-pub async fn hash_async_reader(r: &mut (impl AsyncRead + ?Sized + Unpin)) -> io::Result<[u8; 32]> {
-    let mut hasher = Sha256::new();
-
-    let mut r = tokio::io::BufReader::new(r);
-    let buf = &mut [0; 1024 * 1024];
-    loop {
-        let n = r.read(buf).await?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hasher.finalize().into())
-}
-
 #[must_use]
 pub fn hash_secret_string(data: &SecretString) -> [u8; 32] {
     hash(data.expose_secret().as_bytes())
@@ -359,7 +346,7 @@ pub fn create_rng() -> impl RngCore + CryptoRng {
     ChaCha20Rng::from_entropy()
 }
 
-pub fn serialize_encrypt_into<W, T: ?Sized>(
+pub fn serialize_encrypt_into<W, T>(
     writer: W,
     value: &T,
     cipher: Cipher,
@@ -367,7 +354,7 @@ pub fn serialize_encrypt_into<W, T: ?Sized>(
 ) -> Result<()>
 where
     W: Write + Send + Sync,
-    T: serde::Serialize,
+    T: serde::Serialize + ?Sized,
 {
     let mut writer = create_writer(writer, cipher, key);
     bincode::serialize_into(&mut writer, value)?;
@@ -376,17 +363,17 @@ where
     Ok(())
 }
 
-pub fn atomic_serialize_encrypt_into<T: ?Sized>(
+pub fn atomic_serialize_encrypt_into<T>(
     file: &Path,
     value: &T,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
 ) -> Result<()>
 where
-    T: serde::Serialize,
+    T: serde::Serialize + ?Sized,
 {
     let parent = file.parent().ok_or(Error::Generic("file has no parent"))?;
-    let mut file = fs_util::open_atomic_write(&file)?;
+    let mut file = fs_util::open_atomic_write(file)?;
     serialize_encrypt_into(&mut file, value, cipher, key)?;
     file.commit()?;
     File::open(parent)?.sync_all()?;

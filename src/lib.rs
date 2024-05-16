@@ -236,7 +236,6 @@ pub mod encryptedfs_fuse3;
 pub mod expire_value;
 pub mod fs_util;
 pub mod stream_util;
-pub(crate) mod test_util;
 
 #[allow(unreachable_code)]
 #[must_use]

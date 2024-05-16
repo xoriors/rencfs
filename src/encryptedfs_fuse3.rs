@@ -1,4 +1,3 @@
-use rand::RngCore;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -24,7 +23,6 @@ use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, error, instrument, trace, warn};
 use tracing::{info, Level};
 
-use crate::crypto;
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
     CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult, PasswordProvider,
@@ -1118,7 +1116,8 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
         info!("");
 
-        let iter = match self.get_fs().read_dir(inode, offset as usize).await {
+        #[allow(clippy::cast_sign_loss)]
+        let iter = match self.get_fs().read_dir(inode, offset as u64).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());
@@ -1209,7 +1208,8 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyDirectoryPlus<Self::DirEntryPlusStream<'_>>> {
         info!("");
 
-        let iter = match self.get_fs().read_dir_plus(parent, offset as usize).await {
+        #[allow(clippy::cast_sign_loss)]
+        let iter = match self.get_fs().read_dir_plus(parent, offset).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());
