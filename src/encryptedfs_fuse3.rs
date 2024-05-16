@@ -20,8 +20,8 @@ use futures_util::stream;
 use futures_util::stream::Iter;
 use libc::{EACCES, EEXIST, EFBIG, EIO, EISDIR, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
+use tracing::Level;
 use tracing::{debug, error, instrument, trace, warn};
-use tracing::{info, Level};
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
@@ -168,7 +168,7 @@ impl EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn create_nod(
         &self,
         parent: u64,
@@ -287,7 +287,7 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::DEBUG), ret(level = Level::DEBUG))]
     async fn lookup(&self, req: Request, parent: u64, name: &OsStr) -> Result<ReplyEntry> {
         trace!("");
 
@@ -345,7 +345,7 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
     }
 
-    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn getattr(
         &self,
         req: Request,
@@ -367,7 +367,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     #[allow(clippy::cast_possible_truncation)]
     async fn setattr(
         &self,
@@ -537,7 +537,7 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn mknod(
         &self,
         req: Request,
@@ -575,7 +575,7 @@ impl Filesystem for EncryptedFsFuse3 {
             })?
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn mkdir(
         &self,
         req: Request,
@@ -642,7 +642,7 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn unlink(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         trace!("");
 
@@ -694,7 +694,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         if let Err(err) = self
             .get_fs()
-            .remove_file(
+            .delete_file(
                 parent,
                 &SecretString::from_str(name.to_str().unwrap()).unwrap(),
             )
@@ -707,7 +707,7 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(())
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn rmdir(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         trace!("");
 
@@ -756,7 +756,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         if let Err(err) = self
             .get_fs()
-            .remove_dir(
+            .delete_dir(
                 parent,
                 &SecretString::from_str(name.to_str().unwrap()).unwrap(),
             )
@@ -772,7 +772,7 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(())
     }
 
-    #[instrument(skip(self, name, new_name), fields(name = name.to_str().unwrap(), new_name = new_name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self, name, new_name), fields(name = name.to_str().unwrap(), new_name = new_name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn rename(
         &self,
         req: Request,
@@ -883,7 +883,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn open(&self, req: Request, inode: Inode, flags: u32) -> Result<ReplyOpen> {
         trace!("");
 
@@ -998,14 +998,14 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn statfs(&self, req: Request, inode: u64) -> Result<ReplyStatFs> {
         trace!("");
         warn!("implementation is a stub");
         Ok(STATFS)
     }
 
-    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn release(
         &self,
         req: Request,
@@ -1052,7 +1052,7 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(())
     }
 
-    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn flush(&self, req: Request, inode: Inode, fh: u64, lock_owner: u64) -> Result<()> {
         trace!("");
 
@@ -1064,7 +1064,7 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(())
     }
 
-    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     #[allow(clippy::cast_possible_wrap)]
     async fn opendir(&self, req: Request, inode: Inode, flags: u32) -> Result<ReplyOpen> {
         trace!("");
@@ -1106,7 +1106,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
     type DirEntryStream<'a> = Iter<Skip<DirectoryEntryIterator>> where Self: 'a;
 
-    #[instrument(skip(self), err(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn readdir(
         &self,
         req: Request,
@@ -1114,7 +1114,7 @@ impl Filesystem for EncryptedFsFuse3 {
         fh: u64,
         offset: i64,
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
-        info!("");
+        trace!("");
 
         #[allow(clippy::cast_sign_loss)]
         let iter = match self.get_fs().read_dir(inode, offset as u64).await {
@@ -1133,14 +1133,14 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn releasedir(&self, req: Request, inode: Inode, fh: u64, flags: u32) -> Result<()> {
         trace!("");
 
         Ok(())
     }
 
-    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn access(&self, req: Request, inode: u64, mask: u32) -> Result<()> {
         trace!("");
 
@@ -1157,7 +1157,7 @@ impl Filesystem for EncryptedFsFuse3 {
         )
     }
 
-    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn create(
         &self,
         req: Request,
@@ -1197,7 +1197,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
     type DirEntryPlusStream<'a> = Iter<Skip<DirectoryEntryPlusIterator>> where Self: 'a;
 
-    #[instrument(skip(self), err(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn readdirplus(
         &self,
         req: Request,
@@ -1206,7 +1206,7 @@ impl Filesystem for EncryptedFsFuse3 {
         offset: u64,
         lock_owner: u64,
     ) -> Result<ReplyDirectoryPlus<Self::DirEntryPlusStream<'_>>> {
-        info!("");
+        trace!("");
 
         #[allow(clippy::cast_sign_loss)]
         let iter = match self.get_fs().read_dir_plus(parent, offset).await {
@@ -1224,7 +1224,7 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::INFO))]
+    #[instrument(skip(self), err(level = Level::INFO), ret(level = Level::DEBUG))]
     async fn copy_file_range(
         &self,
         req: Request,

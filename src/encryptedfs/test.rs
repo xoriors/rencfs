@@ -1186,7 +1186,7 @@ async fn test_remove_dir() {
                 .unwrap();
 
             assert!(fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
-            fs.remove_dir(ROOT_INODE, &test_dir).await.unwrap();
+            fs.delete_dir(ROOT_INODE, &test_dir).await.unwrap();
             assert_eq!(false, fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
             assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_dir).await.unwrap());
             assert_eq!(
@@ -1229,7 +1229,7 @@ async fn test_remove_file() {
                 .unwrap();
 
             assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
-            fs.remove_file(ROOT_INODE, &test_file).await.unwrap();
+            fs.delete_file(ROOT_INODE, &test_file).await.unwrap();
             assert_eq!(false, fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
             assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_file).await.unwrap());
             assert_eq!(
@@ -1411,7 +1411,8 @@ fn bench_read_dir(b: &mut Bencher) {
             black_box({
                 async_util::call_async(async {
                     let iter = fs.read_dir(ROOT_INODE, 0).await.unwrap();
-                    let _: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
+                    let vec: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
+                    black_box(vec);
                 });
             })
         });
@@ -1443,7 +1444,8 @@ fn bench_read_dir_plus(b: &mut Bencher) {
             black_box({
                 async_util::call_async(async {
                     let iter = fs.read_dir_plus(ROOT_INODE, 0).await.unwrap();
-                    let _: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
+                    let vec: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
+                    black_box(vec);
                 });
             })
         });

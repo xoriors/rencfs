@@ -1,6 +1,5 @@
 use std::cmp::max;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::convert::Infallible;
 use std::fmt::Debug;
 use std::fs::{DirEntry, File, OpenOptions, ReadDir};
 use std::io::ErrorKind::Other;
@@ -9,7 +8,7 @@ use std::num::{NonZeroUsize, ParseIntError};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, LazyLock, Weak};
 use std::time::{Duration, SystemTime};
 use std::{fs, io};
 
@@ -17,15 +16,15 @@ use argon2::password_hash::rand_core::RngCore;
 use futures_util::TryStreamExt;
 use lru::LruCache;
 use num_format::{Locale, ToFormattedString};
-use rand::thread_rng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
+use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::{JoinError, JoinSet};
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::arc_hashmap::{ArcHashMap, Holder};
 use crate::async_util::call_async;
@@ -49,6 +48,17 @@ const LS_DIR: &str = "ls";
 const HASH_DIR: &str = "hash";
 
 pub(crate) const ROOT_INODE: u64 = 1;
+
+fn spawn_runtime() -> Runtime {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime
+}
+
+static DIR_ENTRIES_RT: LazyLock<Runtime> = LazyLock::new(|| spawn_runtime());
+static NOD_RT: LazyLock<Runtime> = LazyLock::new(|| spawn_runtime());
 
 async fn reset_handles(
     fs: Arc<EncryptedFs>,
@@ -74,11 +84,7 @@ async fn reset_handles(
 }
 
 async fn get_metadata(fs: Arc<EncryptedFs>, ino: u64) -> FsResult<FileAttr> {
-    let lock = fs
-        .attr_cache
-        .get()
-        .await
-        .map_err(|_| FsError::Other("should not happen"))?;
+    let lock = fs.attr_cache.get().await?;
     let mut guard = lock.lock().await;
     let attr = guard.get(&ino);
     if let Some(attr) = attr {
@@ -547,16 +553,16 @@ pub trait PasswordProvider: Send + Sync + 'static {
 }
 
 struct DirEntriesCacheProvider {}
-impl Provider<Mutex<LruCache<String, SecretString>>, Infallible> for DirEntriesCacheProvider {
-    fn provide(&self) -> Result<Mutex<LruCache<String, SecretString>>, Infallible> {
-        Ok(Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())))
+impl Provider<Mutex<LruCache<String, SecretString>>, FsError> for DirEntriesCacheProvider {
+    fn provide(&self) -> Result<Mutex<LruCache<String, SecretString>>, FsError> {
+        Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }
 
 struct AttrCacheProvider {}
-impl Provider<Mutex<LruCache<u64, FileAttr>>, Infallible> for AttrCacheProvider {
-    fn provide(&self) -> Result<Mutex<LruCache<u64, FileAttr>>, Infallible> {
-        Ok(Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())))
+impl Provider<Mutex<LruCache<u64, FileAttr>>, FsError> for AttrCacheProvider {
+    fn provide(&self) -> Result<Mutex<LruCache<u64, FileAttr>>, FsError> {
+        Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }
 
@@ -581,9 +587,9 @@ pub struct EncryptedFs {
     read_write_locks: ArcHashMap<u64, RwLock<bool>>,
     key: ExpireValue<SecretVec<u8>, FsError, KeyProvider>,
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
-    attr_cache: ExpireValue<Mutex<LruCache<u64, FileAttr>>, Infallible, AttrCacheProvider>,
+    attr_cache: ExpireValue<Mutex<LruCache<u64, FileAttr>>, FsError, AttrCacheProvider>,
     dir_entries_name_cache:
-        ExpireValue<Mutex<LruCache<String, SecretString>>, Infallible, DirEntriesCacheProvider>,
+        ExpireValue<Mutex<LruCache<String, SecretString>>, FsError, DirEntriesCacheProvider>,
     dir_entries_meta_cache: Mutex<LruCache<String, (u64, FileType)>>,
 }
 
@@ -625,7 +631,7 @@ impl EncryptedFs {
                 DirEntriesCacheProvider {},
                 Duration::from_secs(10 * 60),
             ),
-            dir_entries_meta_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
+            dir_entries_meta_cache: Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())),
         };
 
         let arc = Arc::new(fs);
@@ -673,133 +679,137 @@ impl EncryptedFs {
             return Err(FsError::AlreadyExists);
         }
 
-        let mut attr: FileAttr = create_attr.into();
-        attr.ino = self.generate_next_inode();
-
-        let fs = self
+        // spawn on a dedicated runtime to not interfere with other more priority tasks
+        let self_clone = self
             .self_weak
             .lock()
             .unwrap()
-            .as_mut()
+            .as_ref()
             .unwrap()
             .upgrade()
             .unwrap();
-        let mut join_set = JoinSet::new();
+        let name_clone = name.clone();
+        NOD_RT
+            .spawn(async move {
+                let mut attr: FileAttr = create_attr.into();
+                attr.ino = self_clone.generate_next_inode();
 
-        // write inode
-        let self_clone = fs.clone();
-        let attr_clone = attr;
-        // handles.push(tokio::spawn(async move {
-        self_clone.write_inode_to_storage(&attr_clone).await?;
-        // Ok::<(), FsError>(())
-        // }));
+                let fs = self_clone;
+                let mut join_set = JoinSet::new();
 
-        match attr.kind {
-            FileType::RegularFile => {
+                // write inode
                 let self_clone = fs.clone();
-                join_set.spawn(async move {
-                    // create in contents directory
-                    let file = File::create(self_clone.contents_path(attr.ino))?;
-                    // sync_all file and parent
-                    // these operations are a bit slow, but are needed to make sure the file is correctly created
-                    // i.e. creating 100 files takes 0.965 sec with sync_all and 0.130 sec without
-                    file.sync_all()?;
-                    File::open(
-                        self_clone
-                            .contents_path(attr.ino)
-                            .parent()
-                            .expect("we don't have parent"),
-                    )?
-                    .sync_all()?;
-                    Ok::<(), FsError>(())
-                });
-            }
-            FileType::Directory => {
-                let self_clone = fs.clone();
-                join_set.spawn(async move {
-                    // create in contents directory
-                    let contents_dir = self_clone.contents_path(attr.ino);
-                    fs::create_dir(contents_dir.clone())?;
-                    // used to keep encrypted file names used by [`read_dir`] and [`read_dir_plus`]
-                    fs::create_dir(contents_dir.join(LS_DIR))?;
-                    // used to keep hashes of encrypted file names used by [`exists_by_name`] and [`find_by_name`]
-                    // this optimizes the search process as we don't need to decrypt all file names and search
-                    fs::create_dir(contents_dir.join(HASH_DIR))?;
+                let attr_clone = attr;
+                self_clone.write_inode_to_storage(&attr_clone).await?;
 
-                    // add "." and ".." entries
+                match attr.kind {
+                    FileType::RegularFile => {
+                        let self_clone = fs.clone();
+                        join_set.spawn(async move {
+                            // create in contents directory
+                            let file = File::create(self_clone.contents_path(attr.ino))?;
+                            // sync_all file and parent
+                            // these operations are a bit slow, but are needed to make sure the file is correctly created
+                            // i.e. creating 100 files takes 0.965 sec with sync_all and 0.130 sec without
+                            file.sync_all()?;
+                            File::open(
+                                self_clone
+                                    .contents_path(attr.ino)
+                                    .parent()
+                                    .expect("we don't have parent"),
+                            )?
+                            .sync_all()?;
+                            Ok::<(), FsError>(())
+                        });
+                    }
+                    FileType::Directory => {
+                        let self_clone = fs.clone();
+                        join_set.spawn(async move {
+                            // create in contents directory
+                            let contents_dir = self_clone.contents_path(attr.ino);
+                            fs::create_dir(contents_dir.clone())?;
+                            // used to keep encrypted file names used by [`read_dir`] and [`read_dir_plus`]
+                            fs::create_dir(contents_dir.join(LS_DIR))?;
+                            // used to keep hashes of encrypted file names used by [`exists_by_name`] and [`find_by_name`]
+                            // this optimizes the search process as we don't need to decrypt all file names and search
+                            fs::create_dir(contents_dir.join(HASH_DIR))?;
+
+                            // add "." and ".." entries
+                            self_clone
+                                .insert_directory_entry(
+                                    attr_clone.ino,
+                                    &DirectoryEntry {
+                                        ino: attr_clone.ino,
+                                        name: SecretString::from_str("$.").expect("cannot parse"),
+                                        kind: FileType::Directory,
+                                    },
+                                )
+                                .await?;
+                            self_clone
+                                .insert_directory_entry(
+                                    attr_clone.ino,
+                                    &DirectoryEntry {
+                                        ino: parent,
+                                        name: SecretString::from_str("$..").expect("cannot parse"),
+                                        kind: FileType::Directory,
+                                    },
+                                )
+                                .await?;
+                            Ok::<(), FsError>(())
+                        });
+                    }
+                }
+
+                // edd entry in parent directory, used for listing
+                let self_clone = fs.clone();
+                let attr_clone = attr;
+                join_set.spawn(async move {
                     self_clone
                         .insert_directory_entry(
-                            attr_clone.ino,
+                            parent,
                             &DirectoryEntry {
                                 ino: attr_clone.ino,
-                                name: SecretString::from_str("$.").expect("cannot parse"),
-                                kind: FileType::Directory,
-                            },
-                        )
-                        .await?;
-                    self_clone
-                        .insert_directory_entry(
-                            attr_clone.ino,
-                            &DirectoryEntry {
-                                ino: parent,
-                                name: SecretString::from_str("$..").expect("cannot parse"),
-                                kind: FileType::Directory,
+                                name: name_clone,
+                                kind: attr_clone.kind,
                             },
                         )
                         .await?;
                     Ok::<(), FsError>(())
                 });
-            }
-        }
 
-        // edd entry in parent directory, used for listing
-        let self_clone = fs.clone();
-        let attr_clone = attr;
-        let name_clone = name.clone();
-        join_set.spawn(async move {
-            self_clone
-                .insert_directory_entry(
-                    parent,
-                    &DirectoryEntry {
-                        ino: attr_clone.ino,
-                        name: name_clone,
-                        kind: attr_clone.kind,
-                    },
-                )
-                .await?;
-            Ok::<(), FsError>(())
-        });
+                let self_clone = fs.clone();
+                join_set.spawn(async move {
+                    self_clone
+                        .update_inode(
+                            parent,
+                            SetFileAttr::default()
+                                .with_mtime(SystemTime::now())
+                                .with_ctime(SystemTime::now()),
+                        )
+                        .await?;
+                    Ok::<(), FsError>(())
+                });
 
-        let self_clone = fs.clone();
-        join_set.spawn(async move {
-            self_clone
-                .update_inode(
-                    parent,
-                    SetFileAttr::default()
-                        .with_mtime(SystemTime::now())
-                        .with_ctime(SystemTime::now()),
-                )
-                .await?;
-            Ok::<(), FsError>(())
-        });
+                let self_clone = fs.clone();
+                let handle = if attr.kind == FileType::RegularFile {
+                    if read || write {
+                        self_clone.open(attr.ino, read, write).await?
+                    } else {
+                        // we don't create handle for files that are not opened
+                        0
+                    }
+                } else {
+                    // we don't use handle for directories
+                    0
+                };
 
-        let handle = if attr.kind == FileType::RegularFile {
-            if read || write {
-                self.open(attr.ino, read, write).await?
-            } else {
-                // we don't create handle for files that are not opened
-                0
-            }
-        } else {
-            // we don't use handle for directories
-            0
-        };
-
-        // wait for all tasks to finish
-        while let Some(res) = join_set.join_next().await {
-            res??;
-        }
-        Ok((handle, attr))
+                // wait for all tasks to finish
+                while let Some(res) = join_set.join_next().await {
+                    res??;
+                }
+                Ok((handle, attr))
+            })
+            .await?
     }
 
     #[allow(clippy::missing_panics_doc)]
@@ -852,7 +862,7 @@ impl EncryptedFs {
 
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
-    pub async fn remove_dir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
+    pub async fn delete_dir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         if !self.is_dir(parent)? {
             return Err(FsError::InvalidInodeType);
         }
@@ -872,35 +882,58 @@ impl EncryptedFs {
         if self.children_count(attr.ino)? > 0 {
             return Err(FsError::NotEmpty);
         }
+        let self_clone = self
+            .self_weak
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        let name_clone = name.clone();
+        NOD_RT
+            .spawn(async move {
+                // remove inode file
+                {
+                    let lock = self_clone
+                        .serialize_inode_locks
+                        .get_or_insert_with(attr.ino, || RwLock::new(false));
+                    let _guard = lock.write();
+                    fs::remove_file(self_clone.ino_file(attr.ino))?;
+                }
 
-        // remove inode file
-        {
-            let lock = self
-                .serialize_inode_locks
-                .get_or_insert_with(attr.ino, || RwLock::new(false));
-            let _guard = lock.write();
-            fs::remove_file(self.ino_file(attr.ino))?;
-        }
+                // remove contents directory
+                fs::remove_dir_all(self_clone.contents_path(attr.ino))?;
+                // remove from parent directory
+                self_clone
+                    .remove_directory_entry(parent, &name_clone)
+                    .await?;
+                // remove from cache
+                self_clone
+                    .attr_cache
+                    .get()
+                    .await?
+                    .lock()
+                    .await
+                    .demote(&attr.ino);
 
-        // remove contents directory
-        tokio::fs::remove_dir_all(self.contents_path(attr.ino)).await?;
-        // remove from parent directory
-        self.remove_directory_entry(parent, name).await?;
+                self_clone
+                    .update_inode(
+                        parent,
+                        SetFileAttr::default()
+                            .with_mtime(SystemTime::now())
+                            .with_ctime(SystemTime::now()),
+                    )
+                    .await?;
 
-        self.update_inode(
-            parent,
-            SetFileAttr::default()
-                .with_mtime(SystemTime::now())
-                .with_ctime(SystemTime::now()),
-        )
-        .await?;
-
-        Ok(())
+                Ok(())
+            })
+            .await?
     }
 
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
-    pub async fn remove_file(&self, parent: u64, name: &SecretString) -> FsResult<()> {
+    pub async fn delete_file(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         if !self.is_dir(parent)? {
             return Err(FsError::InvalidInodeType);
         }
@@ -915,29 +948,53 @@ impl EncryptedFs {
         if !matches!(attr.kind, FileType::RegularFile) {
             return Err(FsError::InvalidInodeType);
         }
-        // remove inode file
-        {
-            let lock = self
-                .serialize_inode_locks
-                .get_or_insert_with(attr.ino, || RwLock::new(false));
-            let _guard = lock.write();
-            fs::remove_file(self.ino_file(attr.ino))?;
-        }
+        let self_clone = self
+            .self_weak
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        let name_clone = name.clone();
+        NOD_RT
+            .spawn(async move {
+                // remove inode file
+                {
+                    let lock = self_clone
+                        .serialize_inode_locks
+                        .get_or_insert_with(attr.ino, || RwLock::new(false));
+                    let _guard = lock.write();
+                    fs::remove_file(self_clone.ino_file(attr.ino))?;
+                }
 
-        // remove from contents directory
-        tokio::fs::remove_file(self.contents_path(attr.ino)).await?;
-        // remove from parent directory
-        self.remove_directory_entry(parent, name).await?;
+                // remove from contents directory
+                fs::remove_file(self_clone.contents_path(attr.ino))?;
+                // remove from parent directory
+                self_clone
+                    .remove_directory_entry(parent, &name_clone)
+                    .await?;
+                // remove from cache
+                self_clone
+                    .attr_cache
+                    .get()
+                    .await?
+                    .lock()
+                    .await
+                    .demote(&attr.ino);
 
-        self.update_inode(
-            parent,
-            SetFileAttr::default()
-                .with_mtime(SystemTime::now())
-                .with_ctime(SystemTime::now()),
-        )
-        .await?;
+                self_clone
+                    .update_inode(
+                        parent,
+                        SetFileAttr::default()
+                            .with_mtime(SystemTime::now())
+                            .with_ctime(SystemTime::now()),
+                    )
+                    .await?;
 
-        Ok(())
+                Ok(())
+            })
+            .await?
     }
 
     #[allow(clippy::missing_panics_doc)]
@@ -1019,7 +1076,7 @@ impl EncryptedFs {
                         .upgrade()
                         .unwrap()
                 };
-                tokio::spawn(async move { fs.create_directory_entry_plus(entry).await })
+                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry_plus(entry).await })
             })
             // .skip(offset as usize)
             .collect();
@@ -1044,13 +1101,7 @@ impl EncryptedFs {
             return Err(e.into());
         }
         let entry = entry.unwrap();
-        let file_path = entry.path().to_str().unwrap().to_string();
-        let lock = self
-            .serialize_dir_entries_ls_locks
-            .get_or_insert_with(file_path.clone(), || RwLock::new(false));
-        let _guard = lock.read().await;
         let name = entry.file_name().to_string_lossy().to_string();
-
         let name = {
             if name == "$." {
                 SecretString::from_str(".").unwrap()
@@ -1063,6 +1114,7 @@ impl EncryptedFs {
                 if let Some(name_cached) = cache.get(&name).cloned() {
                     name_cached
                 } else {
+                    warn!("decrypting file name");
                     drop(cache);
                     if let Ok(decrypted_name) =
                         crypto::decrypt_file_name(&name, self.cipher, self.key.get().await?)
@@ -1079,7 +1131,7 @@ impl EncryptedFs {
                 }
             }
         };
-
+        let file_path = entry.path().to_str().unwrap().to_string();
         // try from cache
         let mut cache = self.dir_entries_meta_cache.lock().await;
         if let Some(meta) = cache.get(&file_path) {
@@ -1090,10 +1142,20 @@ impl EncryptedFs {
             });
         }
         drop(cache);
+        warn!("deserializing directory entry");
+        info!(
+            "cache size {}",
+            self.dir_entries_meta_cache.lock().await.len()
+        );
+        let lock = self
+            .serialize_dir_entries_ls_locks
+            .get_or_insert_with(file_path.clone(), || RwLock::new(false));
+        let guard = lock.read().await;
         let file = File::open(entry.path())?;
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(
             crypto::create_reader(file, self.cipher, self.key.get().await?),
         );
+        drop(guard);
         if let Err(e) = res {
             error!(err = %e, "deserializing directory entry");
             return Err(e.into());
@@ -1110,10 +1172,7 @@ impl EncryptedFs {
     async fn get_dir_entries_name_cache(
         &self,
     ) -> FsResult<Arc<Mutex<LruCache<String, SecretString>>>> {
-        self.dir_entries_name_cache
-            .get()
-            .await
-            .map_err(|_| FsError::Other("should not happen"))
+        self.dir_entries_name_cache.get().await
     }
 
     async fn create_directory_entry_iterator(
@@ -1134,7 +1193,7 @@ impl EncryptedFs {
                         .upgrade()
                         .unwrap()
                 };
-                tokio::spawn(async move { fs.create_directory_entry(entry).await })
+                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await })
             })
             // .skip(offset as usize)
             .collect();
@@ -1170,11 +1229,7 @@ impl EncryptedFs {
     }
 
     async fn get_inode_from_cache_or_storage(&self, ino: u64) -> FsResult<FileAttr> {
-        let lock = self
-            .attr_cache
-            .get()
-            .await
-            .map_err(|_| FsError::Other("should not happen"))?;
+        let lock = self.attr_cache.get().await?;
         let mut guard = lock.lock().await;
         let attr = guard.get(&ino);
         if let Some(attr) = attr {
@@ -1248,11 +1303,7 @@ impl EncryptedFs {
         drop(guard);
         // update cache also
         {
-            let lock = self
-                .attr_cache
-                .get()
-                .await
-                .map_err(|_| FsError::Other("should not happen"))?;
+            let lock = self.attr_cache.get().await?;
             let mut guard = lock.lock().await;
             guard.put(attr.ino, *attr);
         }
@@ -2003,9 +2054,9 @@ impl EncryptedFs {
             self.write_inode_to_storage(&attr).await?;
 
             // create in contents directory
-            tokio::fs::create_dir(self.contents_path(attr.ino)).await?;
-            tokio::fs::create_dir(self.contents_path(attr.ino).join(LS_DIR)).await?;
-            tokio::fs::create_dir(self.contents_path(attr.ino).join(HASH_DIR)).await?;
+            fs::create_dir(self.contents_path(attr.ino))?;
+            fs::create_dir(self.contents_path(attr.ino).join(LS_DIR))?;
+            fs::create_dir(self.contents_path(attr.ino).join(HASH_DIR))?;
 
             // add "." entry
             self.insert_directory_entry(
@@ -2135,7 +2186,7 @@ impl EncryptedFs {
 
     fn generate_next_inode(&self) -> u64 {
         loop {
-            let ino = thread_rng().next_u64();
+            let ino = crypto::create_rng().next_u64();
 
             if ino <= ROOT_INODE {
                 continue;
@@ -2199,7 +2250,7 @@ async fn ensure_structure_created(data_dir: &PathBuf, key_provider: &KeyProvider
     if data_dir.exists() {
         check_structure(data_dir, true).await?;
     } else {
-        tokio::fs::create_dir_all(&data_dir).await?;
+        fs::create_dir_all(&data_dir)?;
     }
 
     // create directories
@@ -2207,7 +2258,7 @@ async fn ensure_structure_created(data_dir: &PathBuf, key_provider: &KeyProvider
     for dir in dirs {
         let path = data_dir.join(dir);
         if !path.exists() {
-            tokio::fs::create_dir_all(path).await?;
+            fs::create_dir_all(path)?;
         }
     }
 

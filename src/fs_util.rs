@@ -2,8 +2,8 @@
 use atomic_write_file::unix::OpenOptionsExt;
 use atomic_write_file::AtomicWriteFile;
 use futures_util::TryStreamExt;
-use std::io;
 use std::path::Path;
+use std::{fs, io};
 use tokio_stream::wrappers::ReadDirStream;
 
 /// Recursively moves the content of a directory to another.
@@ -16,7 +16,7 @@ pub async fn rename_dir_content(src: &Path, dst: &Path) -> io::Result<()> {
         ));
     }
     if !dst.exists() {
-        tokio::fs::create_dir_all(dst).await?;
+        fs::create_dir_all(dst)?;
     }
     let read_dir = tokio::fs::read_dir(src).await?;
     let read_dir_stream = ReadDirStream::new(read_dir);
@@ -25,14 +25,14 @@ pub async fn rename_dir_content(src: &Path, dst: &Path) -> io::Result<()> {
     for entry in entries {
         let dst = dst.join(entry.file_name());
         if entry.path().is_dir() {
-            tokio::fs::create_dir_all(&dst).await?;
+            fs::create_dir_all(&dst)?;
             Box::pin(rename_dir_content(&entry.path(), &dst)).await?;
-            tokio::fs::remove_dir(entry.path()).await?;
+            fs::remove_dir(entry.path())?;
         } else {
-            tokio::fs::rename(entry.path(), dst).await?;
+            fs::rename(entry.path(), dst)?;
         }
     }
-    tokio::fs::remove_dir(src).await?;
+    fs::remove_dir(src)?;
     Ok(())
 }
 
