@@ -552,9 +552,16 @@ pub trait PasswordProvider: Send + Sync + 'static {
     fn get_password(&self) -> Option<SecretString>;
 }
 
-struct DirEntriesCacheProvider {}
-impl Provider<Mutex<LruCache<String, SecretString>>, FsError> for DirEntriesCacheProvider {
+struct DirEntryNameCacheProvider {}
+impl Provider<Mutex<LruCache<String, SecretString>>, FsError> for DirEntryNameCacheProvider {
     fn provide(&self) -> Result<Mutex<LruCache<String, SecretString>>, FsError> {
+        Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
+    }
+}
+
+struct DirEntryMetaCacheProvider {}
+impl Provider<Mutex<LruCache<String, (u64, FileType)>>, FsError> for DirEntryMetaCacheProvider {
+    fn provide(&self) -> Result<Mutex<LruCache<String, (u64, FileType)>>, FsError> {
         Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }
@@ -589,8 +596,9 @@ pub struct EncryptedFs {
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
     attr_cache: ExpireValue<Mutex<LruCache<u64, FileAttr>>, FsError, AttrCacheProvider>,
     dir_entries_name_cache:
-        ExpireValue<Mutex<LruCache<String, SecretString>>, FsError, DirEntriesCacheProvider>,
-    dir_entries_meta_cache: Mutex<LruCache<String, (u64, FileType)>>,
+        ExpireValue<Mutex<LruCache<String, SecretString>>, FsError, DirEntryNameCacheProvider>,
+    dir_entries_meta_cache:
+        ExpireValue<Mutex<LruCache<String, (u64, FileType)>>, FsError, DirEntryMetaCacheProvider>,
 }
 
 impl EncryptedFs {
@@ -628,10 +636,13 @@ impl EncryptedFs {
             // todo: take duration from param
             attr_cache: ExpireValue::new(AttrCacheProvider {}, Duration::from_secs(10 * 60)),
             dir_entries_name_cache: ExpireValue::new(
-                DirEntriesCacheProvider {},
+                DirEntryNameCacheProvider {},
                 Duration::from_secs(10 * 60),
             ),
-            dir_entries_meta_cache: Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())),
+            dir_entries_meta_cache: ExpireValue::new(
+                DirEntryMetaCacheProvider {},
+                Duration::from_secs(10 * 60),
+            ),
         };
 
         let arc = Arc::new(fs);
@@ -1133,7 +1144,8 @@ impl EncryptedFs {
         };
         let file_path = entry.path().to_str().unwrap().to_string();
         // try from cache
-        let mut cache = self.dir_entries_meta_cache.lock().await;
+        let lock = self.dir_entries_meta_cache.get().await?;
+        let mut cache = lock.lock().await;
         if let Some(meta) = cache.get(&file_path) {
             return Ok(DirectoryEntry {
                 ino: meta.0,
@@ -1145,7 +1157,7 @@ impl EncryptedFs {
         warn!("deserializing directory entry");
         info!(
             "cache size {}",
-            self.dir_entries_meta_cache.lock().await.len()
+            self.dir_entries_meta_cache.get().await?.lock().await.len()
         );
         let lock = self
             .serialize_dir_entries_ls_locks
@@ -1163,6 +1175,8 @@ impl EncryptedFs {
         let (ino, kind): (u64, FileType) = res.unwrap();
         // add to cache
         self.dir_entries_meta_cache
+            .get()
+            .await?
             .lock()
             .await
             .put(file_path, (ino, kind));
