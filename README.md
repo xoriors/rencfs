@@ -51,8 +51,10 @@ binary (for library, you can follow the [documentation](https://docs.rs/rencfs/l
 
 ## Command Line Tool
 
+### Dependencies
+
 To use the encrypted file system, you need to have FUSE installed on your system. You can install it by running the
-following command (or based on your distribution)
+following command (or based on your distribution).
 
 Arch
 
