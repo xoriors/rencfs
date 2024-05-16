@@ -116,6 +116,19 @@ fn get_cli_args() -> ArgMatches {
                 .default_value("INFO")
                 .help("Log level, possible values: TRACE, DEBUG, INFO, WARN, ERROR"),
         )
+        .arg(
+            Arg::new("cipher")
+                .long("cipher")
+                .short('c')
+                .value_name("cipher")
+                .default_value("ChaCha20Poly1305")
+                .help(format!("Cipher used for encryption, possible values: {}",
+                              Cipher::iter().fold(String::new(), |mut acc, x| {
+                                  acc.push_str(format!("{acc}{}{x}", if acc.is_empty() { "" } else { ", " }).as_str());
+                                  acc
+                              }).as_str()),
+                )
+        )
         .subcommand_required(true)
         .subcommand(
             Command::new("mount")
@@ -180,19 +193,6 @@ fn get_cli_args() -> ArgMatches {
                         .action(ArgAction::SetTrue)
                         .help("If it should allow setting SUID and SGID when files are created. Default is false and it will unset those flags when creating files"),
                 )
-                .arg(
-                    Arg::new("cipher")
-                        .long("cipher")
-                        .short('c')
-                        .value_name("cipher")
-                        .default_value("ChaCha20Poly1305")
-                        .help(format!("Cipher used for encryption, possible values: {}",
-                                      Cipher::iter().fold(String::new(), |mut acc, x| {
-                                          acc.push_str(format!("{acc}{}{x}", if acc.is_empty() { "" } else { ", " }).as_str());
-                                          acc
-                                      }).as_str()),
-                        )
-                )
         ).subcommand(
         Command::new("change-password")
             .about("Change password for the master key used to encrypt the data")
@@ -204,19 +204,6 @@ fn get_cli_args() -> ArgMatches {
                     .value_name("DATA_DIR")
                     .help("Where to store the encrypted data"),
             )
-            .arg(
-                Arg::new("cipher")
-                    .long("cipher")
-                    .short('c')
-                    .value_name("cipher")
-                    .default_value("ChaCha20Poly1305")
-                    .help(format!("Cipher used for encryption, possible values: {}",
-                                  Cipher::iter().fold(String::new(), |mut acc, x| {
-                                      acc.push_str(format!("{acc}{}{x}", if acc.is_empty() { "" } else { ", " }).as_str());
-                                      acc
-                                  }).as_str()),
-                    )
-            )
     )
         .get_matches()
 }
@@ -224,9 +211,17 @@ fn get_cli_args() -> ArgMatches {
 async fn async_main() -> Result<()> {
     let matches = get_cli_args();
 
+    let cipher: String = matches.get_one::<String>("cipher").unwrap().to_string();
+    let cipher = Cipher::from_str(cipher.as_str());
+    if cipher.is_err() {
+        error!("Invalid cipher");
+        return Err(ExitStatusError::Failure(1).into());
+    }
+    let cipher = cipher.unwrap();
+
     match matches.subcommand() {
-        Some(("change-password", matches)) => run_change_password(matches).await?,
-        Some(("mount", matches)) => run_mount(matches).await?,
+        Some(("change-password", matches)) => run_change_password(cipher, matches).await?,
+        Some(("mount", matches)) => run_mount(cipher, matches).await?,
         None => {
             error!("No subcommand provided");
             return Err(ExitStatusError::Failure(1).into());
@@ -240,16 +235,8 @@ async fn async_main() -> Result<()> {
     Ok(())
 }
 
-async fn run_change_password(matches: &ArgMatches) -> Result<()> {
+async fn run_change_password(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
-
-    let cipher: String = matches.get_one::<String>("cipher").unwrap().to_string();
-    let cipher = Cipher::from_str(cipher.as_str());
-    if cipher.is_err() {
-        error!("Invalid cipher");
-        return Err(ExitStatusError::Failure(1).into());
-    }
-    let cipher = cipher.unwrap();
 
     // read password from stdin
     print!("Enter old password: ");
@@ -287,21 +274,13 @@ async fn run_change_password(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-async fn run_mount(matches: &ArgMatches) -> Result<()> {
+async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     let mountpoint: String = matches
         .get_one::<String>("mount-point")
         .unwrap()
         .to_string();
 
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
-
-    let cipher: String = matches.get_one::<String>("cipher").unwrap().to_string();
-    let cipher = Cipher::from_str(cipher.as_str());
-    if cipher.is_err() {
-        error!("Invalid cipher");
-        return Err(ExitStatusError::Failure(1).into());
-    }
-    let cipher = cipher.unwrap();
 
     // when running from IDE we can't read from stdin with rpassword, get it from env var
     let mut password =
