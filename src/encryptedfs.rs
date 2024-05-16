@@ -560,8 +560,8 @@ impl Provider<Mutex<LruCache<String, SecretString>>, FsError> for DirEntryNameCa
 }
 
 struct DirEntryMetaCacheProvider {}
-impl Provider<Mutex<LruCache<String, (u64, FileType)>>, FsError> for DirEntryMetaCacheProvider {
-    fn provide(&self) -> Result<Mutex<LruCache<String, (u64, FileType)>>, FsError> {
+impl Provider<Mutex<DirEntryMetaCache>, FsError> for DirEntryMetaCacheProvider {
+    fn provide(&self) -> Result<Mutex<DirEntryMetaCache>, FsError> {
         Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }
@@ -572,6 +572,8 @@ impl Provider<Mutex<LruCache<u64, FileAttr>>, FsError> for AttrCacheProvider {
         Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }
+
+type DirEntryMetaCache = LruCache<String, (u64, FileType)>;
 
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
 pub struct EncryptedFs {
@@ -598,7 +600,7 @@ pub struct EncryptedFs {
     dir_entries_name_cache:
         ExpireValue<Mutex<LruCache<String, SecretString>>, FsError, DirEntryNameCacheProvider>,
     dir_entries_meta_cache:
-        ExpireValue<Mutex<LruCache<String, (u64, FileType)>>, FsError, DirEntryMetaCacheProvider>,
+        ExpireValue<Mutex<DirEntryMetaCache>, FsError, DirEntryMetaCacheProvider>,
 }
 
 impl EncryptedFs {
@@ -2264,7 +2266,7 @@ async fn ensure_structure_created(data_dir: &PathBuf, key_provider: &KeyProvider
     if data_dir.exists() {
         check_structure(data_dir, true).await?;
     } else {
-        fs::create_dir_all(&data_dir)?;
+        fs::create_dir_all(data_dir)?;
     }
 
     // create directories
