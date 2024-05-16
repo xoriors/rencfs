@@ -15,7 +15,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set default nightly
-      run: rustup default nightly && rustup update    
+      run: rustup default nightly && rustup update
+    - name: Add clippy
+      run: rustup component add clippy
     - name: Build
       run: cargo build --verbose
     - name: Check
