@@ -51,8 +51,10 @@ binary (for library, you can follow the [documentation](https://docs.rs/rencfs/l
 
 ## Command Line Tool
 
+### Dependencies
+
 To use the encrypted file system, you need to have FUSE installed on your system. You can install it by running the
-following command (or based on your distribution)
+following command (or based on your distribution).
 
 Arch
 
@@ -114,14 +116,11 @@ It will prompt you to enter the old password and then the new password.
 ### Encryption info
 
 You can specify the encryption algorithm adding this argument to the command line
-
 ```bash
---cipher CIPHER
+--cipher CIPHER ...
 ```
 
-Where `CIPHER` is the encryption algorithm.  
-You can check the available ciphers with `rencfs --help`.
-
+Where `CIPHER` is the encryption algorithm. You can check the available ciphers with `rencfs --help`.  
 Default value is `ChaCha20Poly1305`.
 
 ### Log level
@@ -136,31 +135,40 @@ rencfs --log-level LEVEL ...
 ## Start it in docker
 
 Get the image
-
 ```bash
 docker pull xorio42/rencfs
 ```
 
 Start a container to set up mount in it
-`docker run -it --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined xorio42/rencfs:latest /bin/sh`
+```bash
+docker run -it --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined xorio42/rencfs:latest /bin/sh
+```
 
 In the container create mount and data directories
-`mkdir fsmnt && mkdir fsdata`
+```bash
+mkdir fsmnt && mkdir fsdata
+```
 
 Start `rencfs`
-`rencfs --mount-point fsmnt --data-dir fsdata`
+```bash
+rencfs --mount-point fsmnt --data-dir fsdata
+```
 
 Enter a password for encryption.
 
 Get the container ID
-`docker ps`
+```bash
+docker ps
+```
 
 In another terminal attach to running container with the above ID
-`docker exec -it <ID> /bin/sh`
+```bash
+docker exec -it <ID> /bin/sh
+```
 
 From here you can play with it by creating files in `fsmnt` directory
 
-```
+```bash
 cd fsmnt
 mkdir 1
 ls
@@ -201,13 +209,11 @@ In that case please add it to the `PATH` manually.
 Also, these deps are required (or based on your distribution):
 
 Arch
-
 ```bash
 sudo pacman -Syu && sudo pacman -S fuse3 base-devel
 ```
 
 Ubuntu
-
 ```bash
 sudo apt-get update && sudo apt-get install fuse3 build-essential
 ```
