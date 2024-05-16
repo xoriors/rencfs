@@ -8,6 +8,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 RUN . ~/.cargo/env && rustup target add x86_64-unknown-linux-musl
 
+RUN . ~/.cargo/env && rustup default nightly && rustup update
+
 # Cache downloaded+built dependencies
 #COPY Cargo.toml Cargo.lock /usr/src/rencfs/
 #RUN mkdir /usr/src/rencfs/src && \
