@@ -1,20 +1,16 @@
+use std::{fs, io};
 use std::env::args;
 use std::fs::File;
-use std::future::Future;
-use std::io::{Read, Seek, Write};
+use std::io::{Seek, Write};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
-use std::{fs, io};
 
 use anyhow::Result;
-use secrecy::{ExposeSecret, SecretString, SecretVec};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use secrecy::{SecretString, SecretVec};
 
 use rencfs::crypto;
-use rencfs::crypto::writer::CryptoWriter;
 use rencfs::crypto::Cipher;
-use rencfs::encryptedfs::FsError;
+use rencfs::crypto::writer::CryptoWriter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
