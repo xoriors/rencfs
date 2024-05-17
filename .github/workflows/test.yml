@@ -18,8 +18,6 @@ jobs:
       run: rustup default nightly && rustup update
     - name: Build
       run: cargo build --verbose
-    - name: Check
-      run: cargo check --verbose
     - name: Run tests
       run: cargo test --tests --lib --verbose
     - name: Run doctests
