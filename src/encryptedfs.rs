@@ -16,7 +16,6 @@ use argon2::password_hash::rand_core::RngCore;
 use futures_util::TryStreamExt;
 use lru::LruCache;
 use num_format::{Locale, ToFormattedString};
-use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
@@ -2237,10 +2236,7 @@ fn read_or_create_key(
     } else {
         // first time, create a random key and encrypt it with the derived key from password
         let mut key: Vec<u8> = vec![];
-        let key_len = match cipher {
-            Cipher::ChaCha20Poly1305 => CHACHA20_POLY1305.key_len(),
-            Cipher::Aes256GCM => AES_256_GCM.key_len(),
-        };
+        let key_len = cipher.key_len();
         key.resize(key_len, 0);
         crypto::create_rng().fill_bytes(&mut key);
         let key = SecretVec::new(key);

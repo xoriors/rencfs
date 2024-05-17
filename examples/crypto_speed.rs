@@ -16,7 +16,7 @@ use rencfs::crypto::Cipher;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cipher = Cipher::ChaCha20Poly1305;
+    let cipher = Cipher::Aes256Gcm;
     let key = Arc::new(get_key(cipher)?);
 
     let mut args = args();
@@ -112,7 +112,6 @@ fn file_speed(
     let mut file_in = File::open(path_in)?;
     let mut writer = crypto::create_file_writer(
         &Path::new(&path_out).to_path_buf(),
-        &Path::new(&"/tmp").to_path_buf(),
         cipher,
         key.clone(),
         None,
@@ -133,41 +132,6 @@ fn file_speed(
     file_in.seek(io::SeekFrom::Start(0)).unwrap();
     check_hash(&mut file_in, &mut *f())?;
     // fs::remove_file(path_out)?;
-    Ok(())
-}
-
-fn chunks_speed(
-    path_in: &str,
-    path_out: &str,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-) -> Result<()> {
-    println!("chunks speed");
-    let _ = fs::remove_dir_all(path_out);
-    let mut file_in = File::open(path_in)?;
-    let mut writer = crypto::create_chunked_tmp_file_writer(
-        &Path::new(&path_out).to_path_buf(),
-        &Path::new(&"/tmp").to_path_buf(),
-        cipher,
-        key.clone(),
-        None,
-        None,
-        None,
-    )?;
-    let size = file_in.metadata()?.len();
-    let f = || {
-        crypto::create_chunked_file_reader(
-            &Path::new(&path_out).to_path_buf(),
-            cipher,
-            key.clone(),
-            None,
-        )
-        .unwrap()
-    };
-    test_speed(&mut file_in, &mut *writer, size, f)?;
-    file_in.seek(io::SeekFrom::Start(0)).unwrap();
-    check_hash(&mut file_in, &mut *f())?;
-    fs::remove_dir_all(path_out)?;
     Ok(())
 }
 

@@ -22,38 +22,6 @@ use crate::{crypto, stream_util};
 #[allow(clippy::module_name_repetitions)]
 pub trait CryptoReader: Read + Seek + Send + Sync {}
 
-/// cryptostream
-
-// pub struct CryptostreamCryptoReader<R: Read> {
-//     inner: Option<cryptostream::read::Decryptor<R>>,
-// }
-//
-// impl<R: Read> CryptostreamCryptoReader<R> {
-//     pub fn new(reader: R, cipher: Cipher, key: &[u8], iv: &[u8]) -> crypto::Result<Self> {
-//         Ok(Self {
-//             inner: Some(cryptostream::read::Decryptor::new(reader, cipher, key, iv)?),
-//         })
-//     }
-// }
-//
-// impl<R: Read> Read for CryptostreamCryptoReader<R> {
-//     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-//         self.inner.as_mut().unwrap().read(buf)
-//     }
-// }
-//
-// impl<R: Read + Sync + Send> Seek for CryptostreamCryptoReader<R> {
-//     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-//         todo!()
-//     }
-// }
-//
-// impl<R: Read + Sync + Send> CryptoReader<R> for CryptostreamCryptoReader<R> {
-//     fn finish(&mut self) -> Option<R> {
-//         Some(self.inner.take().unwrap().finish())
-//     }
-// }
-
 /// ring
 
 #[allow(clippy::module_name_repetitions)]
@@ -156,6 +124,8 @@ impl<R: Read + Seek + Send + Sync> Read for RingCryptoReader<R> {
                 .unwrap()
                 .replace(data[..NONCE_LEN].to_vec());
             let data = &mut data[NONCE_LEN..];
+            // self.opening_key =
+            //     Self::create_opening_key(self.algorithm, &self.key, self.last_nonce.clone());
             let plaintext = self
                 .opening_key
                 .open_within(aad, data, 0..)
@@ -544,51 +514,72 @@ impl CryptoReader for FileCryptoReader {}
 
 #[cfg(test)]
 mod test {
-    use std::io::Write;
-    use std::io::{Read, Seek};
-    use std::sync::Arc;
-
-    use rand::RngCore;
-    use ring::aead::CHACHA20_POLY1305;
-    use secrecy::SecretVec;
-    use tracing_test::traced_test;
-
     use crate::crypto;
-    use crate::crypto::writer::{CryptoWriter, BUF_SIZE};
+    use crate::crypto::writer::CryptoWriter;
     use crate::crypto::Cipher;
+    use rand::RngCore;
+    use secrecy::SecretVec;
+    use std::io;
+    use std::io::Seek;
+    use std::io::Write;
+    use std::sync::Arc;
+    use test::{black_box, Bencher};
 
-    #[test]
-    #[traced_test]
-    fn test_reader_writer() {
-        let mut key: Vec<u8> = vec![0; CHACHA20_POLY1305.key_len()];
+    #[bench]
+    fn bench_reader_10mb_cha_cha20poly1305(b: &mut Bencher) {
+        let cipher = Cipher::ChaCha20Poly1305;
+        let len = 10 * 1024 * 1024;
+
+        let mut key: Vec<u8> = vec![0; cipher.key_len()];
         crypto::create_rng().fill_bytes(&mut key);
         let key = SecretVec::new(key);
         let key = Arc::new(key);
 
-        // simple text
-        let mut cursor = std::io::Cursor::new(vec![0; 0]);
-        let mut writer = crypto::create_writer(cursor, Cipher::ChaCha20Poly1305, key.clone());
-        let data = "hello, this is my secret message";
-        writer.write_all(&data.as_bytes()).unwrap();
-        cursor = writer.finish().unwrap();
-        cursor.seek(std::io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, Cipher::ChaCha20Poly1305, key.clone());
-        let mut s = String::new();
-        reader.read_to_string(&mut s).unwrap();
-        assert_eq!(data, s);
+        let mut cursor_write = io::Cursor::new(vec![]);
+        let mut writer = crypto::create_writer(&mut cursor_write, cipher, key.clone());
+        let mut cursor_random = io::Cursor::new(vec![0; len]);
+        crypto::create_rng().fill_bytes(&mut cursor_random.get_mut());
+        cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
+        io::copy(&mut cursor_random, &mut writer).unwrap();
+        writer.flush().unwrap();
+        let cursor_write = writer.finish().unwrap();
 
-        // larger data
-        let mut cursor = std::io::Cursor::new(vec![]);
-        let mut writer = crypto::create_writer(cursor, Cipher::ChaCha20Poly1305, key.clone());
-        let mut data: [u8; BUF_SIZE + 42] = [0; BUF_SIZE + 42];
-        crypto::create_rng().fill_bytes(&mut data);
-        writer.write_all(&data).unwrap();
-        cursor = writer.finish().unwrap();
-        cursor.seek(std::io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, Cipher::ChaCha20Poly1305, key.clone());
-        let mut data2 = vec![];
-        reader.read_to_end(&mut data2).unwrap();
-        assert_eq!(data.len(), data2.len());
-        assert_eq!(crypto::hash(&data), crypto::hash(&data2));
+        b.iter(|| {
+            black_box({
+                let mut cursor = cursor_write.clone();
+                cursor.seek(io::SeekFrom::Start(0)).unwrap();
+                let mut reader = crypto::create_reader(cursor, cipher, key.clone());
+                io::copy(&mut reader, &mut io::sink()).unwrap();
+            })
+        });
+    }
+
+    #[bench]
+    fn bench_reader_10mb_cha_aes256gcm(b: &mut Bencher) {
+        let cipher = Cipher::Aes256Gcm;
+        let len = 10 * 1024 * 1024;
+
+        let mut key: Vec<u8> = vec![0; cipher.key_len()];
+        crypto::create_rng().fill_bytes(&mut key);
+        let key = SecretVec::new(key);
+        let key = Arc::new(key);
+
+        let mut cursor_write = io::Cursor::new(vec![]);
+        let mut writer = crypto::create_writer(&mut cursor_write, cipher, key.clone());
+        let mut cursor_random = io::Cursor::new(vec![0; len]);
+        crypto::create_rng().fill_bytes(&mut cursor_random.get_mut());
+        cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
+        io::copy(&mut cursor_random, &mut writer).unwrap();
+        writer.flush().unwrap();
+        let cursor_write = writer.finish().unwrap();
+
+        b.iter(|| {
+            black_box({
+                let mut cursor = cursor_write.clone();
+                cursor.seek(io::SeekFrom::Start(0)).unwrap();
+                let mut reader = crypto::create_reader(cursor, cipher, key.clone());
+                io::copy(&mut reader, &mut io::sink()).unwrap();
+            })
+        });
     }
 }

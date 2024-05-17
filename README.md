@@ -267,12 +267,45 @@ sharing pull requests are always appreciated.
 
 # Limitations
 
-- `Aes256GCM` cipher can save files up to 64GB. This is because of the 32-bit counter used in the
+- `Aes256Gcm` cipher can save files up to `64GB`. This is because of the `32-bit` counter used in the
   GCM mode. For more details
   see [here](https://en.wikipedia.org/wiki/Galois/Counter_Mode#:~:text=For%20any%20given%20key%2C%20GCM,plain%20text%20(64%20GiB).)
   and [here](https://crypto.stackexchange.com/questions/31793/plain-text-size-limits-for-aes-gcm-mode-just-64gb)
-- `ChaCha20Poly1305` cipher can save files up to 256GB, it uses a 64-bit counter. See
+- `ChaCha20Poly1305` cipher can save files up to `256GB`, it uses a `64-bit` counter. See
   more details [here](https://datatracker.ietf.org/doc/html/rfc7539)
+
+# Performance
+
+- `Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of `1.66` on average. This is because of the
+  hardware acceleration of AES on most CPUs via AES-NI. But where hardware acceleration is not
+  available `ChaCha20Poly1305` is
+  faster
+
+# Cipher comparison
+
+## AES-GCM vs. ChaCha20-Poly1305
+
+- If you have hardware acceleration (e.g. AES-NI), then AES-GCM provides better performance. On my benchmarks, it was
+  faster by a factor of **1.28** on average.  
+  If you do not have hardware acceleration, AES-GCM is either slower than ChaCha20-Poly1305, or it leaks your encryption
+  keys in cache timing.
+- AES-GCM can target multiple security levels (128-bit, 192-bit, 256-bit), whereas ChaCha20-Poly1305 is only defined at
+  the 256-bit security level.
+- Nonce size:
+    - AES-GCM: Varies, but standard is 96 bits (12 bytes). If you supply a longer nonce, this gets hashed down to 16
+      bytes.
+    - ChaCha20-Poly1305: The standardized version uses 96-bit nonces (12 bytes), but the original used 64-bit
+      nonces (8 bytes).
+- Wearout of a single (key, nonce) pair:
+    - AES-GCM: Messages must be less than 2^32 – 2 blocks (a.k.a. 2^36 – 32 bytes, a.k.a. 2^39 – 256 bits). This
+      also makes the security analysis of AES-GCM with long nonces complicated, since the hashed nonce doesn’t start
+      with the lower 4 bytes set to 00 00 00 02.
+    - ChaCha20-Poly1305: ChaCha has an internal counter (32 bits in the standardized IETF variant, 64 bits in the
+      original design).
+- Neither algorithm is nonce misuse resistant.
+
+Conclusion: Both are good options. AES-GCM can be faster with hardware support, but pure-software implementations of
+ChaCha20-Poly1305 are almost always fast and constant-time.
 
 # Security
 

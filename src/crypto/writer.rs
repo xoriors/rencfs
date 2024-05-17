@@ -1,13 +1,12 @@
-use atomic_write_file::AtomicWriteFile;
-use num_format::{Locale, ToFormattedString};
+use ::test::{black_box, Bencher};
 use std::fs::File;
 use std::io;
-use std::io::{BufWriter, Error, Seek, SeekFrom, Write};
+use std::io::{BufWriter, Error, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use crate::arc_hashmap::Holder;
-use crate::{crypto, fs_util, stream_util};
+use atomic_write_file::AtomicWriteFile;
+use num_format::{Locale, ToFormattedString};
 use rand_chacha::rand_core::RngCore;
 use ring::aead::{
     Aad, Algorithm, BoundKey, Nonce, NonceSequence, SealingKey, UnboundKey, NONCE_LEN,
@@ -17,8 +16,10 @@ use secrecy::{ExposeSecret, SecretVec};
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
+use crate::arc_hashmap::Holder;
 use crate::crypto::buf_mut::BufMut;
 use crate::crypto::Cipher;
+use crate::{crypto, fs_util, stream_util};
 
 #[cfg(test)]
 pub(crate) const BUF_SIZE: usize = 256 * 1024;
@@ -32,36 +33,6 @@ pub trait CryptoWriter<W: Write>: Write + Send + Sync {
     fn finish(&mut self) -> io::Result<W>;
 }
 
-/// cryptostream
-
-// pub struct CryptostreamCryptoWriter<W: Write> {
-//     inner: Option<cryptostream::write::Encryptor<W>>,
-// }
-//
-// impl<W: Write> CryptostreamCryptoWriter<W> {
-//     pub fn new(writer: W, cipher: Cipher, key: &[u8], iv: &[u8]) -> crypto::Result<Self> {
-//         Ok(Self {
-//             inner: Some(cryptostream::write::Encryptor::new(writer, cipher, key, iv)?),
-//         })
-//     }
-// }
-//
-// impl<W: Write> Write for CryptostreamCryptoWriter<W> {
-//     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-//         self.inner.as_mut().unwrap().write(buf)
-//     }
-//
-//     fn flush(&mut self) -> io::Result<()> {
-//         self.inner.as_mut().unwrap().flush()
-//     }
-// }
-//
-// impl<W: Write + Send + Sync> CryptoWriter<W> for CryptostreamCryptoWriter<W> {
-//     fn finish(&mut self) -> io::Result<Option<W>> {
-//         Ok(Some(self.inner.take().unwrap().finish()?))
-//     }
-// }
-
 /// Ring
 
 #[allow(clippy::module_name_repetitions)]
@@ -71,6 +42,8 @@ pub struct RingCryptoWriter<W: Write + Send + Sync> {
     buf: BufMut,
     nonce_sequence: Arc<Mutex<RandomNonceSequence>>,
     block_index: u64,
+    algorithm: &'static Algorithm,
+    key: Arc<SecretVec<u8>>,
 }
 
 impl<W: Write + Send + Sync> RingCryptoWriter<W> {
@@ -88,6 +61,8 @@ impl<W: Write + Send + Sync> RingCryptoWriter<W> {
             buf,
             nonce_sequence,
             block_index: 0,
+            algorithm,
+            key,
         }
     }
 }
@@ -128,6 +103,13 @@ impl<W: Write + Send + Sync> Write for RingCryptoWriter<W> {
 
 impl<W: Write + Send + Sync> RingCryptoWriter<W> {
     fn encrypt_and_write(&mut self) -> io::Result<()> {
+        // let unbound_key =
+        //     UnboundKey::new(self.algorithm, self.key.expose_secret()).expect("unbound key");
+        // let nonce_sequence = Arc::new(Mutex::new(RandomNonceSequence::default()));
+        // let wrapping_nonce_sequence = RandomNonceSequenceWrapper::new(nonce_sequence.clone());
+        // self.sealing_key = SealingKey::new(unbound_key, wrapping_nonce_sequence);
+        // self.nonce_sequence = nonce_sequence;
+
         let data = self.buf.as_mut();
         let aad = Aad::from(self.block_index.to_le_bytes());
         let tag = self
@@ -852,3 +834,153 @@ impl CryptoWriterSeek<File> for FileCryptoWriter {}
 // }
 //
 // impl CryptoWriterSeek<File> for ChunkedTmpFileCryptoWriter {}
+
+#[cfg(test)]
+mod test {
+    use std::io::Write;
+    use std::io::{Read, Seek};
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+    use tracing_test::traced_test;
+
+    use crate::crypto;
+    use crate::crypto::writer::{CryptoWriter, BUF_SIZE};
+    use crate::crypto::Cipher;
+
+    #[test]
+    #[traced_test]
+    fn test_reader_writer() {
+        let cipher = Cipher::ChaCha20Poly1305;
+
+        let mut key: Vec<u8> = vec![0; cipher.key_len()];
+        crypto::create_rng().fill_bytes(&mut key);
+        let key = SecretVec::new(key);
+        let key = Arc::new(key);
+
+        // simple text
+        let mut cursor = std::io::Cursor::new(vec![0; 0]);
+        let mut writer = crypto::create_writer(cursor, cipher, key.clone());
+        let data = "hello, this is my secret message";
+        writer.write_all(&data.as_bytes()).unwrap();
+        cursor = writer.finish().unwrap();
+        cursor.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let mut reader = crypto::create_reader(cursor, cipher, key.clone());
+        let mut s = String::new();
+        reader.read_to_string(&mut s).unwrap();
+        assert_eq!(data, s);
+
+        // larger data
+        let mut cursor = std::io::Cursor::new(vec![]);
+        let mut writer = crypto::create_writer(cursor, cipher, key.clone());
+        let mut data: [u8; BUF_SIZE + 42] = [0; BUF_SIZE + 42];
+        crypto::create_rng().fill_bytes(&mut data);
+        writer.write_all(&data).unwrap();
+        cursor = writer.finish().unwrap();
+        cursor.seek(std::io::SeekFrom::Start(0)).unwrap();
+        let mut reader = crypto::create_reader(cursor, cipher, key.clone());
+        let mut data2 = vec![];
+        reader.read_to_end(&mut data2).unwrap();
+        assert_eq!(data.len(), data2.len());
+        assert_eq!(crypto::hash(&data), crypto::hash(&data2));
+    }
+}
+
+#[bench]
+fn bench_writer_10mb_cha_cha20poly1305(b: &mut Bencher) {
+    let cipher = Cipher::ChaCha20Poly1305;
+    let len = 10 * 1024 * 1024;
+
+    let mut key: Vec<u8> = vec![0; cipher.key_len()];
+    crypto::create_rng().fill_bytes(&mut key);
+    let key = SecretVec::new(key);
+    let key = Arc::new(key);
+
+    let rnd_reader = RandomReader::new(len);
+    b.iter(|| {
+        black_box({
+            let mut reader = rnd_reader.clone();
+            let cursor_write = io::Cursor::new(vec![0; len]);
+            let mut writer = crypto::create_writer(cursor_write, cipher, key.clone());
+            io::copy(&mut reader, &mut writer).unwrap();
+            writer.flush().unwrap();
+            writer.finish().unwrap()
+        })
+    });
+}
+
+#[bench]
+fn bench_writer_10mb_aes256gcm(b: &mut Bencher) {
+    let cipher = Cipher::Aes256Gcm;
+    let len = 10 * 1024 * 1024;
+
+    let mut key: Vec<u8> = vec![0; cipher.key_len()];
+    crypto::create_rng().fill_bytes(&mut key);
+    let key = SecretVec::new(key);
+    let key = Arc::new(key);
+
+    let rnd_reader = RandomReader::new(len);
+    b.iter(|| {
+        black_box({
+            let mut reader = rnd_reader.clone();
+            let cursor_write = io::Cursor::new(vec![0; len]);
+            let mut writer = crypto::create_writer(cursor_write, cipher, key.clone());
+            io::copy(&mut reader, &mut writer).unwrap();
+            writer.flush().unwrap();
+            writer.finish().unwrap()
+        })
+    });
+}
+
+struct RandomReader {
+    buf: Arc<Vec<u8>>,
+    pos: usize,
+}
+
+impl RandomReader {
+    pub fn new(len: usize) -> Self {
+        let mut buf = vec![0; len];
+        crypto::create_rng().fill_bytes(&mut buf);
+        Self {
+            buf: Arc::new(buf),
+            pos: 0,
+        }
+    }
+}
+
+impl Read for RandomReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.pos > self.buf.len() {
+            return Ok(0);
+        }
+        let len = buf.len().min(self.buf.len() - self.pos);
+        buf[0..len].copy_from_slice(&self.buf[self.pos..self.pos + len]);
+        self.pos += len;
+        Ok(len)
+    }
+}
+
+impl Seek for RandomReader {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let new_pos = match pos {
+            SeekFrom::Start(pos) => pos as i64,
+            SeekFrom::End(pos) => self.buf.len() as i64 + pos,
+            SeekFrom::Current(pos) => self.pos as i64 + pos,
+        };
+        if new_pos < 0 || new_pos > self.buf.len() as i64 {
+            return Err(Error::new(io::ErrorKind::InvalidInput, "outside of bounds"));
+        }
+        self.pos = new_pos as usize;
+        Ok(new_pos as u64)
+    }
+}
+
+impl Clone for RandomReader {
+    fn clone(&self) -> Self {
+        Self {
+            buf: self.buf.clone(),
+            pos: 0,
+        }
+    }
+}
