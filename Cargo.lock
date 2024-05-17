@@ -1621,6 +1621,7 @@ dependencies = [
  "sha2",
  "strum",
  "strum_macros",
+ "tempfile",
  "test-log",
  "thiserror",
  "tokio",

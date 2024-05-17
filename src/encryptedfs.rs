@@ -1,3 +1,4 @@
+use std::backtrace::Backtrace;
 use std::cmp::max;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -301,13 +302,13 @@ pub enum FsError {
     Io {
         #[from]
         source: io::Error,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("serialize error: {source}")]
     SerializeError {
         #[from]
         source: bincode::Error,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("item not found")]
     NotFound(&'static str),
@@ -335,25 +336,25 @@ pub enum FsError {
     Crypto {
         #[from]
         source: crypto::Error,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("keyring error: {source}")]
     Keyring {
         #[from]
         source: keyring::Error,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("parse int error: {source}")]
     ParseIntError {
         #[from]
         source: ParseIntError,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("tokio join error: {source}")]
     JoinError {
         #[from]
         source: JoinError,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("max filesize exceeded, max allowed {0}")]
     MaxFilesizeExceeded(usize),
@@ -1129,10 +1130,6 @@ impl EncryptedFs {
             });
         }
         drop(cache);
-        info!(
-            "cache size {}",
-            self.dir_entries_meta_cache.get().await?.lock().await.len()
-        );
         let lock = self
             .serialize_dir_entries_ls_locks
             .get_or_insert_with(file_path.clone(), || RwLock::new(false));

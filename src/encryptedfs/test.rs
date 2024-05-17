@@ -2,7 +2,7 @@ use std::future::Future;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::{fs, io};
 
 use secrecy::{ExposeSecret, SecretString};
@@ -11,6 +11,7 @@ use tracing_test::traced_test;
 
 use crate::async_util;
 use rand::Rng;
+use tempfile::NamedTempFile;
 use test::{black_box, Bencher};
 
 use crate::encryptedfs::write_all_bytes_to_fs;
@@ -19,11 +20,17 @@ use crate::encryptedfs::{
     FsResult, PasswordProvider, CONTENTS_DIR, ROOT_INODE,
 };
 
-pub(crate) const TESTS_DATA_DIR: &str = "/tmp/rencfs-test-data";
+pub(crate) const TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
+    let tmp = NamedTempFile::new().unwrap().into_temp_path();
+    fs::remove_file(tmp.to_str().unwrap()).expect("cannot remove tmp file");
+    tmp.parent()
+        .expect("oops, we don't have a parent")
+        .join("rencfs-test-data")
+});
 
 #[derive(Debug, Clone)]
 struct TestSetup {
-    data_path: String,
+    key: &'static str,
 }
 
 struct SetupResult {
@@ -32,8 +39,11 @@ struct SetupResult {
 }
 
 async fn setup(setup: TestSetup) -> SetupResult {
-    let data_dir_str = setup.data_path.as_str();
+    let path = TESTS_DATA_DIR.join(setup.key).to_path_buf();
+    let data_dir_str = path.to_str().unwrap();
     let _ = fs::remove_dir_all(data_dir_str);
+    let _ = fs::create_dir_all(data_dir_str);
+    println!("data dir {}", data_dir_str);
 
     struct PasswordProviderImpl {}
     impl PasswordProvider for PasswordProviderImpl {
@@ -59,7 +69,11 @@ async fn setup(setup: TestSetup) -> SetupResult {
 async fn teardown() -> Result<(), io::Error> {
     let s = SETUP_RESULT.with(|s| Arc::clone(s));
     let mut s = s.lock().await;
-    fs::remove_dir_all(s.as_mut().unwrap().setup.data_path.clone())?;
+    let path = TESTS_DATA_DIR
+        .join(s.as_ref().unwrap().setup.key)
+        .to_path_buf();
+    let data_dir_str = path.to_str().unwrap();
+    fs::remove_dir_all(data_dir_str)?;
 
     Ok(())
 }
@@ -95,16 +109,10 @@ pub fn block_on<F: Future>(future: F, worker_threads: usize) -> F::Output {
         .block_on(future)
 }
 
-pub(crate) fn test<F: Future>(key: &str, worker_threads: usize, f: F) {
+pub(crate) fn test<F: Future>(key: &'static str, worker_threads: usize, f: F) {
     block_on(
         async {
-            run_test(
-                TestSetup {
-                    data_path: format!("{TESTS_DATA_DIR}/{key}"),
-                },
-                f,
-            )
-            .await;
+            run_test(TestSetup { key }, f).await;
         },
         worker_threads,
     );
@@ -181,351 +189,341 @@ async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8], han
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
 async fn test_write() {
-    run_test(
-        TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_write"),
-        },
-        async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+    run_test(TestSetup { key: "test_write" }, async {
+        let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+        let mut fs = fs.lock().await;
+        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
-            let test_file = SecretString::from_str("test-file").unwrap();
-            let (fh, attr) = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_file,
-                    create_attr_from_type(FileType::RegularFile),
-                    false,
-                    true,
-                )
-                .await
-                .unwrap();
-            let data = "test-42";
-            write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
-                .await
-                .unwrap();
-            fs.flush(fh).await.unwrap();
-            fs.release(fh).await.unwrap();
-            assert_eq!(
-                data,
-                read_to_string(
-                    fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs
-                )
-                .await
-            );
-            let attr = fs.get_inode(attr.ino).await.unwrap();
-            assert_eq!(data.len() as u64, attr.size);
-
-            // offset greater than current position
-            let data = "37";
-            let fh = fs.open(attr.ino, false, true).await.unwrap();
-            write_all_bytes_to_fs(&fs, attr.ino, 5, data.as_bytes(), fh)
-                .await
-                .unwrap();
-            fs.flush(fh).await.unwrap();
-            fs.release(fh).await.unwrap();
-            assert_eq!(
-                data,
-                &read_to_string(
-                    fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs
-                )
-                .await[5..]
-            );
-
-            // offset after file end
-            let data = "37";
-            let fh = fs.open(attr.ino, false, true).await.unwrap();
-            write_all_bytes_to_fs(&fs, attr.ino, 42, data.as_bytes(), fh)
-                .await
-                .unwrap();
-            fs.flush(fh).await.unwrap();
-            fs.release(fh).await.unwrap();
-            assert_eq!(
-                format!("test-37{}37", "\0".repeat(35)),
-                read_to_string(
-                    fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs
-                )
-                .await
-            );
-
-            // offset before current position, several blocks
-            let test_file_2 = SecretString::from_str("test-file-2").unwrap();
-            let (fh, attr) = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_file_2,
-                    create_attr_from_type(FileType::RegularFile),
-                    false,
-                    true,
-                )
-                .await
-                .unwrap();
-            let data = "test-42-37-42";
-            write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
-                .await
-                .unwrap();
-            let data1 = "01";
-            write_all_bytes_to_fs(&fs, attr.ino, 5, data1.as_bytes(), fh)
-                .await
-                .unwrap();
-            let data2 = "02";
-            write_all_bytes_to_fs(&fs, attr.ino, 8, data2.as_bytes(), fh)
-                .await
-                .unwrap();
-            fs.flush(fh).await.unwrap();
-            fs.release(fh).await.unwrap();
-            assert_eq!(
-                "test-01-02-42",
-                &read_to_string(
-                    fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs
-                )
-                .await
-            );
-
-            // write before current position then write to the end, also check it preserves the content from
-            // the first write to offset to end of the file
-            let test_file_3 = SecretString::from_str("test-file-3").unwrap();
-            let (fh, attr) = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_file_3,
-                    create_attr_from_type(FileType::RegularFile),
-                    false,
-                    true,
-                )
-                .await
-                .unwrap();
-            let data = "test-42-37";
-            write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
-                .await
-                .unwrap();
-            write_all_bytes_to_fs(&fs, attr.ino, 5, b"37", fh)
-                .await
-                .unwrap();
-            write_all_bytes_to_fs(&fs, attr.ino, data.len() as u64, b"-42", fh)
-                .await
-                .unwrap();
-            fs.flush(fh).await.unwrap();
-            fs.release(fh).await.unwrap();
-            let new_content = read_to_string(
+        let test_file = SecretString::from_str("test-file").unwrap();
+        let (fh, attr) = fs
+            .create_nod(
+                ROOT_INODE,
+                &test_file,
+                create_attr_from_type(FileType::RegularFile),
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+        let data = "test-42";
+        write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
+            .await
+            .unwrap();
+        fs.flush(fh).await.unwrap();
+        fs.release(fh).await.unwrap();
+        assert_eq!(
+            data,
+            read_to_string(
                 fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                 &fs,
             )
-            .await;
-            assert_eq!("test-37-37-42", new_content);
+            .await
+        );
+        let attr = fs.get_inode(attr.ino).await.unwrap();
+        assert_eq!(data.len() as u64, attr.size);
 
-            let buf = [0; 0];
-            let fh = fs.open(attr.ino, false, true).await.unwrap();
-            assert!(matches!(
-                fs.write(ROOT_INODE, 0, &buf, fh).await,
-                Err(FsError::InvalidInodeType)
-            ));
-            assert!(matches!(
-                fs.write(0, 0, &buf, fh).await,
-                Err(FsError::InodeNotFound)
-            ));
-            let test_dir = SecretString::from_str("test-dir").unwrap();
-            let (fh, dir_attr) = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_dir,
-                    create_attr_from_type(FileType::Directory),
-                    false,
-                    true,
-                )
-                .await
-                .unwrap();
-            assert!(matches!(
-                fs.write(dir_attr.ino, 0, &buf, fh).await,
-                Err(FsError::InvalidInodeType)
-            ));
-        },
-    )
+        // offset greater than current position
+        let data = "37";
+        let fh = fs.open(attr.ino, false, true).await.unwrap();
+        write_all_bytes_to_fs(&fs, attr.ino, 5, data.as_bytes(), fh)
+            .await
+            .unwrap();
+        fs.flush(fh).await.unwrap();
+        fs.release(fh).await.unwrap();
+        assert_eq!(
+            data,
+            &read_to_string(
+                fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
+                &fs,
+            )
+            .await[5..]
+        );
+
+        // offset after file end
+        let data = "37";
+        let fh = fs.open(attr.ino, false, true).await.unwrap();
+        write_all_bytes_to_fs(&fs, attr.ino, 42, data.as_bytes(), fh)
+            .await
+            .unwrap();
+        fs.flush(fh).await.unwrap();
+        fs.release(fh).await.unwrap();
+        assert_eq!(
+            format!("test-37{}37", "\0".repeat(35)),
+            read_to_string(
+                fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
+                &fs,
+            )
+            .await
+        );
+
+        // offset before current position, several blocks
+        let test_file_2 = SecretString::from_str("test-file-2").unwrap();
+        let (fh, attr) = fs
+            .create_nod(
+                ROOT_INODE,
+                &test_file_2,
+                create_attr_from_type(FileType::RegularFile),
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+        let data = "test-42-37-42";
+        write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
+            .await
+            .unwrap();
+        let data1 = "01";
+        write_all_bytes_to_fs(&fs, attr.ino, 5, data1.as_bytes(), fh)
+            .await
+            .unwrap();
+        let data2 = "02";
+        write_all_bytes_to_fs(&fs, attr.ino, 8, data2.as_bytes(), fh)
+            .await
+            .unwrap();
+        fs.flush(fh).await.unwrap();
+        fs.release(fh).await.unwrap();
+        assert_eq!(
+            "test-01-02-42",
+            &read_to_string(
+                fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
+                &fs,
+            )
+            .await
+        );
+
+        // write before current position then write to the end, also check it preserves the content from
+        // the first write to offset to end of the file
+        let test_file_3 = SecretString::from_str("test-file-3").unwrap();
+        let (fh, attr) = fs
+            .create_nod(
+                ROOT_INODE,
+                &test_file_3,
+                create_attr_from_type(FileType::RegularFile),
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+        let data = "test-42-37";
+        write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
+            .await
+            .unwrap();
+        write_all_bytes_to_fs(&fs, attr.ino, 5, b"37", fh)
+            .await
+            .unwrap();
+        write_all_bytes_to_fs(&fs, attr.ino, data.len() as u64, b"-42", fh)
+            .await
+            .unwrap();
+        fs.flush(fh).await.unwrap();
+        fs.release(fh).await.unwrap();
+        let new_content = read_to_string(
+            fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
+            &fs,
+        )
+        .await;
+        assert_eq!("test-37-37-42", new_content);
+
+        let buf = [0; 0];
+        let fh = fs.open(attr.ino, false, true).await.unwrap();
+        assert!(matches!(
+            fs.write(ROOT_INODE, 0, &buf, fh).await,
+            Err(FsError::InvalidInodeType)
+        ));
+        assert!(matches!(
+            fs.write(0, 0, &buf, fh).await,
+            Err(FsError::InodeNotFound)
+        ));
+        let test_dir = SecretString::from_str("test-dir").unwrap();
+        let (fh, dir_attr) = fs
+            .create_nod(
+                ROOT_INODE,
+                &test_dir,
+                create_attr_from_type(FileType::Directory),
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            fs.write(dir_attr.ino, 0, &buf, fh).await,
+            Err(FsError::InvalidInodeType)
+        ));
+    })
     .await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
 async fn test_read() {
-    run_test(
-        TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_read"),
-        },
-        async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+    run_test(TestSetup { key: "test_read" }, async {
+        let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+        let mut fs = fs.lock().await;
+        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
-            let test_test_file = SecretString::from_str("test-file").unwrap();
-            let test_file = test_test_file;
-            let (fh, attr) = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_file,
-                    create_attr_from_type(FileType::RegularFile),
-                    false,
-                    true,
-                )
-                .await
-                .unwrap();
-            let data = b"test-42";
-            let mut buf = [0; 7];
-            write_all_bytes_to_fs(&fs, attr.ino, 0, data, fh)
-                .await
-                .unwrap();
-            fs.flush(fh).await.unwrap();
-            fs.release(fh).await.unwrap();
-            let fh = fs.open(attr.ino, true, false).await.unwrap();
-            read_exact(fs, attr.ino, 0, &mut buf, fh).await;
-            assert_eq!(data, &buf);
+        let test_test_file = SecretString::from_str("test-file").unwrap();
+        let test_file = test_test_file;
+        let (fh, attr) = fs
+            .create_nod(
+                ROOT_INODE,
+                &test_file,
+                create_attr_from_type(FileType::RegularFile),
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+        let data = b"test-42";
+        let mut buf = [0; 7];
+        write_all_bytes_to_fs(&fs, attr.ino, 0, data, fh)
+            .await
+            .unwrap();
+        fs.flush(fh).await.unwrap();
+        fs.release(fh).await.unwrap();
+        let fh = fs.open(attr.ino, true, false).await.unwrap();
+        read_exact(fs, attr.ino, 0, &mut buf, fh).await;
+        assert_eq!(data, &buf);
 
-            // larger buffer
-            let len = fs.read(attr.ino, 0, &mut [0; 42], fh).await.unwrap();
-            assert_eq!(len, 7);
+        // larger buffer
+        let len = fs.read(attr.ino, 0, &mut [0; 42], fh).await.unwrap();
+        assert_eq!(len, 7);
 
-            // offset
-            let data = b"test-37";
-            let mut buf = [0; 2];
-            let fh = fs.open(attr.ino, false, true).await.unwrap();
-            write_all_bytes_to_fs(&fs, attr.ino, 0, data, fh)
-                .await
-                .unwrap();
-            fs.flush(fh).await.unwrap();
-            fs.release(fh).await.unwrap();
-            let fh = fs.open(attr.ino, true, false).await.unwrap();
-            read_exact(fs, attr.ino, 5, &mut buf, fh).await;
-            assert_eq!(b"37", &buf);
+        // offset
+        let data = b"test-37";
+        let mut buf = [0; 2];
+        let fh = fs.open(attr.ino, false, true).await.unwrap();
+        write_all_bytes_to_fs(&fs, attr.ino, 0, data, fh)
+            .await
+            .unwrap();
+        fs.flush(fh).await.unwrap();
+        fs.release(fh).await.unwrap();
+        let fh = fs.open(attr.ino, true, false).await.unwrap();
+        read_exact(fs, attr.ino, 5, &mut buf, fh).await;
+        assert_eq!(b"37", &buf);
 
-            // offset after file end
-            let fh = fs.open(attr.ino, true, false).await.unwrap();
-            let len = fs.read(attr.ino, 42, &mut [0, 1], fh).await.unwrap();
-            assert_eq!(len, 0);
+        // offset after file end
+        let fh = fs.open(attr.ino, true, false).await.unwrap();
+        let len = fs.read(attr.ino, 42, &mut [0, 1], fh).await.unwrap();
+        assert_eq!(len, 0);
 
-            // if it picks up new value after a write after current read position
-            let test_file_2 = SecretString::from_str("test-file-2").unwrap();
-            let (fh, attr) = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_file_2,
-                    create_attr_from_type(FileType::RegularFile),
-                    false,
-                    true,
-                )
-                .await
-                .unwrap();
-            let data = "test-42";
-            write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
-                .await
-                .unwrap();
-            fs.flush(fh).await.unwrap();
-            fs.release(fh).await.unwrap();
-            let fh = fs.open(attr.ino, true, false).await.unwrap();
-            read_exact(fs, attr.ino, 0, &mut [0_u8; 1], fh).await;
-            let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
-            let new_data = "37";
-            write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
-                .await
-                .unwrap();
-            fs.flush(fh_2).await.unwrap();
-            fs.release(fh_2).await.unwrap();
-            let mut buf = [0_u8; 2];
-            read_exact(fs, attr.ino, 5, &mut buf, fh).await;
-            assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
+        // if it picks up new value after a write after current read position
+        let test_file_2 = SecretString::from_str("test-file-2").unwrap();
+        let (fh, attr) = fs
+            .create_nod(
+                ROOT_INODE,
+                &test_file_2,
+                create_attr_from_type(FileType::RegularFile),
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+        let data = "test-42";
+        write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
+            .await
+            .unwrap();
+        fs.flush(fh).await.unwrap();
+        fs.release(fh).await.unwrap();
+        let fh = fs.open(attr.ino, true, false).await.unwrap();
+        read_exact(fs, attr.ino, 0, &mut [0_u8; 1], fh).await;
+        let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
+        let new_data = "37";
+        write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
+            .await
+            .unwrap();
+        fs.flush(fh_2).await.unwrap();
+        fs.release(fh_2).await.unwrap();
+        let mut buf = [0_u8; 2];
+        read_exact(fs, attr.ino, 5, &mut buf, fh).await;
+        assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
-            // if it picks up new value after a write before current read position
-            let test_file_3 = SecretString::from_str("test-file-3").unwrap();
-            let (fh, attr) = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_file_3,
-                    create_attr_from_type(FileType::RegularFile),
-                    false,
-                    true,
-                )
-                .await
-                .unwrap();
-            let data = "test-42-37";
-            write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
-                .await
-                .unwrap();
-            fs.flush(fh).await.unwrap();
-            fs.release(fh).await.unwrap();
-            let fh = fs.open(attr.ino, true, false).await.unwrap();
-            read_exact(fs, attr.ino, 8, &mut [0_u8; 1], fh).await;
-            let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
-            let new_data = "37";
-            write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
-                .await
-                .unwrap();
-            fs.flush(fh_2).await.unwrap();
-            fs.release(fh_2).await.unwrap();
-            let mut buf = [0_u8; 2];
-            read_exact(fs, attr.ino, 5, &mut buf, fh).await;
-            assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
+        // if it picks up new value after a write before current read position
+        let test_file_3 = SecretString::from_str("test-file-3").unwrap();
+        let (fh, attr) = fs
+            .create_nod(
+                ROOT_INODE,
+                &test_file_3,
+                create_attr_from_type(FileType::RegularFile),
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+        let data = "test-42-37";
+        write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
+            .await
+            .unwrap();
+        fs.flush(fh).await.unwrap();
+        fs.release(fh).await.unwrap();
+        let fh = fs.open(attr.ino, true, false).await.unwrap();
+        read_exact(fs, attr.ino, 8, &mut [0_u8; 1], fh).await;
+        let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
+        let new_data = "37";
+        write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
+            .await
+            .unwrap();
+        fs.flush(fh_2).await.unwrap();
+        fs.release(fh_2).await.unwrap();
+        let mut buf = [0_u8; 2];
+        read_exact(fs, attr.ino, 5, &mut buf, fh).await;
+        assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
-            // if it continues to read correctly after a write before current read position
-            let test_file_4 = SecretString::from_str("test-file-4").unwrap();
-            let (fh, attr) = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_file_4,
-                    create_attr_from_type(FileType::RegularFile),
-                    false,
-                    true,
-                )
-                .await
-                .unwrap();
-            let data = "test-42-37";
-            write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
-                .await
-                .unwrap();
-            fs.flush(fh).await.unwrap();
-            fs.release(fh).await.unwrap();
-            let fh = fs.open(attr.ino, true, false).await.unwrap();
-            read_exact(fs, attr.ino, 7, &mut [0_u8; 1], fh).await;
-            let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
-            let new_data = "37";
-            write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
-                .await
-                .unwrap();
-            fs.flush(fh_2).await.unwrap();
-            fs.release(fh_2).await.unwrap();
-            let mut buf = [0_u8; 2];
-            read_exact(fs, attr.ino, 8, &mut buf, fh).await;
-            assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
+        // if it continues to read correctly after a write before current read position
+        let test_file_4 = SecretString::from_str("test-file-4").unwrap();
+        let (fh, attr) = fs
+            .create_nod(
+                ROOT_INODE,
+                &test_file_4,
+                create_attr_from_type(FileType::RegularFile),
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+        let data = "test-42-37";
+        write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
+            .await
+            .unwrap();
+        fs.flush(fh).await.unwrap();
+        fs.release(fh).await.unwrap();
+        let fh = fs.open(attr.ino, true, false).await.unwrap();
+        read_exact(fs, attr.ino, 7, &mut [0_u8; 1], fh).await;
+        let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
+        let new_data = "37";
+        write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
+            .await
+            .unwrap();
+        fs.flush(fh_2).await.unwrap();
+        fs.release(fh_2).await.unwrap();
+        let mut buf = [0_u8; 2];
+        read_exact(fs, attr.ino, 8, &mut buf, fh).await;
+        assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
-            // invalid values
-            let mut buf = [0; 0];
-            assert!(matches!(
-                fs.read(ROOT_INODE, 0, &mut buf, fh).await,
-                Err(FsError::InvalidInodeType)
-            ));
-            assert!(matches!(
-                fs.read(0, 0, &mut buf, fh).await,
-                Err(FsError::InodeNotFound)
-            ));
-            let test_dir = SecretString::from_str("test-dir").unwrap();
-            let (fh, dir_attr) = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_dir,
-                    create_attr_from_type(FileType::Directory),
-                    true,
-                    false,
-                )
-                .await
-                .unwrap();
-            assert!(matches!(
-                fs.read(dir_attr.ino, 0, &mut buf, fh).await,
-                Err(FsError::InvalidInodeType)
-            ));
-        },
-    )
+        // invalid values
+        let mut buf = [0; 0];
+        assert!(matches!(
+            fs.read(ROOT_INODE, 0, &mut buf, fh).await,
+            Err(FsError::InvalidInodeType)
+        ));
+        assert!(matches!(
+            fs.read(0, 0, &mut buf, fh).await,
+            Err(FsError::InodeNotFound)
+        ));
+        let test_dir = SecretString::from_str("test-dir").unwrap();
+        let (fh, dir_attr) = fs
+            .create_nod(
+                ROOT_INODE,
+                &test_dir,
+                create_attr_from_type(FileType::Directory),
+                true,
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            fs.read(dir_attr.ino, 0, &mut buf, fh).await,
+            Err(FsError::InvalidInodeType)
+        ));
+    })
     .await
 }
 
@@ -534,7 +532,7 @@ async fn test_read() {
 async fn test_truncate() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_truncate"),
+            key: "test_truncate",
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));
@@ -571,7 +569,7 @@ async fn test_truncate() {
                 format!("test-37{}", "\0".repeat(3)),
                 read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs
+                    &fs,
                 )
                 .await
             );
@@ -584,7 +582,7 @@ async fn test_truncate() {
                 format!("test-37{}", "\0".repeat(3)),
                 read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs
+                    &fs,
                 )
                 .await
             );
@@ -601,7 +599,7 @@ async fn test_truncate() {
                 "37st",
                 read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs
+                    &fs,
                 )
                 .await
             );
@@ -614,7 +612,7 @@ async fn test_truncate() {
                 "".to_string(),
                 read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs
+                    &fs,
                 )
                 .await
             );
@@ -628,7 +626,7 @@ async fn test_truncate() {
 async fn test_copy_file_range() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_copy_file_range"),
+            key: "test_copy_file_range",
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));
@@ -715,7 +713,7 @@ async fn test_copy_file_range() {
 async fn test_read_dir() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_read_dir"),
+            key: "test_read_dir",
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));
@@ -894,7 +892,7 @@ async fn test_read_dir() {
 async fn test_read_dir_plus() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_read_dir_plus"),
+            key: "test_read_dir_plus",
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));
@@ -1092,7 +1090,7 @@ async fn test_read_dir_plus() {
 async fn test_find_by_name() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_find_by_name"),
+            key: "test_find_by_name",
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));
@@ -1131,7 +1129,7 @@ async fn test_find_by_name() {
 async fn test_exists_by_name() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_exists_by_name"),
+            key: "test_exists_by_name",
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));
@@ -1166,7 +1164,7 @@ async fn test_exists_by_name() {
 async fn test_remove_dir() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_remove_dir"),
+            key: "test_remove_dir",
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));
@@ -1209,7 +1207,7 @@ async fn test_remove_dir() {
 async fn test_remove_file() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_remove_file"),
+            key: "test_remove_file",
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));
@@ -1252,7 +1250,7 @@ async fn test_remove_file() {
 async fn test_find_by_name_exists_by_name_many_files() {
     run_test(
         TestSetup {
-            data_path: format!("{TESTS_DATA_DIR}/test_find_by_name_exists_by_name_many_files"),
+            key: "test_find_by_name_exists_by_name_many_files",
         },
         async {
             let fs = SETUP_RESULT.with(|s| Arc::clone(s));

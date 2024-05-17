@@ -1,6 +1,6 @@
 #![feature(test)]
 #![feature(lazy_cell)]
-// #![feature(error_generic_member_access)]
+#![feature(error_generic_member_access)]
 #![deny(clippy::all)]
 #![deny(clippy::pedantic)]
 #![deny(clippy::nursery)]
