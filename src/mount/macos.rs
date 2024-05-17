@@ -45,6 +45,7 @@ impl MacOsFuse3MountPoint {
 impl MountPoint for MacOsFuse3MountPoint {
     async fn mount(&mut self) -> FsResult<()> {
         warn!("he he, not yet ready for this platform, but soon my friend, soon :)");
+        Ok(())
     }
 
     async fn umount(&mut self) -> FsResult<()> {
