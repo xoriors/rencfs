@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -14,20 +15,21 @@ use fuse3::raw::prelude::{
     DirectoryEntry, DirectoryEntryPlus, ReplyAttr, ReplyCopyFileRange, ReplyCreated, ReplyData,
     ReplyDirectory, ReplyDirectoryPlus, ReplyEntry, ReplyInit, ReplyOpen, ReplyStatFs, ReplyWrite,
 };
-use fuse3::raw::{Filesystem, Request};
-use fuse3::{Errno, Inode, Result, SetAttr, Timestamp};
+use fuse3::raw::{Filesystem, MountHandle, Request, Session};
+use fuse3::{Errno, Inode, MountOptions, Result, SetAttr, Timestamp};
 use futures_util::stream;
 use futures_util::stream::Iter;
 use libc::{EACCES, EEXIST, EFBIG, EIO, EISDIR, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
-use tracing::Level;
 use tracing::{debug, error, instrument, trace, warn};
+use tracing::{info, Level};
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
     CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult, PasswordProvider,
     SetFileAttr,
 };
+use crate::mount::MountPoint;
 
 const TTL: Duration = Duration::from_secs(1);
 const STATFS: ReplyStatFs = ReplyStatFs {
@@ -1366,4 +1368,98 @@ fn check_access(
 #[allow(clippy::cast_sign_loss)]
 fn system_time_from_timestamp(t: Timestamp) -> SystemTime {
     UNIX_EPOCH + Duration::new(t.sec as u64, t.nsec)
+}
+
+pub(super) struct Fuse3MountPoint {
+    mountpoint: PathBuf,
+    data_dir: PathBuf,
+    password_provider: Option<Box<dyn PasswordProvider>>,
+    cipher: Cipher,
+    allow_root: bool,
+    allow_other: bool,
+    direct_io: bool,
+    suid_support: bool,
+    mount_handle: Option<MountHandle>, // todo: see how we can use it later to umount
+}
+impl Fuse3MountPoint {
+    pub(super) fn new(
+        mountpoint: PathBuf,
+        data_dir: PathBuf,
+        password_provider: Box<dyn PasswordProvider>,
+        cipher: Cipher,
+        allow_root: bool,
+        allow_other: bool,
+        direct_io: bool,
+        suid_support: bool,
+    ) -> Self {
+        Self {
+            mountpoint,
+            data_dir,
+            password_provider: Some(password_provider),
+            cipher,
+            allow_root,
+            allow_other,
+            direct_io,
+            suid_support,
+            mount_handle: None,
+        }
+    }
+}
+#[async_trait]
+impl MountPoint for Fuse3MountPoint {
+    async fn mount(&mut self) -> FsResult<()> {
+        self.mount_handle = Some(
+            run_fuse(
+                self.mountpoint.clone(),
+                self.data_dir.clone(),
+                self.password_provider.take().unwrap(),
+                self.cipher,
+                self.allow_root,
+                self.allow_other,
+                self.direct_io,
+                self.suid_support,
+            )
+            .await?,
+        );
+
+        Ok(())
+    }
+
+    async fn umount(&mut self) -> FsResult<()> {
+        todo!()
+    }
+}
+
+#[instrument(skip(password_provider))]
+pub async fn run_fuse(
+    mountpoint: PathBuf,
+    data_dir: PathBuf,
+    password_provider: Box<dyn PasswordProvider>,
+    cipher: Cipher,
+    allow_root: bool,
+    allow_other: bool,
+    direct_io: bool,
+    suid_support: bool,
+) -> FsResult<MountHandle> {
+    let mut mount_options = &mut MountOptions::default();
+    {
+        unsafe {
+            mount_options = mount_options.uid(libc::getuid()).gid(libc::getgid());
+        }
+    }
+    let mount_options = mount_options
+        .read_only(false)
+        .allow_root(allow_root)
+        .allow_other(allow_other)
+        .clone();
+    let mount_path = OsStr::new(mountpoint.to_str().unwrap());
+
+    info!("Checking password and mounting FUSE filesystem");
+    Ok(Session::new(mount_options)
+        .mount_with_unprivileged(
+            EncryptedFsFuse3::new(data_dir, password_provider, cipher, direct_io, suid_support)
+                .await?,
+            mount_path,
+        )
+        .await?)
 }

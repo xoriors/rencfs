@@ -68,7 +68,7 @@ async fn setup(setup: TestSetup) -> SetupResult {
 
 async fn teardown() -> Result<(), io::Error> {
     let s = SETUP_RESULT.with(|s| Arc::clone(s));
-    let mut s = s.lock().await;
+    let s = s.lock().await;
     let path = TESTS_DATA_DIR
         .join(s.as_ref().unwrap().setup.key)
         .to_path_buf();

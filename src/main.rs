@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -6,19 +7,23 @@ use std::{env, io, panic, process};
 use anyhow::Result;
 use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
 use ctrlc::set_handler;
+use fuse3::raw::Session;
+use fuse3::MountOptions;
+use libc::mount;
 use rpassword::read_password;
 use secrecy::{ExposeSecret, SecretString};
 use strum::IntoEnumIterator;
 use thiserror::Error;
 use tokio::{fs, task};
 use tracing::level_filters::LevelFilter;
-use tracing::{error, info, warn, Level};
+use tracing::{error, info, instrument, warn, Level};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
-use rencfs::is_debug;
+use rencfs::fuse3::EncryptedFsFuse3;
+use rencfs::{is_debug, mount};
 
 mod keyring;
 
@@ -393,7 +398,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         }
     }
 
-    rencfs::run_fuse(
+    let mut mount_point = mount::create_mount_point(
         Path::new(&mountpoint).to_path_buf(),
         Path::new(&data_dir).to_path_buf(),
         Box::new(PasswordProviderImpl {}),
@@ -402,8 +407,10 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         matches.get_flag("allow-other"),
         matches.get_flag("direct-io"),
         matches.get_flag("suid"),
-    )
-    .await
+    );
+    mount_point.mount().await?;
+
+    Ok(())
 }
 
 fn umount(mountpoint: &str) -> Result<()> {

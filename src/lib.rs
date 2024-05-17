@@ -19,38 +19,12 @@
 //!
 //! It can be used a library to create an encrypted file system or mount it with FUSE.
 //!
-//! This crate also contains [main.rs] file that can be used as an example on how to run the encrypted file system from the command line.
-//! Documentation for that can be found [here](https://crates.io/crates/encryptedfs).
+//! This crate also contains **main.rs** file that can be used as an example on how to run the encrypted file system from the command line.
+//! Documentation for that can be found [here](https://crates.io/crates/rencfs).
 //!
 //! In the following example, we will see how we can use the library.
 //!
-//! ## Calling (`run_fuse`)[`run_fuse`]
-//!
-//! ### Example
-//!
-//! ```no_run
-//! use rencfs::run_fuse;
-//! use rencfs::crypto::Cipher;
-//! use secrecy::SecretString;
-//! use rencfs::encryptedfs::PasswordProvider;
-//! use std::str::FromStr;
-//! use std::path::Path;
-//!
-//! #[tokio::main]
-//! async fn main() {
-//! struct PasswordProviderImpl {}
-//!     impl PasswordProvider for PasswordProviderImpl {
-//!         fn get_password(&self) -> Option<SecretString> {
-//!             /// dummy password, better use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
-//!             Some(SecretString::from_str("password").unwrap())
-//!         }
-//!     }
-//!     run_fuse(Path::new(&"/tmp/rencfs").to_path_buf(), Path::new(&"/tmp/rencfs_data").to_path_buf(),
-//!         Box::new(PasswordProviderImpl{}), Cipher::ChaCha20Poly1305, false, false, false, false).await.unwrap();
-//! }
-//! ```
-//!
-//! ## Using [EncryptedFsFuse3](EncryptedFsFuse3)
+//! ## Using [`mount::create_mount_point`] on Linux
 //!
 //! ### Example
 //!
@@ -62,9 +36,10 @@
 //! use secrecy::SecretString;
 //! use rencfs::crypto::Cipher;
 //! use rencfs::encryptedfs::{ PasswordProvider};
-//! use rencfs::encryptedfs_fuse3::EncryptedFsFuse3;
+//! use rencfs::mount::create_mount_point;
 //!
-//! async fn run_fuse(mountpoint: PathBuf, data_dir: PathBuf, tmp_dir: PathBuf, password_provider: Box<dyn PasswordProvider>, cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
+//! async fn mount(mountpoint: PathBuf, data_dir: PathBuf, tmp_dir: PathBuf, password_provider: Box<dyn PasswordProvider>,
+//!     cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
 //!     let uid = unsafe { libc::getuid() };
 //!     let gid = unsafe { libc::getgid() };
 //!
@@ -75,11 +50,18 @@
 //!         .allow_other(allow_other)
 //!         .clone();
 //!     let mount_path = OsStr::new(mountpoint.to_str().unwrap());
+//!     let mut mount_point = create_mount_point(
+//!         mountpoint,
+//!         data_dir,
+//!         password_provider,
+//!         cipher,
+//!         allow_root,
+//!         allow_other,
+//!         direct_io,
+//!         suid_support,
+//!     );
+//!     mount_point.mount().await?;
 //!
-//!     Session::new(mount_options)
-//!         .mount_with_unprivileged(EncryptedFsFuse3::new(data_dir, password_provider, cipher, direct_io, suid_support).await.unwrap(), mount_path)
-//!         .await?
-//!         .await?;
 //!    Ok(())
 //! }
 //! ```
@@ -92,7 +74,7 @@
 //! - `direct_io`: Use direct I/O (bypass page cache for open files).
 //! - `suid_support`: If it should allow setting `SUID` and `SGID` when files are created. On `false` it will unset those flags when creating files.
 //!
-//! ## Or directly work with [EncryptedFs](EncryptedFs)
+//! ## Or directly work with [`encryptedfs::EncryptedFs`]
 //!
 //! You need to specify several parameters to create an encrypted file system:
 //! - `data_dir`: The directory where the file system will be mounted.
@@ -216,26 +198,18 @@
 //!     println!("Password changed successfully");
 //! }
 //! ```
-use std::ffi::OsStr;
-use std::path::PathBuf;
-
-use fuse3::raw::Session;
-use fuse3::MountOptions;
-use tracing::{info, instrument};
+extern crate test;
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::PasswordProvider;
-use crate::encryptedfs_fuse3::EncryptedFsFuse3;
-
-extern crate test;
 
 pub mod arc_hashmap;
 pub mod async_util;
 pub mod crypto;
 pub mod encryptedfs;
-pub mod encryptedfs_fuse3;
 pub mod expire_value;
 pub mod fs_util;
+pub mod mount;
 pub mod stream_util;
 
 #[allow(unreachable_code)]
@@ -246,42 +220,4 @@ pub const fn is_debug() -> bool {
         return true;
     }
     false
-}
-
-#[instrument(skip(password_provider))]
-pub async fn run_fuse(
-    mountpoint: PathBuf,
-    data_dir: PathBuf,
-    password_provider: Box<dyn PasswordProvider>,
-    cipher: Cipher,
-    allow_root: bool,
-    allow_other: bool,
-    direct_io: bool,
-    suid_support: bool,
-) -> anyhow::Result<()> {
-    let mut mount_options = &mut MountOptions::default();
-    #[cfg(target_os = "linux")]
-    {
-        unsafe {
-            mount_options = mount_options.uid(libc::getuid()).gid(libc::getgid());
-        }
-    }
-    let mount_options = mount_options
-        .read_only(false)
-        .allow_root(allow_root)
-        .allow_other(allow_other)
-        .clone();
-    let mount_path = OsStr::new(mountpoint.to_str().unwrap());
-
-    info!("Checking password and mounting FUSE filesystem");
-    Session::new(mount_options)
-        .mount_with_unprivileged(
-            EncryptedFsFuse3::new(data_dir, password_provider, cipher, direct_io, suid_support)
-                .await?,
-            mount_path,
-        )
-        .await?
-        .await?;
-
-    Ok(())
 }

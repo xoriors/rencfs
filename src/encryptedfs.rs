@@ -24,7 +24,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::{JoinError, JoinSet};
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::{ArcHashMap, Holder};
 use crate::async_util::call_async;
@@ -2026,7 +2026,6 @@ impl EncryptedFs {
             }
             .into();
             attr.ino = ROOT_INODE;
-            #[cfg(target_os = "linux")]
             unsafe {
                 attr.uid = libc::getuid();
                 attr.gid = libc::getgid();
