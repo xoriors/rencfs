@@ -14,7 +14,6 @@ pub(super) struct MacOsFuse3MountPoint {
     allow_other: bool,
     direct_io: bool,
     suid_support: bool,
-    mount_handle: Option<MountHandle>, // todo: see how we can use it later to umount
 }
 impl MacOsFuse3MountPoint {
     pub(super) fn new(
@@ -36,7 +35,6 @@ impl MacOsFuse3MountPoint {
             allow_other,
             direct_io,
             suid_support,
-            mount_handle: None,
         }
     }
 }
