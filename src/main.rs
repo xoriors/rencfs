@@ -22,7 +22,6 @@ use tracing_subscriber::EnvFilter;
 
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
-use rencfs::fuse3::EncryptedFsFuse3;
 use rencfs::{is_debug, mount};
 
 mod keyring;

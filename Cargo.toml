@@ -56,7 +56,7 @@ atomic-write-file = "0.1.4"
 tempfile = "3.10.1"
 async-trait = "0.1.80"
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(linux)'.dependencies]
 fuse3 = { version = "0.7.1", features = ["tokio-runtime", "unprivileged"] }
 
 [package.metadata.aur]
