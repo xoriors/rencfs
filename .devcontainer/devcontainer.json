@@ -15,6 +15,11 @@
     // Path is relative to the devcontainer.json file.
     "dockerfile": "Dockerfile"
   },
+  "runArgs": [
+    "--cap-add=SYS_ADMIN",
+    "--security-opt",
+    "apparmor:unconfined"
+  ],
   // Use 'mounts' to make the cargo cache persistent in a Docker Volume.
   // "mounts": [
   // 	{
