@@ -17,7 +17,7 @@ use futures_util::TryStreamExt;
 use lru::LruCache;
 use num_format::{Locale, ToFormattedString};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock};
@@ -32,7 +32,7 @@ use crate::crypto::writer::{
     CryptoWriter, CryptoWriterSeek, FileCryptoWriterCallback, FileCryptoWriterMetadataProvider,
 };
 use crate::crypto::Cipher;
-use crate::expire_value::{ExpireValue, Provider};
+use crate::expire_value::{ExpireValue, ValueProvider};
 use crate::{crypto, fs_util, stream_util};
 
 #[cfg(test)]
@@ -42,6 +42,7 @@ pub(crate) const INODES_DIR: &str = "inodes";
 pub(crate) const CONTENTS_DIR: &str = "contents";
 pub(crate) const SECURITY_DIR: &str = "security";
 pub(crate) const KEY_ENC_FILENAME: &str = "key.enc";
+pub(crate) const KEY_SALT_FILENAME: &str = "key.salt";
 
 const LS_DIR: &str = "ls";
 const HASH_DIR: &str = "hash";
@@ -465,36 +466,6 @@ impl Iterator for DirectoryEntryPlusIterator {
     }
 }
 
-fn key_serialize<S>(key: &SecretVec<u8>, s: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    s.collect_seq(key.expose_secret())
-}
-
-fn key_unserialize<'de, D>(deserializer: D) -> Result<SecretVec<u8>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let vec = Vec::deserialize(deserializer)?;
-    Ok(SecretVec::new(vec))
-}
-
-#[derive(Serialize, Deserialize)]
-struct KeyStore {
-    #[serde(serialize_with = "key_serialize")]
-    #[serde(deserialize_with = "key_unserialize")]
-    key: SecretVec<u8>,
-    hash: [u8; 32],
-}
-
-impl KeyStore {
-    fn new(key: SecretVec<u8>) -> Self {
-        let hash = crypto::hash(key.expose_secret());
-        Self { key, hash }
-    }
-}
-
 struct ReadHandleContext {
     ino: u64,
     attr: TimeAndSizeFileAttr,
@@ -532,18 +503,19 @@ struct WriteHandleContext {
 }
 
 struct KeyProvider {
-    path: PathBuf,
+    key_path: PathBuf,
+    salt_path: PathBuf,
     password_provider: Box<dyn PasswordProvider>,
     cipher: Cipher,
 }
 
-impl Provider<SecretVec<u8>, FsError> for KeyProvider {
+impl ValueProvider<SecretVec<u8>, FsError> for KeyProvider {
     fn provide(&self) -> Result<SecretVec<u8>, FsError> {
         let password = self
             .password_provider
             .get_password()
             .ok_or(FsError::InvalidPassword)?;
-        read_or_create_key(&self.path, &password, self.cipher)
+        read_or_create_key(&self.key_path, &self.salt_path, &password, self.cipher)
     }
 }
 
@@ -552,21 +524,21 @@ pub trait PasswordProvider: Send + Sync + 'static {
 }
 
 struct DirEntryNameCacheProvider {}
-impl Provider<Mutex<LruCache<String, SecretString>>, FsError> for DirEntryNameCacheProvider {
+impl ValueProvider<Mutex<LruCache<String, SecretString>>, FsError> for DirEntryNameCacheProvider {
     fn provide(&self) -> Result<Mutex<LruCache<String, SecretString>>, FsError> {
         Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }
 
 struct DirEntryMetaCacheProvider {}
-impl Provider<Mutex<DirEntryMetaCache>, FsError> for DirEntryMetaCacheProvider {
+impl ValueProvider<Mutex<DirEntryMetaCache>, FsError> for DirEntryMetaCacheProvider {
     fn provide(&self) -> Result<Mutex<DirEntryMetaCache>, FsError> {
         Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }
 
 struct AttrCacheProvider {}
-impl Provider<Mutex<LruCache<u64, FileAttr>>, FsError> for AttrCacheProvider {
+impl ValueProvider<Mutex<LruCache<u64, FileAttr>>, FsError> for AttrCacheProvider {
     fn provide(&self) -> Result<Mutex<LruCache<u64, FileAttr>>, FsError> {
         Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
@@ -611,12 +583,15 @@ impl EncryptedFs {
         cipher: Cipher,
     ) -> FsResult<Arc<Self>> {
         let key_provider = KeyProvider {
-            path: data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
+            key_path: data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
+            salt_path: data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME),
             password_provider,
             cipher,
         };
+        let key = ExpireValue::new(key_provider, Duration::from_secs(10 * 60));
 
-        ensure_structure_created(&data_dir.clone(), &key_provider).await?;
+        ensure_structure_created(&data_dir.clone()).await?;
+        key.get().await?; // this will check the password
 
         let fs = Self {
             data_dir,
@@ -631,7 +606,7 @@ impl EncryptedFs {
             serialize_dir_entries_ls_locks: Arc::new(ArcHashMap::default()),
             serialize_dir_entries_hash_locks: Arc::new(ArcHashMap::default()),
             // todo: take duration from param
-            key: ExpireValue::new(key_provider, Duration::from_secs(10 * 60)),
+            key,
             self_weak: std::sync::Mutex::new(None),
             read_write_locks: ArcHashMap::default(),
             // todo: take duration from param
@@ -728,7 +703,7 @@ impl EncryptedFs {
                                 self_clone
                                     .contents_path(attr.ino)
                                     .parent()
-                                    .expect("we don't have parent"),
+                                    .expect("oops, we don't have a parent"),
                             )?
                             .sync_all()?;
                             Ok::<(), FsError>(())
@@ -1126,7 +1101,6 @@ impl EncryptedFs {
                 if let Some(name_cached) = cache.get(&name).cloned() {
                     name_cached
                 } else {
-                    warn!("decrypting file name");
                     drop(cache);
                     if let Ok(decrypted_name) =
                         crypto::decrypt_file_name(&name, self.cipher, self.key.get().await?)
@@ -1155,7 +1129,6 @@ impl EncryptedFs {
             });
         }
         drop(cache);
-        warn!("deserializing directory entry");
         info!(
             "cache size {}",
             self.dir_entries_meta_cache.get().await?.lock().await.len()
@@ -1895,25 +1868,21 @@ impl EncryptedFs {
         cipher: Cipher,
     ) -> FsResult<()> {
         check_structure(data_dir, false).await?;
-
         // decrypt key
-        let salt = crypto::hash_secret_string(&old_password);
-        let initial_key = crypto::derive_key(&old_password, cipher, salt)?;
+        let salt: Vec<u8> = bincode::deserialize_from(File::open(
+            data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME),
+        )?)?;
+        let initial_key = crypto::derive_key(&old_password, cipher, &salt)?;
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
         let reader = crypto::create_reader(File::open(enc_file)?, cipher, Arc::new(initial_key));
-        let key_store: KeyStore =
+        let key: Vec<u8> =
             bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
-        // check hash
-        if key_store.hash != crypto::hash(key_store.key.expose_secret()) {
-            return Err(FsError::InvalidPassword);
-        }
-
+        let key = SecretVec::new(key);
         // encrypt it with new key derived from new password
-        let salt = crypto::hash_secret_string(&new_password);
-        let new_key = crypto::derive_key(&new_password, cipher, salt)?;
+        let new_key = crypto::derive_key(&new_password, cipher, &salt)?;
         crypto::atomic_serialize_encrypt_into(
             &data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
-            &key_store,
+            &key.expose_secret(),
             cipher,
             Arc::new(new_key),
         )?;
@@ -2216,49 +2185,60 @@ impl EncryptedFs {
 }
 
 fn read_or_create_key(
-    path: &PathBuf,
+    key_path: &PathBuf,
+    salt_path: &PathBuf,
     password: &SecretString,
     cipher: Cipher,
 ) -> FsResult<SecretVec<u8>> {
+    let salt = if salt_path.exists() {
+        bincode::deserialize_from(File::open(salt_path)?).map_err(|_| FsError::InvalidPassword)?
+    } else {
+        let mut salt = vec![0; 16];
+        crypto::create_rng().fill_bytes(&mut salt);
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(salt_path)?;
+        bincode::serialize_into(&mut file, &salt)?;
+        file.flush()?;
+        file.sync_all()?;
+        File::open(salt_path.parent().expect("oops, we don't have a parent"))?.sync_all()?;
+        salt
+    };
     // derive key from password
-    let salt = crypto::hash_secret_string(password);
-    let derived_key = crypto::derive_key(password, cipher, salt)?;
-    if path.exists() {
+    let derived_key = crypto::derive_key(password, cipher, &salt)?;
+    if key_path.exists() {
         // read key
-        let reader = crypto::create_reader(File::open(path)?, cipher, Arc::new(derived_key));
-        let key_store: KeyStore =
+        let reader = crypto::create_reader(File::open(key_path)?, cipher, Arc::new(derived_key));
+        let key: Vec<u8> =
             bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
-        // check hash
-        if key_store.hash != crypto::hash(key_store.key.expose_secret()) {
-            return Err(FsError::InvalidPassword);
-        }
-        Ok(key_store.key)
+        Ok(SecretVec::new(key))
     } else {
         // first time, create a random key and encrypt it with the derived key from password
         let mut key: Vec<u8> = vec![];
         let key_len = cipher.key_len();
         key.resize(key_len, 0);
         crypto::create_rng().fill_bytes(&mut key);
-        let key = SecretVec::new(key);
-        let key_store = KeyStore::new(key);
         let mut writer = crypto::create_writer(
             OpenOptions::new()
                 .read(true)
                 .write(true)
                 .create(true)
                 .truncate(true)
-                .open(path)?,
+                .open(key_path)?,
             cipher,
             Arc::new(derived_key),
         );
-        bincode::serialize_into(&mut writer, &key_store)?;
+        bincode::serialize_into(&mut writer, &key)?;
         writer.flush()?;
         writer.finish()?;
-        Ok(key_store.key)
+        Ok(SecretVec::new(key))
     }
 }
 
-async fn ensure_structure_created(data_dir: &PathBuf, key_provider: &KeyProvider) -> FsResult<()> {
+async fn ensure_structure_created(data_dir: &PathBuf) -> FsResult<()> {
     if data_dir.exists() {
         check_structure(data_dir, true).await?;
     } else {
@@ -2273,9 +2253,6 @@ async fn ensure_structure_created(data_dir: &PathBuf, key_provider: &KeyProvider
             fs::create_dir_all(path)?;
         }
     }
-
-    // create encryption key
-    key_provider.provide()?;
 
     Ok(())
 }
@@ -2300,7 +2277,13 @@ async fn check_structure(data_dir: &Path, ignore_empty: bool) -> FsResult<()> {
     vec.sort_unstable();
     let mut vec2 = vec![INODES_DIR, CONTENTS_DIR, SECURITY_DIR];
     vec2.sort_unstable();
-    if vec != vec2 || !data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME).is_file() {
+    if vec != vec2
+        || !data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME).is_file()
+        || !data_dir
+            .join(SECURITY_DIR)
+            .join(KEY_SALT_FILENAME)
+            .is_file()
+    {
         return Err(FsError::InvalidDataDirStructure);
     }
 

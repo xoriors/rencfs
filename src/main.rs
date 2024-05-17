@@ -22,6 +22,8 @@ use rencfs::is_debug;
 
 mod keyring;
 
+static mut PASS: Option<SecretString> = None;
+
 #[derive(Debug, Error)]
 enum ExitStatusError {
     #[error("exit with status {0}")]
@@ -311,10 +313,19 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         }
     }
     // save password in keyring
-    keyring::save(&password, "password").map_err(|err| {
-        error!(err = %err);
-        ExitStatusError::Failure(1)
-    })?;
+    info!("Save password in keyring");
+    if keyring::save(&password, "password")
+        .map_err(|err| {
+            error!(err = %err);
+        })
+        .is_err()
+    {
+        // maybe we don't have security manager, keep it in mem
+        unsafe {
+            warn!("Cannot save password in keyring, keep it in memory");
+            PASS = Some(password.clone());
+        }
+    }
 
     if matches.get_flag("umount-on-start") {
         let _ = umount(mountpoint.as_str()).map_err(|err| {
@@ -340,17 +351,24 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             })
             .ok();
 
-        info!("Delete key from keyring");
-        keyring::delete("password")
-            .map_err(|err| {
-                error!(err = %err);
-                status.replace(ExitStatusError::Failure(1));
-            })
-            .ok();
+        unsafe {
+            if PASS.is_none() {
+                info!("Delete key from keyring");
+                keyring::remove("password")
+                    .map_err(|err| {
+                        error!(err = %err);
+                        status.replace(ExitStatusError::Failure(1));
+                    })
+                    .ok();
 
-        process::exit(status.map_or(0, |x| match x {
-            ExitStatusError::Failure(status) => status,
-        }));
+                process::exit(status.map_or(0, |x| match x {
+                    ExitStatusError::Failure(status) => status,
+                }));
+            } else {
+                info!("Remove key from memory");
+                PASS = None;
+            }
+        }
     })
     .unwrap();
 
@@ -359,12 +377,20 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     #[allow(clippy::items_after_statements)]
     impl PasswordProvider for PasswordProviderImpl {
         fn get_password(&self) -> Option<SecretString> {
-            keyring::get("password")
-                .map_err(|err| {
-                    error!(err = %err, "cannot get password from keyring");
-                    err
-                })
-                .ok()
+            unsafe {
+                if PASS.is_some() {
+                    info!("Get password from memory");
+                    PASS.as_ref().map(|v| v.clone())
+                } else {
+                    info!("Get password from keyring");
+                    keyring::get("password")
+                        .map_err(|err| {
+                            error!(err = %err, "cannot get password from keyring");
+                            err
+                        })
+                        .ok()
+                }
+            }
         }
     }
 

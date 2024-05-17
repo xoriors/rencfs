@@ -230,13 +230,13 @@ pub fn decrypt_file_name(
 pub fn derive_key(
     password: &SecretString,
     cipher: Cipher,
-    salt: [u8; 32],
+    salt: &Vec<u8>,
 ) -> Result<SecretVec<u8>> {
     let mut dk = vec![];
     let key_len = cipher.key_len();
     dk.resize(key_len, 0);
     Argon2::default()
-        .hash_password_into(password.expose_secret().as_bytes(), &salt, &mut dk)
+        .hash_password_into(password.expose_secret().as_bytes(), salt, &mut dk)
         .map_err(|err| Error::GenericString(err.to_string()))?;
     Ok(SecretVec::new(dk))
 }

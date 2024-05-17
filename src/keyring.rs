@@ -9,7 +9,7 @@ pub(crate) fn save(password: &SecretString, suffix: &str) -> Result<(), keyring:
     entry.set_password(password.expose_secret())
 }
 
-pub(crate) fn delete(suffix: &str) -> Result<(), keyring::Error> {
+pub(crate) fn remove(suffix: &str) -> Result<(), keyring::Error> {
     let entry = Entry::new(KEYRING_SERVICE, &format!("{KEYRING_USER}.{suffix}"))?;
     entry.delete_password()
 }

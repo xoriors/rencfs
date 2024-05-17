@@ -10,14 +10,14 @@ use tokio::task::JoinHandle;
 
 const KEY: &str = "key";
 
-pub trait Provider<T, E: Error + Send + Sync + 'static>: Send + Sync + 'static {
+pub trait ValueProvider<T, E: Error + Send + Sync + 'static>: Send + Sync + 'static {
     fn provide(&self) -> Result<T, E>;
 }
 
 pub struct ExpireValue<
     T: Send + Sync + 'static,
     E: Error + Send + Sync + 'static,
-    P: Provider<T, E>,
+    P: ValueProvider<T, E>,
 > {
     cache: Arc<Cache<String, Arc<T>>>,
     weak: RwLock<Option<Weak<T>>>,
@@ -27,7 +27,7 @@ pub struct ExpireValue<
     _marker: PhantomData<E>,
 }
 
-impl<T: Send + Sync + 'static, E: Error + Send + Sync + 'static, P: Provider<T, E>>
+impl<T: Send + Sync + 'static, E: Error + Send + Sync + 'static, P: ValueProvider<T, E>>
     ExpireValue<T, E, P>
 {
     pub fn new(provider: P, duration: Duration) -> Self {
@@ -82,7 +82,7 @@ impl<T: Send + Sync + 'static, E: Error + Send + Sync + 'static, P: Provider<T, 
     }
 }
 
-impl<T: Send + Sync + 'static, E: Error + Send + Sync + 'static, P: Provider<T, E>> Drop
+impl<T: Send + Sync + 'static, E: Error + Send + Sync + 'static, P: ValueProvider<T, E>> Drop
     for ExpireValue<T, E, P>
 {
     fn drop(&mut self) {
