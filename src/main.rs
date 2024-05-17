@@ -316,7 +316,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     info!("Save password in keyring");
     if keyring::save(&password, "password")
         .map_err(|err| {
-            error!(err = %err);
+            warn!(err = %err);
         })
         .is_err()
     {
@@ -341,6 +341,20 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         info!("Received signal to exit");
         let mut status: Option<ExitStatusError> = None;
 
+        unsafe {
+            if PASS.is_none() {
+                info!("Delete key from keyring");
+                keyring::remove("password")
+                    .map_err(|err| {
+                        error!(err = %err);
+                    })
+                    .ok();
+            } else {
+                info!("Remove key from memory");
+                PASS = None;
+            }
+        }
+
         if auto_unmount {
             info!("Unmounting {}", mountpoint_kill);
         }
@@ -351,24 +365,9 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             })
             .ok();
 
-        unsafe {
-            if PASS.is_none() {
-                info!("Delete key from keyring");
-                keyring::remove("password")
-                    .map_err(|err| {
-                        error!(err = %err);
-                        status.replace(ExitStatusError::Failure(1));
-                    })
-                    .ok();
-
-                process::exit(status.map_or(0, |x| match x {
-                    ExitStatusError::Failure(status) => status,
-                }));
-            } else {
-                info!("Remove key from memory");
-                PASS = None;
-            }
-        }
+        process::exit(status.map_or(0, |x| match x {
+            ExitStatusError::Failure(status) => status,
+        }));
     })
     .unwrap();
 

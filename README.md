@@ -211,6 +211,14 @@ logged out, or it may not succeed at all.
 If, after installation, running `rustc --version` in the console fails, this is the most likely reason.
 In that case please add it to the `PATH` manually.
 
+#### Use nightly toolchain
+
+We need this because we are using some experimental features.
+
+```bash
+rustup default nightly && rustup update
+````
+
 ### Other dependencies
 
 Also, these deps are required (or based on your distribution):
