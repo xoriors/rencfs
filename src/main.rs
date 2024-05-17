@@ -7,8 +7,6 @@ use std::{env, io, panic, process};
 use anyhow::Result;
 use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
 use ctrlc::set_handler;
-use fuse3::raw::Session;
-use fuse3::MountOptions;
 use libc::mount;
 use rpassword::read_password;
 use secrecy::{ExposeSecret, SecretString};
