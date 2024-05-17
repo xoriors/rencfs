@@ -2,7 +2,6 @@ use crate::crypto::Cipher;
 use crate::encryptedfs::{FsResult, PasswordProvider};
 use crate::mount::MountPoint;
 use async_trait::async_trait;
-use fuse3::raw::MountHandle;
 use std::path::PathBuf;
 use tracing::warn;
 
