@@ -53,45 +53,15 @@ async fn main() -> Result<()> {
 
 fn get_key(cipher: Cipher) -> io::Result<SecretVec<u8>> {
     let password = SecretString::new("pass42".to_string());
-    let salt = crypto::hash_secret_string(&password);
+    let salt: Vec<u8> = bincode::deserialize_from(File::open("/home/gnome/rencfs_data/security/key.salt")?).unwrap();
 
     // get key from location, useful to debug in existing data dir
-    let derived_key = crypto::derive_key(&password, cipher, salt).unwrap();
+    let derived_key = crypto::derive_key(&password, cipher, &salt).unwrap();
     let reader = crypto::create_reader(
         File::open("/home/gnome/rencfs_data/security/key.enc").unwrap(),
         cipher,
         Arc::new(derived_key),
     );
-    let key_store: KeyStore = bincode::deserialize_from(reader).unwrap();
-    // check hash
-    if key_store.hash != crypto::hash(key_store.key.expose_secret()) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Invalid password",
-        ));
-    }
-    Ok(key_store.key)
-}
-
-fn key_serialize<S>(key: &SecretVec<u8>, s: S) -> std::result::Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    s.collect_seq(key.expose_secret())
-}
-
-fn key_unserialize<'de, D>(deserializer: D) -> std::result::Result<SecretVec<u8>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let vec = Vec::deserialize(deserializer)?;
-    Ok(SecretVec::new(vec))
-}
-
-#[derive(Serialize, Deserialize)]
-struct KeyStore {
-    #[serde(serialize_with = "key_serialize")]
-    #[serde(deserialize_with = "key_unserialize")]
-    key: SecretVec<u8>,
-    hash: [u8; 32],
+    let key: Vec<u8> = bincode::deserialize_from(reader).unwrap();
+    Ok(SecretVec::new(key))
 }

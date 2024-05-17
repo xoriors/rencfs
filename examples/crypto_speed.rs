@@ -1,3 +1,4 @@
+use std::{fs, io};
 use std::env::args;
 use std::fs::File;
 use std::future::Future;
@@ -5,14 +6,14 @@ use std::io::{Read, Seek, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
-use std::{fs, io};
+use rand_core::RngCore;
 
 use anyhow::Result;
-use secrecy::{SecretString, SecretVec};
+use secrecy::SecretVec;
 
 use rencfs::crypto;
-use rencfs::crypto::writer::CryptoWriter;
 use rencfs::crypto::Cipher;
+use rencfs::crypto::writer::CryptoWriter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -173,7 +174,7 @@ where
 }
 
 fn get_key(cipher: Cipher) -> io::Result<SecretVec<u8>> {
-    let password = SecretString::new("pass42".to_string());
-    let salt = crypto::hash_secret_string(&password);
-    Ok(crypto::derive_key(&password, cipher, salt).unwrap())
+    let mut key = vec![0; cipher.key_len()];
+    crypto::create_rng().fill_bytes(key.as_mut_slice());
+    Ok(SecretVec::new(key))
 }

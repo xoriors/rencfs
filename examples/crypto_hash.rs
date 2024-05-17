@@ -3,17 +3,18 @@ use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
+use rand_core::RngCore;
 
-use secrecy::SecretString;
+use secrecy::SecretVec;
 
 use rencfs::crypto;
 use rencfs::crypto::Cipher;
 
 fn main() -> anyhow::Result<()> {
-    let password = SecretString::new("password".to_string());
-    let salt = crypto::hash_secret_string(&password);
     let cipher = Cipher::ChaCha20Poly1305;
-    let key = Arc::new(crypto::derive_key(&password, cipher, salt).unwrap());
+    let mut key = vec![0; cipher.key_len()];
+    crypto::create_rng().fill_bytes(key.as_mut_slice());
+    let key = Arc::new(SecretVec::new(key));
 
     let mut args = args();
     let _ = args.next(); // skip the program name
