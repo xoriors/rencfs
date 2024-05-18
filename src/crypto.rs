@@ -18,7 +18,6 @@ use rand_chacha::ChaCha20Rng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
 use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -268,14 +267,14 @@ pub fn hash_file_name(name: &SecretString) -> FsResult<String> {
 
 #[must_use]
 pub fn hash(data: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(data);
     hasher.finalize().into()
 }
 
 #[allow(clippy::missing_panics_doc)]
 pub fn hash_reader<R: Read + ?Sized>(r: &mut R) -> io::Result<[u8; 32]> {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     let mut reader = io::BufReader::new(r);
     io::copy(&mut reader, &mut hasher)?;
     Ok(hasher.finalize().into())
