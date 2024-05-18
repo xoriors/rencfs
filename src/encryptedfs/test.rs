@@ -9,10 +9,7 @@ use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::Mutex;
 use tracing_test::traced_test;
 
-use crate::async_util;
-use rand::Rng;
 use tempfile::NamedTempFile;
-use test::{black_box, Bencher};
 
 use crate::encryptedfs::write_all_bytes_to_fs;
 use crate::encryptedfs::{
@@ -1247,7 +1244,7 @@ async fn test_remove_file() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
-async fn test_find_by_name_exists_by_name_many_files() {
+async fn test_find_by_name_exists_by_name100files() {
     run_test(
         TestSetup {
             key: "test_find_by_name_exists_by_name_many_files",
@@ -1282,170 +1279,181 @@ async fn test_find_by_name_exists_by_name_many_files() {
     .await
 }
 
-#[bench]
-fn bench_create_nod(b: &mut Bencher) {
-    test("bench_create_nod", 1, async {
-        let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-        let mut fs = fs.lock().await;
-        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+mod bench {
+    use crate::async_util;
+    use crate::encryptedfs::test::{create_attr_from_type, test, SETUP_RESULT};
+    use crate::encryptedfs::{DirectoryEntry, DirectoryEntryPlus, FileType, ROOT_INODE};
+    use rand::Rng;
+    use secrecy::SecretString;
+    use std::str::FromStr;
+    use std::sync::Arc;
+    use test::{black_box, Bencher};
 
-        let mut i = 1;
-        let i = &mut i;
-        b.iter(|| {
-            black_box({
-                async_util::call_async(async {
-                    let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
-                    let _ = fs
-                        .create_nod(
-                            ROOT_INODE,
-                            &test_file,
-                            create_attr_from_type(FileType::RegularFile),
-                            false,
-                            false,
-                        )
-                        .await
-                        .unwrap();
-                });
-                *i += 1;
-                i.clone()
-            })
+    #[bench]
+    fn bench_create_nod(b: &mut Bencher) {
+        test("bench_create_nod", 1, async {
+            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let mut fs = fs.lock().await;
+            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+
+            let mut i = 1;
+            let i = &mut i;
+            b.iter(|| {
+                black_box({
+                    async_util::call_async(async {
+                        let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
+                        let _ = fs
+                            .create_nod(
+                                ROOT_INODE,
+                                &test_file,
+                                create_attr_from_type(FileType::RegularFile),
+                                false,
+                                false,
+                            )
+                            .await
+                            .unwrap();
+                    });
+                    *i += 1;
+                    i.clone()
+                })
+            });
+            println!("i: {}", i);
         });
-        println!("i: {}", i);
-    });
-}
+    }
 
-#[bench]
-fn bench_exists_by_name(b: &mut Bencher) {
-    test("exists_by_name", 1, async {
-        let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-        let mut fs = fs.lock().await;
-        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+    #[bench]
+    fn bench_exists_by_name(b: &mut Bencher) {
+        test("exists_by_name", 1, async {
+            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let mut fs = fs.lock().await;
+            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
-        let mut rnd = rand::thread_rng();
-        b.iter(|| {
-            black_box({
-                async_util::call_async(async {
-                    let _ = fs
-                        .exists_by_name(
-                            ROOT_INODE,
-                            &SecretString::from_str(&format!(
-                                "test-file-{}",
-                                rnd.gen_range(1..100)
-                            ))
-                            .unwrap(),
-                        )
-                        .unwrap();
-                });
-            })
+            let mut rnd = rand::thread_rng();
+            b.iter(|| {
+                black_box({
+                    async_util::call_async(async {
+                        let _ = fs
+                            .exists_by_name(
+                                ROOT_INODE,
+                                &SecretString::from_str(&format!(
+                                    "test-file-{}",
+                                    rnd.gen_range(1..100)
+                                ))
+                                .unwrap(),
+                            )
+                            .unwrap();
+                    });
+                })
+            });
         });
-    });
-}
+    }
 
-#[bench]
-fn bench_find_by_name(b: &mut Bencher) {
-    test("bench_find_by_name", 1, async {
-        let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-        let mut fs = fs.lock().await;
-        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+    #[bench]
+    fn bench_find_by_name(b: &mut Bencher) {
+        test("bench_find_by_name", 1, async {
+            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let mut fs = fs.lock().await;
+            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
-        for i in 0..100 {
-            let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
-            let _ = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_file,
-                    create_attr_from_type(FileType::RegularFile),
-                    false,
-                    false,
-                )
-                .await
-                .unwrap();
-        }
+            for i in 0..100 {
+                let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
+                let _ = fs
+                    .create_nod(
+                        ROOT_INODE,
+                        &test_file,
+                        create_attr_from_type(FileType::RegularFile),
+                        false,
+                        false,
+                    )
+                    .await
+                    .unwrap();
+            }
 
-        let mut rnd = rand::thread_rng();
-        b.iter(|| {
-            black_box({
-                async_util::call_async(async {
-                    let _ = fs.get_inode(ROOT_INODE).await.unwrap();
-                    let _ = fs
-                        .find_by_name(
-                            ROOT_INODE,
-                            &SecretString::from_str(&format!(
-                                "test-file-{}",
-                                rnd.gen_range(1..100)
-                            ))
-                            .unwrap(),
-                        )
-                        .await
-                        .unwrap();
-                });
-            })
+            let mut rnd = rand::thread_rng();
+            b.iter(|| {
+                black_box({
+                    async_util::call_async(async {
+                        let _ = fs.get_inode(ROOT_INODE).await.unwrap();
+                        let _ = fs
+                            .find_by_name(
+                                ROOT_INODE,
+                                &SecretString::from_str(&format!(
+                                    "test-file-{}",
+                                    rnd.gen_range(1..100)
+                                ))
+                                .unwrap(),
+                            )
+                            .await
+                            .unwrap();
+                    });
+                })
+            });
         });
-    });
-}
+    }
 
-#[bench]
-fn bench_read_dir(b: &mut Bencher) {
-    test("bench_read_dir", 1, async {
-        let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-        let mut fs = fs.lock().await;
-        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+    #[bench]
+    fn bench_read_dir(b: &mut Bencher) {
+        test("bench_read_dir", 1, async {
+            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let mut fs = fs.lock().await;
+            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
-        for i in 0..100 {
-            let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
-            let _ = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_file,
-                    create_attr_from_type(FileType::RegularFile),
-                    false,
-                    false,
-                )
-                .await
-                .unwrap();
-        }
+            for i in 0..100 {
+                let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
+                let _ = fs
+                    .create_nod(
+                        ROOT_INODE,
+                        &test_file,
+                        create_attr_from_type(FileType::RegularFile),
+                        false,
+                        false,
+                    )
+                    .await
+                    .unwrap();
+            }
 
-        b.iter(|| {
-            black_box({
-                async_util::call_async(async {
-                    let iter = fs.read_dir(ROOT_INODE, 0).await.unwrap();
-                    let vec: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
-                    black_box(vec);
-                });
-            })
+            b.iter(|| {
+                black_box({
+                    async_util::call_async(async {
+                        let iter = fs.read_dir(ROOT_INODE, 0).await.unwrap();
+                        let vec: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
+                        black_box(vec);
+                    });
+                })
+            });
         });
-    });
-}
+    }
 
-#[bench]
-fn bench_read_dir_plus(b: &mut Bencher) {
-    test("bench_read_dir_plus", 1, async {
-        let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-        let mut fs = fs.lock().await;
-        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+    #[bench]
+    fn bench_read_dir_plus(b: &mut Bencher) {
+        test("bench_read_dir_plus", 1, async {
+            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let mut fs = fs.lock().await;
+            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
-        for i in 0..100 {
-            let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
-            let _ = fs
-                .create_nod(
-                    ROOT_INODE,
-                    &test_file,
-                    create_attr_from_type(FileType::RegularFile),
-                    false,
-                    false,
-                )
-                .await
-                .unwrap();
-        }
+            for i in 0..100 {
+                let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
+                let _ = fs
+                    .create_nod(
+                        ROOT_INODE,
+                        &test_file,
+                        create_attr_from_type(FileType::RegularFile),
+                        false,
+                        false,
+                    )
+                    .await
+                    .unwrap();
+            }
 
-        b.iter(|| {
-            black_box({
-                async_util::call_async(async {
-                    let iter = fs.read_dir_plus(ROOT_INODE, 0).await.unwrap();
-                    let vec: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
-                    black_box(vec);
-                });
-            })
+            b.iter(|| {
+                black_box({
+                    async_util::call_async(async {
+                        let iter = fs.read_dir_plus(ROOT_INODE, 0).await.unwrap();
+                        let vec: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
+                        black_box(vec);
+                    });
+                })
+            });
         });
-    });
+    }
 }

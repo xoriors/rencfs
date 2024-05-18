@@ -512,10 +512,8 @@ impl CryptoReader for FileCryptoReader {}
 //
 // impl CryptoReader for ChunkedFileCryptoReader {}
 
-#[cfg(test)]
-mod test {
+mod bench {
     use crate::crypto;
-    use crate::crypto::writer::CryptoWriter;
     use crate::crypto::Cipher;
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -525,8 +523,68 @@ mod test {
     use std::sync::Arc;
     use test::{black_box, Bencher};
 
+    use crate::crypto::writer::CryptoWriter;
+
     #[bench]
-    fn bench_reader_10mb_cha_cha20poly1305(b: &mut Bencher) {
+    fn bench_reader_10mb_cha_cha20poly1305_file(b: &mut Bencher) {
+        let cipher = Cipher::ChaCha20Poly1305;
+        let len = 10 * 1024 * 1024;
+
+        let mut key: Vec<u8> = vec![0; cipher.key_len()];
+        crypto::create_rng().fill_bytes(&mut key);
+        let key = SecretVec::new(key);
+        let key = Arc::new(key);
+
+        let file = tempfile::tempfile().unwrap();
+        let mut writer = crypto::create_writer(file, cipher, key.clone());
+        let mut cursor_random = io::Cursor::new(vec![0; len]);
+        crypto::create_rng().fill_bytes(&mut cursor_random.get_mut());
+        cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
+        io::copy(&mut cursor_random, &mut writer).unwrap();
+        writer.flush().unwrap();
+        let file = writer.finish().unwrap();
+
+        b.iter(|| {
+            black_box({
+                let mut file = file.try_clone().unwrap();
+                file.seek(io::SeekFrom::Start(0)).unwrap();
+                let mut reader = crypto::create_reader(file, cipher, key.clone());
+                io::copy(&mut reader, &mut io::sink()).unwrap();
+            })
+        });
+    }
+
+    #[bench]
+    fn bench_reader_10mb_cha_aes256gcm_file(b: &mut Bencher) {
+        let cipher = Cipher::Aes256Gcm;
+        let len = 10 * 1024 * 1024;
+
+        let mut key: Vec<u8> = vec![0; cipher.key_len()];
+        crypto::create_rng().fill_bytes(&mut key);
+        let key = SecretVec::new(key);
+        let key = Arc::new(key);
+
+        let file = tempfile::tempfile().unwrap();
+        let mut writer = crypto::create_writer(file, cipher, key.clone());
+        let mut cursor_random = io::Cursor::new(vec![0; len]);
+        crypto::create_rng().fill_bytes(&mut cursor_random.get_mut());
+        cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
+        io::copy(&mut cursor_random, &mut writer).unwrap();
+        writer.flush().unwrap();
+        let file = writer.finish().unwrap();
+
+        b.iter(|| {
+            black_box({
+                let mut file = file.try_clone().unwrap();
+                file.seek(io::SeekFrom::Start(0)).unwrap();
+                let mut reader = crypto::create_reader(file, cipher, key.clone());
+                io::copy(&mut reader, &mut io::sink()).unwrap();
+            })
+        });
+    }
+
+    #[bench]
+    fn bench_reader_10mb_cha_cha20poly1305_ram(b: &mut Bencher) {
         let cipher = Cipher::ChaCha20Poly1305;
         let len = 10 * 1024 * 1024;
 
@@ -555,7 +613,7 @@ mod test {
     }
 
     #[bench]
-    fn bench_reader_10mb_cha_aes256gcm(b: &mut Bencher) {
+    fn bench_reader_10mb_cha_aes256gcm_ram(b: &mut Bencher) {
         let cipher = Cipher::Aes256Gcm;
         let len = 10 * 1024 * 1024;
 

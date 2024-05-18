@@ -189,9 +189,6 @@
 //! ```
 extern crate test;
 
-use crate::crypto::Cipher;
-use crate::encryptedfs::PasswordProvider;
-
 pub mod arc_hashmap;
 pub mod async_util;
 pub mod crypto;
