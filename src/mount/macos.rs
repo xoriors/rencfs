@@ -3,7 +3,7 @@ use crate::encryptedfs::{FsResult, PasswordProvider};
 use crate::mount::MountPoint;
 use async_trait::async_trait;
 use std::path::PathBuf;
-use tracing::warn;
+use tracing::{error, warn};
 
 pub(super) struct MacOsFuse3MountPoint {
     mountpoint: PathBuf,
@@ -42,7 +42,7 @@ impl MacOsFuse3MountPoint {
 #[async_trait]
 impl MountPoint for MacOsFuse3MountPoint {
     async fn mount(&mut self) -> FsResult<()> {
-        warn!("he he, not yet ready for this platform, but soon my friend, soon :)");
+        error!("he he, not yet ready for this platform, but soon my friend, soon :)");
         Ok(())
     }
 
