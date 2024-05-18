@@ -69,6 +69,7 @@ async fn main() -> Result<()> {
         Ok(Ok(Err(err))) => {
             let err2 = err.downcast_ref::<ExitStatusError>();
             if let Some(ExitStatusError::Failure(code)) = err2 {
+                info!("Bye!");
                 drop(guard);
                 process::exit(*code);
             }
@@ -394,6 +395,8 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     mount_point.mount().await?;
 
     remove_pass();
+
+    info!("Bye!");
 
     Ok(())
 }
