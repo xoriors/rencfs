@@ -1443,6 +1443,7 @@ pub async fn run_fuse(
 ) -> FsResult<MountHandle> {
     let mut mount_options = &mut MountOptions::default();
     {
+        #[cfg(any(target_os = "unix", target_os = "linux"))]
         unsafe {
             mount_options = mount_options.uid(libc::getuid()).gid(libc::getgid());
         }

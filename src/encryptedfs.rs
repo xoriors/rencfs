@@ -2026,6 +2026,7 @@ impl EncryptedFs {
             }
             .into();
             attr.ino = ROOT_INODE;
+            #[cfg(any(target_os = "unix", target_os = "linux"))]
             unsafe {
                 attr.uid = libc::getuid();
                 attr.gid = libc::getgid();

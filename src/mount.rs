@@ -14,7 +14,7 @@ use macos::MacOsFuse3MountPoint as MountPointImpl;
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-use macos::WindowsMountPoint as MountPointImpl;
+use windows::WindowsMountPoint as MountPointImpl;
 
 #[async_trait]
 pub trait MountPoint {

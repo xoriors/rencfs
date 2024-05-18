@@ -31,8 +31,6 @@
 //! ```no_run
 //! use std::ffi::OsStr;
 //! use std::path::{Path, PathBuf};
-//! use fuse3::MountOptions;
-//! use fuse3::raw::Session;
 //! use secrecy::SecretString;
 //! use rencfs::crypto::Cipher;
 //! use rencfs::encryptedfs::{ PasswordProvider};
@@ -40,15 +38,6 @@
 //!
 //! async fn mount(mountpoint: PathBuf, data_dir: PathBuf, tmp_dir: PathBuf, password_provider: Box<dyn PasswordProvider>,
 //!     cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
-//!     let uid = unsafe { libc::getuid() };
-//!     let gid = unsafe { libc::getgid() };
-//!
-//!     let mut mount_options = MountOptions::default()
-//!         .uid(uid).gid(gid)
-//!         .read_only(false)
-//!         .allow_root(allow_root)
-//!         .allow_other(allow_other)
-//!         .clone();
 //!     let mount_path = OsStr::new(mountpoint.to_str().unwrap());
 //!     let mut mount_point = create_mount_point(
 //!         mountpoint,
