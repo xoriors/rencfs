@@ -342,21 +342,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     set_handler(move || {
         info!("Received signal to exit");
         let mut status: Option<ExitStatusError> = None;
-
-        unsafe {
-            if PASS.is_none() {
-                info!("Delete key from keyring");
-                keyring::remove("password")
-                    .map_err(|err| {
-                        error!(err = %err);
-                    })
-                    .ok();
-            } else {
-                info!("Remove key from memory");
-                PASS = None;
-            }
-        }
-
+        remove_pass();
         if auto_unmount {
             info!("Unmounting {}", mountpoint_kill);
         }
@@ -407,7 +393,25 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     );
     mount_point.mount().await?;
 
+    remove_pass();
+
     Ok(())
+}
+
+fn remove_pass() {
+    unsafe {
+        if PASS.is_none() {
+            info!("Delete key from keyring");
+            keyring::remove("password")
+                .map_err(|err| {
+                    error!(err = %err);
+                })
+                .ok();
+        } else {
+            info!("Remove key from memory");
+            PASS = None;
+        }
+    }
 }
 
 fn umount(mountpoint: &str) -> Result<()> {
