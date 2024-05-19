@@ -51,17 +51,6 @@ impl MountPoint for MountPointImpl {
     }
 
     async fn mount(mut self) -> FsResult<mount::MountHandle> {
-        let handle = mount_fuse(
-            self.mountpoint.clone(),
-            self.data_dir.clone(),
-            self.password_provider.take().unwrap(),
-            self.cipher,
-            self.allow_root,
-            self.allow_other,
-            self.direct_io,
-            self.suid_support,
-        )
-        .await?;
         Ok(mount::MountHandle {
             inner: MountHandleInnerImpl {},
         })
