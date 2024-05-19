@@ -310,7 +310,7 @@ pub enum FsError {
         source: bincode::Error,
         backtrace: Backtrace,
     },
-    #[error("item not found")]
+    #[error("item not found: {0}")]
     NotFound(&'static str),
     #[error("inode not found")]
     InodeNotFound,
@@ -326,7 +326,7 @@ pub enum FsError {
     AlreadyOpenForWrite,
     #[error("not empty")]
     NotEmpty,
-    #[error("other")]
+    #[error("other: {0}")]
     Other(&'static str),
     #[error("invalid password")]
     InvalidPassword,
