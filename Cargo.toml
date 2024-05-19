@@ -13,7 +13,8 @@ categories = ["cryptography", "filesystem"]
 documentation = "https://docs.rs/rencfs"
 exclude = [".github/"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace]
+members = [".", "examples"]
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive", "cargo"] }
