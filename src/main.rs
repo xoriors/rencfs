@@ -367,8 +367,8 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         }
     }
     let mut mount_point = mount::create_mount_point(
-        Path::new(&mountpoint).to_path_buf(),
-        Path::new(&data_dir).to_path_buf(),
+        Path::new(&mountpoint),
+        Path::new(&data_dir),
         Box::new(PasswordProviderImpl {}),
         cipher,
         matches.get_flag("allow-root"),

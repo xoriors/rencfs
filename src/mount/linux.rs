@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::iter::Skip;
 use std::num::NonZeroU32;
 use std::os::raw::c_int;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;

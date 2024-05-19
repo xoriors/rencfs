@@ -1,19 +1,21 @@
-use std::{fs, io};
 use std::env::args;
 use std::fs::File;
 use std::io::{Seek, Write};
 use std::path::Path;
 use std::sync::Arc;
+use std::{fs, io};
 
 use anyhow::Result;
 use secrecy::{SecretString, SecretVec};
 
 use rencfs::crypto;
-use rencfs::crypto::Cipher;
 use rencfs::crypto::writer::CryptoWriter;
+use rencfs::crypto::Cipher;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt().init();
+
     let cipher = Cipher::ChaCha20Poly1305;
     let key = Arc::new(get_key(cipher)?);
 
@@ -49,7 +51,9 @@ async fn main() -> Result<()> {
 
 fn get_key(cipher: Cipher) -> io::Result<SecretVec<u8>> {
     let password = SecretString::new("pass42".to_string());
-    let salt: Vec<u8> = bincode::deserialize_from(File::open("/home/gnome/rencfs_data/security/key.salt")?).unwrap();
+    let salt: Vec<u8> =
+        bincode::deserialize_from(File::open("/home/gnome/rencfs_data/security/key.salt")?)
+            .unwrap();
 
     // get key from location, useful to debug in existing data dir
     let derived_key = crypto::derive_key(&password, cipher, &salt).unwrap();

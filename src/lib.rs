@@ -29,29 +29,52 @@
 //! ### Example
 //!
 //! ```no_run
-//! use std::ffi::OsStr;
-//! use std::path::{Path, PathBuf};
+//! use std::env::args;
+//! use std::path::Path;
+//! use std::str::FromStr;
+//! use std::io;
+//!
+//! use anyhow::Result;
 //! use secrecy::SecretString;
+//!
 //! use rencfs::crypto::Cipher;
-//! use rencfs::encryptedfs::{ PasswordProvider};
+//! use rencfs::encryptedfs::PasswordProvider;
 //! use rencfs::mount::create_mount_point;
+//! use rencfs::mount::MountPoint;
 //!
-//! async fn mount(mountpoint: PathBuf, data_dir: PathBuf, tmp_dir: PathBuf, password_provider: Box<dyn PasswordProvider>,
-//!     cipher: Cipher, allow_root: bool, allow_other: bool, direct_io: bool, suid_support: bool) -> anyhow::Result<()> {
-//!     let mount_path = OsStr::new(mountpoint.to_str().unwrap());
+//! /// This will mount and expose the mount point until you press `Enter`, then it will umount and close the program.
+//! #[tokio::main]
+//! async fn main() -> Result<()> {
+//!     tracing_subscriber::fmt().init();
+//!
+//!     let mut args = args();
+//!     args.next(); // skip program name
+//!     let mount_path = args.next().expect("mount_path expected");
+//!     let data_path = args.next().expect("data_path expected");
+//!     use tracing::info;struct PasswordProviderImpl {}
+//!     impl PasswordProvider for PasswordProviderImpl {
+//!         fn get_password(&self) -> Option<SecretString> {
+//!             Some(SecretString::from_str("pass42").unwrap())
+//!         }
+//!     }
 //!     let mut mount_point = create_mount_point(
-//!         mountpoint,
-//!         data_dir,
-//!         password_provider,
-//!         cipher,
-//!         allow_root,
-//!         allow_other,
-//!         direct_io,
-//!         suid_support,
+//!         Path::new(&mount_path),
+//!         Path::new(&data_path),
+//!         Box::new(PasswordProviderImpl {}),
+//!         Cipher::ChaCha20Poly1305,
+//!         false,
+//!         false,
+//!         false,
+//!         false,
 //!     );
-//!     mount_point.mount().await?;
+//!     let handle = mount_point.mount().await?;
+//!     let mut buffer = String::new();
+//!     io::stdin().read_line(&mut buffer)?;
+//!     info!("Unmounting...");
+//!     info!("Bye!");
+//!     handle.umount().await?;
 //!
-//!    Ok(())
+//!     Ok(())
 //! }
 //! ```
 //! Parameters:
@@ -76,7 +99,7 @@
 //! use std::fs;
 //! use std::str::FromStr;
 //! use secrecy::SecretString;
-//! use rencfs::encryptedfs::{EncryptedFs, FileAttr, FileType, PasswordProvider, CreateFileAttr};
+//! use rencfs::encryptedfs::{EncryptedFs, FileType, PasswordProvider, CreateFileAttr};
 //! use rencfs::crypto::Cipher;
 //! use anyhow::Result;
 //! use std::path::Path;
@@ -87,8 +110,8 @@
 //! struct PasswordProviderImpl {}
 //! impl PasswordProvider for PasswordProviderImpl {
 //!     fn get_password(&self) -> Option<SecretString> {
-//!         /// dummy password, better use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
-//!         Some(SecretString::from_str("password").unwrap())
+//!         /// dummy password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
+//!         Some(SecretString::from_str("pass42").unwrap())
 //!     }
 //! }
 //!
@@ -96,7 +119,6 @@
 //! async fn main() -> Result<()> {
 //!     let data_dir = Path::new("/tmp/rencfs_data_test").to_path_buf();
 //!     let  _ = fs::remove_dir_all(data_dir.to_str().unwrap());
-//!     let password = SecretString::from_str("password").unwrap();
 //!     let cipher = Cipher::ChaCha20Poly1305;
 //!     let mut fs = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl{}), cipher ).await?;
 //!
@@ -131,15 +153,29 @@
 //!
 //! ### Example
 //! ```no_run
-//! use std::str::FromStr;
-//! use secrecy::SecretString;
-//! use rencfs::encryptedfs::{EncryptedFs, FsError, FsResult};
 //! use rencfs::crypto::Cipher;
+//! use rencfs::encryptedfs::{EncryptedFs, FsError};
+//! use secrecy::SecretString;
+//! use std::env::args;
+//! use std::path::Path;
+//! use std::str::FromStr;
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     use std::path::Path;
-//! match EncryptedFs::change_password(Path::new(&"/tmp/rencfs_data"), SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20Poly1305).await {
+//!     tracing_subscriber::fmt().init();
+//!
+//!     let mut args = args();
+//!     let _ = args.next(); // skip the program name
+//!     let data_dir = args.next().expect("data_dir is missing");
+//!
+//!     match EncryptedFs::change_password(
+//!         Path::new(&data_dir),
+//!         SecretString::from_str("old-pass").unwrap(),
+//!         SecretString::from_str("new-pass").unwrap(),
+//!         Cipher::ChaCha20Poly1305,
+//!     )
+//!     .await
+//!     {
 //!         Ok(_) => println!("Password changed successfully"),
 //!         Err(FsError::InvalidPassword) => println!("Invalid old password"),
 //!         Err(FsError::InvalidDataDirStructure) => println!("Invalid structure of data directory"),
@@ -152,21 +188,30 @@
 //! ### Example
 //!
 //! ```no_run
+//! use std::env::args;
 //! use std::io;
 //! use std::io::Write;
 //! use std::str::FromStr;
-//! use rpassword::read_password;
-//! use secrecy::{ExposeSecret, Secret, SecretString};
-//! use rencfs::encryptedfs::{EncryptedFs, FsError};
 //!
+//! use rpassword::read_password;
+//! use secrecy::{ExposeSecret, SecretString};
+//! use tracing::{error, info};
+//!
+//! use rencfs::encryptedfs::{EncryptedFs, FsError};
 //! #[tokio::main]
 //! async fn main() {
+//!     tracing_subscriber::fmt().init();
+//!
+//!     let mut args = args();
+//!     let _ = args.next(); // skip the program name
+//!     let data_dir = args.next().expect("data_dir is missing");
+//!
 //!     use std::path::Path;
-//! // read password from stdin
+//!    // read password from stdin
 //!     use rencfs::crypto::Cipher;
-//! print!("Enter old password: ");
+//!     print!("Enter old password: ");
 //!     io::stdout().flush().unwrap();
-//!     let password = SecretString::new(read_password().unwrap());
+//!     let old_password = SecretString::new(read_password().unwrap());
 //!     print!("Enter new password: ");
 //!     io::stdout().flush().unwrap();
 //!     let new_password = SecretString::new(read_password().unwrap());
@@ -174,17 +219,23 @@
 //!     io::stdout().flush().unwrap();
 //!     let new_password2 = SecretString::new(read_password().unwrap());
 //!     if new_password.expose_secret() != new_password2.expose_secret() {
-//!         println!("Passwords do not match");
+//!         error!("Passwords do not match");
 //!         return;
 //!     }
 //!     println!("Changing password...");
-//!     match EncryptedFs::change_password(Path::new(&"/tmp/rencfs_data"), SecretString::from_str("old-pass").unwrap(), SecretString::from_str("new-pass").unwrap(), Cipher::ChaCha20Poly1305).await {
-//!         Ok(_) => println!("Password changed successfully"),
-//!         Err(FsError::InvalidPassword) => println!("Invalid old password"),
-//!         Err(FsError::InvalidDataDirStructure) => println!("Invalid structure of data directory"),
-//!         Err(err) => println!("Error: {err}"),
+//!     match EncryptedFs::change_password(
+//!         Path::new(&data_dir),
+//!         old_password,
+//!         new_password,
+//!         Cipher::ChaCha20Poly1305,
+//!     )
+//!     .await
+//!     {
+//!         Ok(_) => info!("Password changed successfully"),
+//!         Err(FsError::InvalidPassword) => error!("Invalid old password"),
+//!         Err(FsError::InvalidDataDirStructure) => error!("Invalid structure of data directory"),
+//!         Err(err) => error!("Error: {err}"),
 //!     }
-//!     println!("Password changed successfully");
 //! }
 //! ```
 extern crate test;

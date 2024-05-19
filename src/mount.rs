@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use futures_util::FutureExt;
 use std::future::Future;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -73,8 +73,8 @@ pub(crate) trait MountHandleInner: Future<Output = io::Result<()>> {
 #[must_use]
 #[allow(clippy::struct_excessive_bools)]
 pub fn create_mount_point(
-    mountpoint: PathBuf,
-    data_dir: PathBuf,
+    mountpoint: &Path,
+    data_dir: &Path,
     password_provider: Box<dyn PasswordProvider>,
     cipher: Cipher,
     allow_root: bool,
@@ -83,8 +83,8 @@ pub fn create_mount_point(
     suid_support: bool,
 ) -> impl MountPoint {
     MountPointImpl::new(
-        mountpoint,
-        data_dir,
+        mountpoint.to_path_buf(),
+        data_dir.to_path_buf(),
         password_provider,
         cipher,
         allow_root,

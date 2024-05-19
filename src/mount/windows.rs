@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::future::Future;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -27,8 +27,8 @@ pub struct MountPointImpl {
 #[async_trait]
 impl MountPoint for MountPointImpl {
     fn new(
-        mountpoint: PathBuf,
-        data_dir: PathBuf,
+        mountpoint: &Path,
+        data_dir: &Path,
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
         allow_root: bool,
@@ -37,8 +37,8 @@ impl MountPoint for MountPointImpl {
         suid_support: bool,
     ) -> Self {
         Self {
-            mountpoint,
-            data_dir,
+            mountpoint: mountpoint.to_path_buf(),
+            data_dir: data_dir.to_path_buf(),
             password_provider: Some(password_provider),
             cipher,
             allow_root,

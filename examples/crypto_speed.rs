@@ -1,4 +1,4 @@
-use std::{fs, io};
+use rand_core::RngCore;
 use std::env::args;
 use std::fs::File;
 use std::future::Future;
@@ -6,17 +6,19 @@ use std::io::{Read, Seek, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
-use rand_core::RngCore;
+use std::{fs, io};
 
 use anyhow::Result;
 use secrecy::SecretVec;
 
 use rencfs::crypto;
-use rencfs::crypto::Cipher;
 use rencfs::crypto::writer::CryptoWriter;
+use rencfs::crypto::Cipher;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt().init();
+
     let cipher = Cipher::Aes256Gcm;
     let key = Arc::new(get_key(cipher)?);
 

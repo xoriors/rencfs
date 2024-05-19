@@ -1,9 +1,9 @@
+use rand_core::RngCore;
 use std::env::args;
 use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
-use rand_core::RngCore;
 
 use secrecy::SecretVec;
 
@@ -11,6 +11,8 @@ use rencfs::crypto;
 use rencfs::crypto::Cipher;
 
 fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt().init();
+
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key = vec![0; cipher.key_len()];
     crypto::create_rng().fill_bytes(key.as_mut_slice());
