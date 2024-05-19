@@ -53,6 +53,11 @@ async fn main() -> Result<()> {
     };
     let guard = log_init(log_level);
 
+    #[cfg(not(target_os = "linux"))]
+    error!("he he, not yet ready for this platform, but soon my friend, soon :)");
+    #[cfg(not(target_os = "linux"))]
+    return Ok(());
+
     let mount_point = match matches.subcommand() {
         Some(("mount", matches)) => {
             Some(matches.get_one::<String>("mount-point").unwrap().as_str())
@@ -404,14 +409,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         }));
     })?;
 
-    // mount_handle
-    //     .lock()
-    //     .unwrap()
-    //     .as_mut()
-    //     .unwrap()
-    //     .as_mut()
-    //     .unwrap()
-    //     .await?;
     task::spawn_blocking(|| {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {
