@@ -36,6 +36,7 @@ use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
 use crate::{crypto, fs_util, stream_util};
 
+mod bench;
 #[cfg(test)]
 pub(crate) mod test;
 

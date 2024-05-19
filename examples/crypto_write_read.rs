@@ -1,16 +1,20 @@
+use anyhow::Result;
 use rand_core::RngCore;
 use std::env::args;
 use std::fs::File;
 use std::io;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
 use secrecy::SecretVec;
+use tracing::info;
 
 use rencfs::crypto;
+use rencfs::crypto::writer::CryptoWriter;
 use rencfs::crypto::Cipher;
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     tracing_subscriber::fmt().init();
 
     let cipher = Cipher::ChaCha20Poly1305;
@@ -19,39 +23,27 @@ fn main() -> anyhow::Result<()> {
     let key = Arc::new(SecretVec::new(key));
 
     let mut args = args();
-    let _ = args.next(); // skip the program name
+    // skip the program name
+    let _ = args.next();
+    // will encrypt this file
     let path_in = args.next().expect("path_in is missing");
-    let path_out = format!(
-        "/tmp/{}.enc",
-        Path::new(&path_in).file_name().unwrap().to_str().unwrap()
-    );
-    let out = Path::new(&path_out).to_path_buf();
+    // will save it in the same directory with .enc suffix
+    let out = Path::new(&path_in).to_path_buf().with_extension("enc");
     if out.exists() {
         std::fs::remove_file(&out)?;
     }
 
-    let mut file = File::open(path_in.clone()).unwrap();
-    let mut writer = crypto::create_file_writer(
-        &Path::new(&path_out).to_path_buf(),
-        cipher,
-        key.clone(),
-        None,
-        None,
-        None,
-    )?;
+    let mut file = File::open(path_in.clone())?;
+    let mut writer = crypto::create_writer(File::create(out.clone())?, cipher, key.clone());
+    info!("encrypt file");
     io::copy(&mut file, &mut writer).unwrap();
-    writer.flush().unwrap();
-    writer.finish().unwrap();
+    writer.flush()?;
+    writer.finish()?;
 
-    let mut reader = crypto::create_file_reader(
-        &Path::new(&path_out).to_path_buf(),
-        cipher,
-        key.clone(),
-        None,
-    )?;
+    let mut reader = crypto::create_reader(File::open(out)?, cipher, key.clone());
+    info!("read file and compare hash to original one");
     let hash1 = crypto::hash_reader(&mut File::open(path_in)?)?;
     let hash2 = crypto::hash_reader(&mut reader)?;
-
     assert_eq!(hash1, hash2);
 
     Ok(())

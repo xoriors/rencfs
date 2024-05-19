@@ -1,3 +1,5 @@
+use crate::test_common::create_attr_from_type;
+use crate::test_common::SETUP_RESULT;
 use std::future::Future;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
@@ -6,188 +8,25 @@ use std::sync::{Arc, LazyLock};
 use std::{fs, io};
 
 use secrecy::{ExposeSecret, SecretString};
+use tempfile::NamedTempFile;
+use thread_local::ThreadLocal;
 use tokio::sync::Mutex;
 use tracing_test::traced_test;
-
-use tempfile::NamedTempFile;
 
 use crate::encryptedfs::write_all_bytes_to_fs;
 use crate::encryptedfs::{
     Cipher, CreateFileAttr, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType, FsError,
     FsResult, PasswordProvider, CONTENTS_DIR, ROOT_INODE,
 };
-
-pub(crate) const TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
-    let tmp = NamedTempFile::new().unwrap().into_temp_path();
-    fs::remove_file(tmp.to_str().unwrap()).expect("cannot remove tmp file");
-    tmp.parent()
-        .expect("oops, we don't have a parent")
-        .join("rencfs-test-data")
-});
-
-#[derive(Debug, Clone)]
-struct TestSetup {
-    key: &'static str,
-}
-
-struct SetupResult {
-    fs: Option<Arc<EncryptedFs>>,
-    setup: TestSetup,
-}
-
-async fn setup(setup: TestSetup) -> SetupResult {
-    let path = TESTS_DATA_DIR.join(setup.key).to_path_buf();
-    let data_dir_str = path.to_str().unwrap();
-    let _ = fs::remove_dir_all(data_dir_str);
-    let _ = fs::create_dir_all(data_dir_str);
-    println!("data dir {}", data_dir_str);
-
-    struct PasswordProviderImpl {}
-    impl PasswordProvider for PasswordProviderImpl {
-        fn get_password(&self) -> Option<SecretString> {
-            Some(SecretString::from_str("password").unwrap())
-        }
-    }
-
-    let fs = EncryptedFs::new(
-        Path::new(data_dir_str).to_path_buf(),
-        Box::new(PasswordProviderImpl {}),
-        Cipher::ChaCha20Poly1305,
-    )
-    .await
-    .unwrap();
-
-    SetupResult {
-        fs: Some(fs),
-        setup,
-    }
-}
-
-async fn teardown() -> Result<(), io::Error> {
-    let s = SETUP_RESULT.with(|s| Arc::clone(s));
-    let s = s.lock().await;
-    let path = TESTS_DATA_DIR
-        .join(s.as_ref().unwrap().setup.key)
-        .to_path_buf();
-    let data_dir_str = path.to_str().unwrap();
-    fs::remove_dir_all(data_dir_str)?;
-
-    Ok(())
-}
-
-async fn run_test<T>(init: TestSetup, t: T)
-where
-    T: std::future::Future, // + std::panic::UnwindSafe
-{
-    {
-        let s = SETUP_RESULT.with(|s| Arc::clone(s));
-        let mut s = s.lock().await;
-        *s.deref_mut() = Some(setup(init).await);
-    }
-
-    // let res = std::panic::catch_unwind(|| {
-    //     let handle = tokio::runtime::Handle::current();
-    //     handle.block_on(async {
-    t.await;
-    // });
-    // });
-
-    teardown().await.unwrap();
-
-    // assert!(res.is_ok());
-}
-
-pub fn block_on<F: Future>(future: F, worker_threads: usize) -> F::Output {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(worker_threads)
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(future)
-}
-
-pub(crate) fn test<F: Future>(key: &'static str, worker_threads: usize, f: F) {
-    block_on(
-        async {
-            run_test(TestSetup { key }, f).await;
-        },
-        worker_threads,
-    );
-}
-
-thread_local!(static SETUP_RESULT: Arc<Mutex<Option<SetupResult>>> = Arc::new(Mutex::new(None)));
-
-fn create_attr_from_type(kind: FileType) -> CreateFileAttr {
-    CreateFileAttr {
-        kind,
-        perm: 0,
-        uid: 0,
-        gid: 0,
-        rdev: 0,
-        flags: 0,
-    }
-}
-
-async fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
-    let mut buf: Vec<u8> = vec![];
-    fs.create_file_reader(&path, None)
-        .await
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
-    String::from_utf8(buf).unwrap()
-}
-
-async fn copy_all_file_range(
-    fs: &EncryptedFs,
-    src_ino: u64,
-    src_offset: u64,
-    dest_ino: u64,
-    dest_offset: u64,
-    size: usize,
-    src_fh: u64,
-    dest_fh: u64,
-) {
-    let mut copied = 0;
-    while copied < size {
-        let len = fs
-            .copy_file_range(
-                src_ino,
-                src_offset + copied as u64,
-                dest_ino,
-                dest_offset + copied as u64,
-                size - copied,
-                src_fh,
-                dest_fh,
-            )
-            .await
-            .unwrap();
-        if len == 0 && copied < size {
-            panic!("Failed to copy all bytes");
-        }
-        copied += len;
-    }
-}
-
-async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8], handle: u64) {
-    let mut read = 0;
-    while read < buf.len() {
-        let len = fs
-            .read(ino, offset + read as u64, &mut buf[read..], handle)
-            .await
-            .unwrap();
-        if len == 0 && read < buf.len() {
-            panic!("Failed to read all bytes");
-        }
-        read += len;
-    }
-}
+use crate::test_common;
+use crate::test_common::run_test;
+use crate::test_common::TestSetup;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
 async fn test_write() {
     run_test(TestSetup { key: "test_write" }, async {
-        let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+        let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
         let mut fs = fs.lock().await;
         let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -210,7 +49,7 @@ async fn test_write() {
         fs.release(fh).await.unwrap();
         assert_eq!(
             data,
-            read_to_string(
+            test_common::read_to_string(
                 fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                 &fs,
             )
@@ -229,7 +68,7 @@ async fn test_write() {
         fs.release(fh).await.unwrap();
         assert_eq!(
             data,
-            &read_to_string(
+            &test_common::read_to_string(
                 fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                 &fs,
             )
@@ -246,7 +85,7 @@ async fn test_write() {
         fs.release(fh).await.unwrap();
         assert_eq!(
             format!("test-37{}37", "\0".repeat(35)),
-            read_to_string(
+            test_common::read_to_string(
                 fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                 &fs,
             )
@@ -281,7 +120,7 @@ async fn test_write() {
         fs.release(fh).await.unwrap();
         assert_eq!(
             "test-01-02-42",
-            &read_to_string(
+            &test_common::read_to_string(
                 fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                 &fs,
             )
@@ -313,7 +152,7 @@ async fn test_write() {
             .unwrap();
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
-        let new_content = read_to_string(
+        let new_content = test_common::read_to_string(
             fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
             &fs,
         )
@@ -353,7 +192,7 @@ async fn test_write() {
 #[traced_test]
 async fn test_read() {
     run_test(TestSetup { key: "test_read" }, async {
-        let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+        let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
         let mut fs = fs.lock().await;
         let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -377,7 +216,7 @@ async fn test_read() {
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
         let fh = fs.open(attr.ino, true, false).await.unwrap();
-        read_exact(fs, attr.ino, 0, &mut buf, fh).await;
+        test_common::read_exact(fs, attr.ino, 0, &mut buf, fh).await;
         assert_eq!(data, &buf);
 
         // larger buffer
@@ -394,7 +233,7 @@ async fn test_read() {
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
         let fh = fs.open(attr.ino, true, false).await.unwrap();
-        read_exact(fs, attr.ino, 5, &mut buf, fh).await;
+        test_common::read_exact(fs, attr.ino, 5, &mut buf, fh).await;
         assert_eq!(b"37", &buf);
 
         // offset after file end
@@ -421,7 +260,7 @@ async fn test_read() {
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
         let fh = fs.open(attr.ino, true, false).await.unwrap();
-        read_exact(fs, attr.ino, 0, &mut [0_u8; 1], fh).await;
+        test_common::read_exact(fs, attr.ino, 0, &mut [0_u8; 1], fh).await;
         let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
         let new_data = "37";
         write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
@@ -430,7 +269,7 @@ async fn test_read() {
         fs.flush(fh_2).await.unwrap();
         fs.release(fh_2).await.unwrap();
         let mut buf = [0_u8; 2];
-        read_exact(fs, attr.ino, 5, &mut buf, fh).await;
+        test_common::read_exact(fs, attr.ino, 5, &mut buf, fh).await;
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
         // if it picks up new value after a write before current read position
@@ -452,7 +291,7 @@ async fn test_read() {
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
         let fh = fs.open(attr.ino, true, false).await.unwrap();
-        read_exact(fs, attr.ino, 8, &mut [0_u8; 1], fh).await;
+        test_common::read_exact(fs, attr.ino, 8, &mut [0_u8; 1], fh).await;
         let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
         let new_data = "37";
         write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
@@ -461,7 +300,7 @@ async fn test_read() {
         fs.flush(fh_2).await.unwrap();
         fs.release(fh_2).await.unwrap();
         let mut buf = [0_u8; 2];
-        read_exact(fs, attr.ino, 5, &mut buf, fh).await;
+        test_common::read_exact(fs, attr.ino, 5, &mut buf, fh).await;
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
         // if it continues to read correctly after a write before current read position
@@ -483,7 +322,7 @@ async fn test_read() {
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
         let fh = fs.open(attr.ino, true, false).await.unwrap();
-        read_exact(fs, attr.ino, 7, &mut [0_u8; 1], fh).await;
+        test_common::read_exact(fs, attr.ino, 7, &mut [0_u8; 1], fh).await;
         let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
         let new_data = "37";
         write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
@@ -492,7 +331,7 @@ async fn test_read() {
         fs.flush(fh_2).await.unwrap();
         fs.release(fh_2).await.unwrap();
         let mut buf = [0_u8; 2];
-        read_exact(fs, attr.ino, 8, &mut buf, fh).await;
+        test_common::read_exact(fs, attr.ino, 8, &mut buf, fh).await;
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
         // invalid values
@@ -532,7 +371,7 @@ async fn test_truncate() {
             key: "test_truncate",
         },
         async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
             let mut fs = fs.lock().await;
             let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -564,7 +403,7 @@ async fn test_truncate() {
             assert_eq!(10, fs.get_inode(attr.ino).await.unwrap().size);
             assert_eq!(
                 format!("test-37{}", "\0".repeat(3)),
-                read_to_string(
+                test_common::read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                     &fs,
                 )
@@ -577,7 +416,7 @@ async fn test_truncate() {
             assert_eq!(10, fs.get_inode(attr.ino).await.unwrap().size);
             assert_eq!(
                 format!("test-37{}", "\0".repeat(3)),
-                read_to_string(
+                test_common::read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                     &fs,
                 )
@@ -594,7 +433,7 @@ async fn test_truncate() {
             assert_eq!(4, fs.get_inode(attr.ino).await.unwrap().size);
             assert_eq!(
                 "37st",
-                read_to_string(
+                test_common::read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                     &fs,
                 )
@@ -607,7 +446,7 @@ async fn test_truncate() {
             assert_eq!(0, fs.get_inode(attr.ino).await.unwrap().size);
             assert_eq!(
                 "".to_string(),
-                read_to_string(
+                test_common::read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                     &fs,
                 )
@@ -626,7 +465,7 @@ async fn test_copy_file_range() {
             key: "test_copy_file_range",
         },
         async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
             let mut fs = fs.lock().await;
             let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -661,12 +500,12 @@ async fn test_copy_file_range() {
                 .unwrap();
 
             // whole file
-            copy_all_file_range(fs, attr_1.ino, 0, attr_2.ino, 0, 7, fh, fh2).await;
+            test_common::copy_all_file_range(fs, attr_1.ino, 0, attr_2.ino, 0, 7, fh, fh2).await;
             fs.flush(fh2).await.unwrap();
             fs.release(fh2).await.unwrap();
             let mut buf = [0; 7];
             let fh = fs.open(attr_2.ino, true, false).await.unwrap();
-            read_exact(fs, attr_2.ino, 0, &mut buf, fh).await;
+            test_common::read_exact(fs, attr_2.ino, 0, &mut buf, fh).await;
             assert_eq!(data, String::from_utf8(buf.to_vec()).unwrap());
 
             // offset
@@ -679,11 +518,11 @@ async fn test_copy_file_range() {
             fs.release(fh).await.unwrap();
             let fh = fs.open(attr_1.ino, true, false).await.unwrap();
             let fh_2 = fs.open(attr_2.ino, false, true).await.unwrap();
-            copy_all_file_range(fs, attr_1.ino, 7, attr_2.ino, 5, 2, fh, fh_2).await;
+            test_common::copy_all_file_range(fs, attr_1.ino, 7, attr_2.ino, 5, 2, fh, fh_2).await;
             fs.flush(fh_2).await.unwrap();
             fs.release(fh_2).await.unwrap();
             let fh = fs.open(attr_2.ino, true, false).await.unwrap();
-            read_exact(fs, attr_2.ino, 0, &mut buf, fh).await;
+            test_common::read_exact(fs, attr_2.ino, 0, &mut buf, fh).await;
             assert_eq!("test-37", String::from_utf8(buf.to_vec()).unwrap());
 
             // out of bounds
@@ -713,7 +552,7 @@ async fn test_read_dir() {
             key: "test_read_dir",
         },
         async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
             let mut fs = fs.lock().await;
             let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -892,7 +731,7 @@ async fn test_read_dir_plus() {
             key: "test_read_dir_plus",
         },
         async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
             let mut fs = fs.lock().await;
             let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -1090,7 +929,7 @@ async fn test_find_by_name() {
             key: "test_find_by_name",
         },
         async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
             let mut fs = fs.lock().await;
             let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -1129,7 +968,7 @@ async fn test_exists_by_name() {
             key: "test_exists_by_name",
         },
         async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
             let mut fs = fs.lock().await;
             let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -1164,7 +1003,7 @@ async fn test_remove_dir() {
             key: "test_remove_dir",
         },
         async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
             let mut fs = fs.lock().await;
             let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -1207,7 +1046,7 @@ async fn test_remove_file() {
             key: "test_remove_file",
         },
         async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
             let mut fs = fs.lock().await;
             let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -1250,7 +1089,7 @@ async fn test_find_by_name_exists_by_name100files() {
             key: "test_find_by_name_exists_by_name_many_files",
         },
         async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
+            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
             let mut fs = fs.lock().await;
             let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
@@ -1277,183 +1116,4 @@ async fn test_find_by_name_exists_by_name100files() {
         },
     )
     .await
-}
-
-mod bench {
-    use crate::async_util;
-    use crate::encryptedfs::test::{create_attr_from_type, test, SETUP_RESULT};
-    use crate::encryptedfs::{DirectoryEntry, DirectoryEntryPlus, FileType, ROOT_INODE};
-    use rand::Rng;
-    use secrecy::SecretString;
-    use std::str::FromStr;
-    use std::sync::Arc;
-    use test::{black_box, Bencher};
-
-    #[bench]
-    fn bench_create_nod(b: &mut Bencher) {
-        test("bench_create_nod", 1, async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
-
-            let mut i = 1;
-            let i = &mut i;
-            b.iter(|| {
-                black_box({
-                    async_util::call_async(async {
-                        let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
-                        let _ = fs
-                            .create_nod(
-                                ROOT_INODE,
-                                &test_file,
-                                create_attr_from_type(FileType::RegularFile),
-                                false,
-                                false,
-                            )
-                            .await
-                            .unwrap();
-                    });
-                    *i += 1;
-                    i.clone()
-                })
-            });
-            println!("i: {}", i);
-        });
-    }
-
-    #[bench]
-    fn bench_exists_by_name(b: &mut Bencher) {
-        test("exists_by_name", 1, async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
-
-            let mut rnd = rand::thread_rng();
-            b.iter(|| {
-                black_box({
-                    async_util::call_async(async {
-                        let _ = fs
-                            .exists_by_name(
-                                ROOT_INODE,
-                                &SecretString::from_str(&format!(
-                                    "test-file-{}",
-                                    rnd.gen_range(1..100)
-                                ))
-                                .unwrap(),
-                            )
-                            .unwrap();
-                    });
-                })
-            });
-        });
-    }
-
-    #[bench]
-    fn bench_find_by_name(b: &mut Bencher) {
-        test("bench_find_by_name", 1, async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
-
-            for i in 0..100 {
-                let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
-                let _ = fs
-                    .create_nod(
-                        ROOT_INODE,
-                        &test_file,
-                        create_attr_from_type(FileType::RegularFile),
-                        false,
-                        false,
-                    )
-                    .await
-                    .unwrap();
-            }
-
-            let mut rnd = rand::thread_rng();
-            b.iter(|| {
-                black_box({
-                    async_util::call_async(async {
-                        let _ = fs.get_inode(ROOT_INODE).await.unwrap();
-                        let _ = fs
-                            .find_by_name(
-                                ROOT_INODE,
-                                &SecretString::from_str(&format!(
-                                    "test-file-{}",
-                                    rnd.gen_range(1..100)
-                                ))
-                                .unwrap(),
-                            )
-                            .await
-                            .unwrap();
-                    });
-                })
-            });
-        });
-    }
-
-    #[bench]
-    fn bench_read_dir(b: &mut Bencher) {
-        test("bench_read_dir", 1, async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
-
-            for i in 0..100 {
-                let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
-                let _ = fs
-                    .create_nod(
-                        ROOT_INODE,
-                        &test_file,
-                        create_attr_from_type(FileType::RegularFile),
-                        false,
-                        false,
-                    )
-                    .await
-                    .unwrap();
-            }
-
-            b.iter(|| {
-                black_box({
-                    async_util::call_async(async {
-                        let iter = fs.read_dir(ROOT_INODE, 0).await.unwrap();
-                        let vec: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
-                        black_box(vec);
-                    });
-                })
-            });
-        });
-    }
-
-    #[bench]
-    fn bench_read_dir_plus(b: &mut Bencher) {
-        test("bench_read_dir_plus", 1, async {
-            let fs = SETUP_RESULT.with(|s| Arc::clone(s));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
-
-            for i in 0..100 {
-                let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
-                let _ = fs
-                    .create_nod(
-                        ROOT_INODE,
-                        &test_file,
-                        create_attr_from_type(FileType::RegularFile),
-                        false,
-                        false,
-                    )
-                    .await
-                    .unwrap();
-            }
-
-            b.iter(|| {
-                black_box({
-                    async_util::call_async(async {
-                        let iter = fs.read_dir_plus(ROOT_INODE, 0).await.unwrap();
-                        let vec: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
-                        black_box(vec);
-                    });
-                })
-            });
-        });
-    }
 }

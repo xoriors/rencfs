@@ -19,6 +19,7 @@ use crate::crypto::writer::BUF_SIZE;
 use crate::crypto::Cipher;
 use crate::{crypto, stream_util};
 
+/// Reads encrypted content from the wrapping Reader.
 #[allow(clippy::module_name_repetitions)]
 pub trait CryptoReader: Read + Seek + Send + Sync {}
 

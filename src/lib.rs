@@ -238,6 +238,64 @@
 //!     }
 //! }
 //! ```
+//!
+//! We also expose a Writer and Reader of encrypted format, which implements [`std::io::Write`], [`std::io::Read`] and [`std::io::Seek`].
+//! You can wrap any [`std::io::Write`] and [`std::io::Read`], like a file, to write and read encrypted content.
+//! This is using [ring](https://crates.io/crates/ring) crate to handle encryption.
+//!
+//! # Example
+//! ```no_run
+//! use anyhow::Result;
+//! use rand_core::RngCore;
+//! use std::env::args;
+//! use std::fs::File;
+//! use std::io;
+//! use std::io::Write;
+//! use std::path::Path;
+//! use std::sync::Arc;
+//!
+//! use secrecy::SecretVec;
+//! use tracing::info;
+//!
+//! use rencfs::crypto;
+//! use rencfs::crypto::writer::CryptoWriter;
+//! use rencfs::crypto::Cipher;
+//!
+//! fn main() -> Result<()> {
+//!     tracing_subscriber::fmt().init();
+//!
+//!     let cipher = Cipher::ChaCha20Poly1305;
+//!     let mut key = vec![0; cipher.key_len()];
+//!     crypto::create_rng().fill_bytes(key.as_mut_slice());
+//!     let key = Arc::new(SecretVec::new(key));
+//!
+//!     let mut args = args();
+//!     //! skip the program name
+//!     let _ = args.next();
+//!     //! will encrypt this file
+//!     let path_in = args.next().expect("path_in is missing");
+//!     //! will save it in the same directory with .enc suffix
+//!     let out = Path::new(&path_in).to_path_buf().with_extension("enc");
+//!     if out.exists() {
+//!         std::fs::remove_file(&out)?;
+//!     }
+//!
+//!     let mut file = File::open(path_in.clone())?;
+//!     let mut writer = crypto::create_writer(File::create(out.clone())?, cipher, key.clone());
+//!     info!("encrypt file");
+//!     io::copy(&mut file, &mut writer).unwrap();
+//!     writer.flush()?;
+//!     writer.finish()?;
+//!
+//!     let mut reader = crypto::create_reader(File::open(out)?, cipher, key.clone());
+//!     info!("read file and compare hash to original one");
+//!     let hash1 = crypto::hash_reader(&mut File::open(path_in)?)?;
+//!     let hash2 = crypto::hash_reader(&mut reader)?;
+//!     assert_eq!(hash1, hash2);
+//!
+//!     Ok(())
+//! }
+//! ```
 extern crate test;
 
 pub mod arc_hashmap;
@@ -248,6 +306,7 @@ pub mod expire_value;
 pub mod fs_util;
 pub mod mount;
 pub mod stream_util;
+pub(crate) mod test_common;
 
 #[allow(unreachable_code)]
 #[must_use]

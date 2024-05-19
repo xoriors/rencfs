@@ -113,6 +113,7 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Creates and encrypted writer, it is using [ring](https://crates.io/crates/ring) crate to handle encryption.
 pub fn create_writer<W: Write + Send + Sync>(
     writer: W,
     cipher: Cipher,
@@ -171,6 +172,7 @@ fn create_ring_reader<R: Read + Seek + Send + Sync>(
     RingCryptoReader::new(reader, algorithm, key)
 }
 
+/// Creates and encrypted reader, it is using [ring](https://crates.io/crates/ring) crate to handle encryption.
 pub fn create_reader<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: Cipher,

@@ -26,8 +26,10 @@ pub(crate) const BUF_SIZE: usize = 256 * 1024;
 #[cfg(not(test))]
 pub(crate) const BUF_SIZE: usize = 1024 * 1024; // 1 MB buffer
 
+/// Writes encrypted content to the wrapping Writer.
 #[allow(clippy::module_name_repetitions)]
 pub trait CryptoWriter<W: Write>: Write + Send + Sync {
+    /// You must call this at the end to make sure we write the last block,
     #[allow(clippy::missing_errors_doc)]
     fn finish(&mut self) -> io::Result<W>;
 }
