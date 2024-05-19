@@ -9,6 +9,11 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tracing::{error, warn};
 
+use crate::crypto::Cipher;
+use crate::encryptedfs::{FsResult, PasswordProvider};
+use crate::mount;
+use crate::mount::{MountHandleInner, MountPoint};
+
 #[allow(clippy::struct_excessive_bools)]
 pub struct MountPointImpl {
     mountpoint: PathBuf,

@@ -51,15 +51,13 @@ impl<T: Send + Sync + 'static, E: Error + Send + Sync + 'static, P: ValueProvide
         if let Some(value) = self.get_from_ref_or_cache().await {
             return Ok(value);
         }
-
-        let mut weak = self.weak.write().await;
         let value = self.provider.provide()?;
         let v = Arc::new(value);
         self.cache
             .insert(KEY.to_string(), v.clone(), self.duration)
             .await;
+        let mut weak = self.weak.write().await;
         *weak = Some(Arc::downgrade(&v));
-
         Ok(v)
     }
 
