@@ -53,10 +53,18 @@ async fn main() -> Result<()> {
     };
     let guard = log_init(log_level);
 
-    #[cfg(not(target_os = "linux"))]
-    error!("he he, not yet ready for this platform, but soon my friend, soon :)");
-    #[cfg(not(target_os = "linux"))]
-    return Ok(());
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        error!("he he, not yet ready for this platform, but soon my friend, soon :)");
+        info!("Bye!");
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        error!("sorry but this platform is not supported!");
+        info!("Bye!");
+        return Ok(());
+    }
 
     let mount_point = match matches.subcommand() {
         Some(("mount", matches)) => {
