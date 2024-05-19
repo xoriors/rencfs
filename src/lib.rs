@@ -77,14 +77,6 @@
 //!     Ok(())
 //! }
 //! ```
-//! Parameters:
-//! - `data_dir`: The directory where the file system will be mounted.
-//! - `password`: The password to encrypt/decrypt the data.
-//! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](Cipher).
-//! - `allow_root`: Allow root to access the file system.
-//! - `allow_other`: Allow other users to access the file system.
-//! - `direct_io`: Use direct I/O (bypass page cache for open files).
-//! - `suid_support`: If it should allow setting `SUID` and `SGID` when files are created. On `false` it will unset those flags when creating files.
 //!
 //! ## Or directly work with [`encryptedfs::EncryptedFs`]
 //!
@@ -110,7 +102,7 @@
 //! struct PasswordProviderImpl {}
 //! impl PasswordProvider for PasswordProviderImpl {
 //!     fn get_password(&self) -> Option<SecretString> {
-//!         /// dummy password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
+//!         // dummy password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
 //!         Some(SecretString::from_str("pass42").unwrap())
 //!     }
 //! }
@@ -183,7 +175,7 @@
 //!     }
 //! }
 //! ```
-//! ## Change password from CLI with `rpassword` crate
+//! ## Change password from CLI using [rpassword](https://crates.io/crates/rpassword) crate
 //!
 //! ### Example
 //!
@@ -207,7 +199,7 @@
 //!     let data_dir = args.next().expect("data_dir is missing");
 //!
 //!     use std::path::Path;
-//!    // read password from stdin
+//!     // read password from stdin
 //!     use rencfs::crypto::Cipher;
 //!     print!("Enter old password: ");
 //!     io::stdout().flush().unwrap();
@@ -239,11 +231,13 @@
 //! }
 //! ```
 //!
-//! We also expose a Writer and Reader of encrypted format, which implements [`std::io::Write`], [`std::io::Read`] and [`std::io::Seek`].
+//! ## Encrypted Writer and Reader
+//!
+//! We also expose a Writer and Reader in encrypted format, which implements [`std::io::Write`], [`std::io::Read`] and [`std::io::Seek`].
 //! You can wrap any [`std::io::Write`] and [`std::io::Read`], like a file, to write and read encrypted content.
 //! This is using [ring](https://crates.io/crates/ring) crate to handle encryption.
 //!
-//! # Example
+//! ### Example
 //! ```no_run
 //! use anyhow::Result;
 //! use rand_core::RngCore;
@@ -270,11 +264,11 @@
 //!     let key = Arc::new(SecretVec::new(key));
 //!
 //!     let mut args = args();
-//!     //! skip the program name
+//!     // skip the program name
 //!     let _ = args.next();
-//!     //! will encrypt this file
+//!     // will encrypt this file
 //!     let path_in = args.next().expect("path_in is missing");
-//!     //! will save it in the same directory with .enc suffix
+//!     // will save it in the same directory with .enc suffix
 //!     let out = Path::new(&path_in).to_path_buf().with_extension("enc");
 //!     if out.exists() {
 //!         std::fs::remove_file(&out)?;
@@ -287,7 +281,7 @@
 //!     writer.flush()?;
 //!     writer.finish()?;
 //!
-//!     let mut reader = crypto::create_reader(File::open(out)?, cipher, key.clone());
+//!     let mut reader = crypto::create_reader(File::open(out)?, cipher, key);
 //!     info!("read file and compare hash to original one");
 //!     let hash1 = crypto::hash_reader(&mut File::open(path_in)?)?;
 //!     let hash2 = crypto::hash_reader(&mut reader)?;

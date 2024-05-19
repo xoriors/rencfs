@@ -40,7 +40,7 @@ fn main() -> Result<()> {
     writer.flush()?;
     writer.finish()?;
 
-    let mut reader = crypto::create_reader(File::open(out)?, cipher, key.clone());
+    let mut reader = crypto::create_reader(File::open(out)?, cipher, key);
     info!("read file and compare hash to original one");
     let hash1 = crypto::hash_reader(&mut File::open(path_in)?)?;
     let hash2 = crypto::hash_reader(&mut reader)?;

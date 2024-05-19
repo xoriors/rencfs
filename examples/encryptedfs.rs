@@ -15,7 +15,7 @@ struct PasswordProviderImpl {}
 
 impl PasswordProvider for PasswordProviderImpl {
     fn get_password(&self) -> Option<SecretString> {
-        /// dummy password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
+        // dummy password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
         Some(SecretString::from_str("pass42").unwrap())
     }
 }
