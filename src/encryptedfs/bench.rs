@@ -1,44 +1,15 @@
-use crate::async_util;
-use crate::crypto::Cipher;
-use crate::encryptedfs::{
-    CreateFileAttr, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType, PasswordProvider,
-    ROOT_INODE,
-};
-use crate::test_common::{create_attr_from_type, run_test, TestSetup, SETUP_RESULT};
+use crate::encryptedfs::{DirectoryEntry, DirectoryEntryPlus, FileType, ROOT_INODE};
+use crate::test_common::{create_attr, SETUP_RESULT};
+use crate::{async_util, test_common};
 use rand::Rng;
 use secrecy::SecretString;
-use std::future::Future;
-use std::ops::DerefMut;
-use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, LazyLock};
-use std::{fs, io};
-use tempfile::NamedTempFile;
 use test::{black_box, Bencher};
-use thread_local::ThreadLocal;
 use tokio::sync::Mutex;
-
-pub fn block_on<F: Future>(future: F, worker_threads: usize) -> F::Output {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(worker_threads)
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(future)
-}
-
-pub(crate) fn bench<F: Future>(key: &'static str, worker_threads: usize, f: F) {
-    block_on(
-        async {
-            run_test(TestSetup { key }, f).await;
-        },
-        worker_threads,
-    );
-}
 
 #[bench]
 fn bench_create_nod(b: &mut Bencher) {
-    bench("bench_create_nod", 1, async {
+    test_common::bench("bench_create_nod", 1, async {
         let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
         let mut fs = fs.lock().await;
         let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
@@ -53,7 +24,7 @@ fn bench_create_nod(b: &mut Bencher) {
                         .create_nod(
                             ROOT_INODE,
                             &test_file,
-                            create_attr_from_type(FileType::RegularFile),
+                            create_attr(FileType::RegularFile),
                             false,
                             false,
                         )
@@ -70,7 +41,7 @@ fn bench_create_nod(b: &mut Bencher) {
 
 #[bench]
 fn bench_exists_by_name(b: &mut Bencher) {
-    bench("exists_by_name", 1, async {
+    test_common::bench("exists_by_name", 1, async {
         let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
         let mut fs = fs.lock().await;
         let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
@@ -97,7 +68,7 @@ fn bench_exists_by_name(b: &mut Bencher) {
 
 #[bench]
 fn bench_find_by_name(b: &mut Bencher) {
-    bench("bench_find_by_name", 1, async {
+    test_common::bench("bench_find_by_name", 1, async {
         let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
         let mut fs = fs.lock().await;
         let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
@@ -108,7 +79,7 @@ fn bench_find_by_name(b: &mut Bencher) {
                 .create_nod(
                     ROOT_INODE,
                     &test_file,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     false,
                 )
@@ -140,7 +111,7 @@ fn bench_find_by_name(b: &mut Bencher) {
 
 #[bench]
 fn bench_read_dir(b: &mut Bencher) {
-    bench("bench_read_dir", 1, async {
+    test_common::bench("bench_read_dir", 1, async {
         let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
         let mut fs = fs.lock().await;
         let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
@@ -151,7 +122,7 @@ fn bench_read_dir(b: &mut Bencher) {
                 .create_nod(
                     ROOT_INODE,
                     &test_file,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     false,
                 )
@@ -173,7 +144,7 @@ fn bench_read_dir(b: &mut Bencher) {
 
 #[bench]
 fn bench_read_dir_plus(b: &mut Bencher) {
-    bench("bench_read_dir_plus", 1, async {
+    test_common::bench("bench_read_dir_plus", 1, async {
         let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
         let mut fs = fs.lock().await;
         let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
@@ -184,7 +155,7 @@ fn bench_read_dir_plus(b: &mut Bencher) {
                 .create_nod(
                     ROOT_INODE,
                     &test_file,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     false,
                 )

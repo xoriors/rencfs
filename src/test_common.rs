@@ -1,6 +1,7 @@
 use crate::crypto::Cipher;
 use crate::encryptedfs::{CreateFileAttr, EncryptedFs, FileType, PasswordProvider};
 use secrecy::SecretString;
+use std::future::Future;
 use std::io::Read;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
@@ -21,7 +22,7 @@ pub(crate) const TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 
 pub(crate) static SETUP_RESULT: ThreadLocal<Mutex<Option<SetupResult>>> = ThreadLocal::new();
 
-pub(crate) fn create_attr_from_type(kind: FileType) -> CreateFileAttr {
+pub(crate) fn create_attr(kind: FileType) -> CreateFileAttr {
     CreateFileAttr {
         kind,
         perm: 0,
@@ -157,4 +158,22 @@ pub async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8],
         }
         read += len;
     }
+}
+
+pub(crate) fn bench<F: Future>(key: &'static str, worker_threads: usize, f: F) {
+    block_on(
+        async {
+            run_test(TestSetup { key }, f).await;
+        },
+        worker_threads,
+    );
+}
+
+pub fn block_on<F: Future>(future: F, worker_threads: usize) -> F::Output {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(future)
 }

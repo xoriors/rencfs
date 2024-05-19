@@ -255,11 +255,11 @@ pub fn encrypt_file_name(
 }
 
 #[allow(clippy::missing_errors_doc)]
-pub fn hash_file_name(name: &SecretString) -> FsResult<String> {
+pub fn hash_file_name(name: &SecretString) -> String {
     if name.expose_secret() == "$." || name.expose_secret() == "$.." {
-        Ok(name.expose_secret().clone())
+        name.expose_secret().clone()
     } else {
-        Ok(hex::encode(hash_secret_string(name)))
+        hex::encode(hash_secret_string(name))
     }
 }
 

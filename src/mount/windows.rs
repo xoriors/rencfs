@@ -27,8 +27,8 @@ pub struct MountPointImpl {
 #[async_trait]
 impl MountPoint for MountPointImpl {
     fn new(
-        mountpoint: &Path,
-        data_dir: &Path,
+        mountpoint: PathBuf,
+        data_dir: PathBuf,
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
         allow_root: bool,
@@ -37,8 +37,8 @@ impl MountPoint for MountPointImpl {
         suid_support: bool,
     ) -> Self {
         Self {
-            mountpoint: mountpoint.to_path_buf(),
-            data_dir: data_dir.to_path_buf(),
+            mountpoint,
+            data_dir,
             password_provider: Some(password_provider),
             cipher,
             allow_root,

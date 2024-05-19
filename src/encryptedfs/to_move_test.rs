@@ -1,133 +1,3 @@
-// use std::fs;
-// use std::fs::{File, OpenOptions};
-// use std::io::{Read, Write};
-// use std::path::PathBuf;
-// use std::str::FromStr;
-// use std::string::String;
-// use secrecy::{ExposeSecret, SecretString};
-//
-// use crate::encryptedfs::{CONTENTS_DIR, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, Cipher, FileAttr, FileType, FsError, FsResult, INODES_DIR, ROOT_INODE, SECURITY_DIR};
-//
-// const TESTS_DATA_DIR: &str = "./tests-data/";
-//
-// const ROOT_INODE_STR: &str = "1";
-//
-//
-// #[derive(Debug, Clone)]
-// struct TestSetup {
-//     data_path: String,
-// }
-//
-// struct SetupResult {
-//     fs: Option<EncryptedFs>,
-//     setup: TestSetup,
-// }
-//
-// async fn setup(setup: TestSetup) -> SetupResult {
-//     let path = setup.data_path.as_str();
-//     if fs::metadata(path).is_ok() {
-//         fs::remove_dir_all(path).unwrap();
-//     }
-//     fs::create_dir_all(path).unwrap();
-//     let fs = EncryptedFs::new(path, SecretString::from_str("pass-42").unwrap(), Cipher::ChaCha20).await.unwrap();
-//
-//     SetupResult {
-//         fs: Some(fs),
-//         setup,
-//     }
-// }
-//
-// fn teardown(mut result: SetupResult) {
-//     {
-//         let _fs = result.fs.take().unwrap();
-//     }
-//     fs::remove_dir_all(result.setup.data_path).unwrap();
-// }
-//
-// async fn run_test<T>(init: TestSetup, test: T)
-//     where T: FnOnce(&mut SetupResult) {
-//     let mut result = setup(init).await;
-//     test(&mut result);
-//     teardown(result);
-// }
-//
-// fn create_attr(ino: u64, file_type: FileType) -> FileAttr {
-//     FileAttr {
-//         ino,
-//         size: 0,
-//         blocks: 0,
-//         atime: std::time::SystemTime::now(),
-//         mtime: std::time::SystemTime::now(),
-//         ctime: std::time::SystemTime::now(),
-//         crtime: std::time::SystemTime::now(),
-//         kind: file_type,
-//         perm: if file_type == FileType::Directory { 0o755 } else { 0o644 },
-//         nlink: if file_type == FileType::Directory { 2 } else { 1 },
-//         uid: 0,
-//         gid: 0,
-//         rdev: 0,
-//         blksize: 0,
-//         flags: 0,
-//     }
-// }
-//
-// fn create_attr_from_type(file_type: FileType) -> FileAttr {
-//     create_attr(0, file_type)
-// }
-//
-// #[test]
-// fn test_write_and_get_inode() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_write_and_get_inode") }, |setup| {
-//         let fs = setup.fs.as_mut().unwrap();
-//
-//         let attr = create_attr(42, FileType::RegularFile);
-//         fs.write_inode(&attr).unwrap();
-//
-//         assert!(fs.node_exists(42));
-//         assert_eq!(fs.get_inode(42).unwrap(), attr);
-//         assert!(fs.data_dir.join(INODES_DIR).join("42").is_file());
-//
-//         assert!(matches!(fs.get_inode(0), Err(FsError::InodeNotFound)));
-//     });
-// }
-//
-// fn deserialize_from<T>(file: File, fs: &mut EncryptedFs) -> T
-//     where
-//         T: serde::de::DeserializeOwned,
-// {
-//     bincode::deserialize_from(fs.create_decryptor(file)).unwrap()
-// }
-//
-// fn read_to_string(path: PathBuf, fs: &mut EncryptedFs) -> String {
-//     let mut buf: Vec<u8> = vec![];
-//     fs.create_decryptor(OpenOptions::new().read(true).write(true).open(path).unwrap()).read_to_end(&mut buf).unwrap();
-//     String::from_utf8(buf).unwrap()
-// }
-//
-// #[allow(dead_code)]
-// fn write(path: PathBuf, data: &[u8], fs: &mut EncryptedFs) {
-//     let mut enc = fs.create_encryptor(OpenOptions::new().read(true).write(true).open(&path).unwrap());
-//     enc.write_all(data).unwrap();
-//     enc.finish().unwrap();
-// }
-//
-// #[test]
-// fn test_create_structure_and_root() {
-//     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_create_structure_and_root") }, |setup| {
-//         let fs = setup.fs.as_mut().unwrap();
-//
-//         assert!(fs.node_exists(ROOT_INODE));
-//         assert!(fs.is_dir(ROOT_INODE));
-//
-//         assert!(fs.data_dir.join(INODES_DIR).is_dir());
-//         assert!(fs.data_dir.join(CONTENTS_DIR).is_dir());
-//         assert!(fs.data_dir.join(SECURITY_DIR).is_dir());
-//
-//         assert!(fs.data_dir.join(INODES_DIR).join(ROOT_INODE_STR).is_file());
-//         assert!(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).is_dir());
-//     });
-// }
-//
 // #[test]
 // fn test_create_nod() {
 //     run_test(TestSetup { data_path: format!("{TESTS_DATA_DIR}/test_create_nod") }, |setup| {
@@ -135,7 +5,7 @@
 //
 //         // file in root
 //         let test_file = SecretString::from_str("test-file").unwrap();
-//         let (fh, attr) = fs.create_nod(ROOT_INODE, &test_file, create_attr_from_type(FileType::RegularFile), true, false).unwrap();
+//         let (fh, attr) = fs.create_nod(ROOT_INODE, &test_file, create_attr(FileType::RegularFile), true, false).unwrap();
 //         assert_ne!(fh, 0);
 //         assert_ne!(attr.ino, 0);
 //         assert!(fs.data_dir.join(INODES_DIR).join(attr.ino.to_string()).is_file());
@@ -149,7 +19,7 @@
 //
 //         // directory in root
 //         let test_dir = SecretString::from_str("test-dir").unwrap();
-//         let (_fh, attr) = fs.create_nod(ROOT_INODE, &test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_fh, attr) = fs.create_nod(ROOT_INODE, &test_dir, create_attr(FileType::Directory), false, false).unwrap();
 //         assert_ne!(attr.ino, 0);
 //         assert!(fs.data_dir.join(INODES_DIR).join(attr.ino.to_string()).is_file());
 //         assert!(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).is_dir());
@@ -167,7 +37,7 @@
 //         // directory in another directory
 //         let parent = attr.ino;
 //         let test_dir_2 = SecretString::from_str("test-dir-2").unwrap();
-//         let (_fh, attr) = fs.create_nod(parent, &test_dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_fh, attr) = fs.create_nod(parent, &test_dir_2, create_attr(FileType::Directory), false, false).unwrap();
 //         assert!(fs.data_dir.join(INODES_DIR).join(attr.ino.to_string()).is_file());
 //         assert!(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).is_dir());
 //         assert!(fs.data_dir.join(CONTENTS_DIR).join(parent.to_string()).join(fs.normalize_end_encrypt_file_name(&test_dir_2)).is_file());
@@ -183,14 +53,14 @@
 //
 //         // existing file
 //         assert!(matches!(
-//                 fs.create_nod(ROOT_INODE, &test_file, create_attr_from_type(FileType::RegularFile), false, false),
+//                 fs.create_nod(ROOT_INODE, &test_file, create_attr(FileType::RegularFile), false, false),
 //                 Err(FsError::AlreadyExists)
 //                 )
 //         );
 //
 //         // existing directory
 //         assert!(matches!(
-//                 fs.create_nod(ROOT_INODE, &test_dir, create_attr_from_type(FileType::Directory), false, false),
+//                 fs.create_nod(ROOT_INODE, &test_dir, create_attr(FileType::Directory), false, false),
 //                 Err(FsError::AlreadyExists)
 //                 )
 //         );
@@ -205,7 +75,7 @@
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         let test_file = SecretString::from_str("test-file").unwrap();
-//         fs.create_nod(ROOT_INODE, &test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+//         fs.create_nod(ROOT_INODE, &test_file, create_attr(FileType::RegularFile), false, false).unwrap();
 //         assert!(fs.find_by_name(ROOT_INODE, &test_file).unwrap().is_some());
 //         assert!(fs.find_by_name(ROOT_INODE, &SecretString::from_str("invalid").unwrap()).unwrap().is_none());
 //     });
@@ -217,9 +87,9 @@
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         let test_dir = SecretString::from_str("test-dir").unwrap();
-//         let (_fh, dir_attr) = fs.create_nod(ROOT_INODE, &test_dir, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_fh, dir_attr) = fs.create_nod(ROOT_INODE, &test_dir, create_attr(FileType::Directory), false, false).unwrap();
 //         let test_file = SecretString::from_str("test-file").unwrap();
-//         let (_fh, file_attr) = fs.create_nod(dir_attr.ino, &test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+//         let (_fh, file_attr) = fs.create_nod(dir_attr.ino, &test_file, create_attr(FileType::RegularFile), false, false).unwrap();
 //
 //         assert!(matches!(fs.remove_dir(ROOT_INODE, &test_dir), Err(FsError::NotEmpty)));
 //         assert!(fs.data_dir.join(INODES_DIR).join(dir_attr.ino.to_string()).is_file());
@@ -241,7 +111,7 @@
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         let test_file = SecretString::from_str("test-file").unwrap();
-//         let (_fh, attr) = fs.create_nod(ROOT_INODE, &test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+//         let (_fh, attr) = fs.create_nod(ROOT_INODE, &test_file, create_attr(FileType::RegularFile), false, false).unwrap();
 //         assert!(fs.remove_file(ROOT_INODE, &test_file).is_ok());
 //         assert_ne!(fs.data_dir.join(INODES_DIR).join(attr.ino.to_string()).is_file(), true);
 //         assert_ne!(fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()).is_file(), true);
@@ -264,7 +134,7 @@
 //         // new file in same directory
 //         let new_parent = ROOT_INODE;
 //         let file_1 = SecretString::from_str("file-1").unwrap();
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_1, create_attr(FileType::RegularFile), false, false).unwrap();
 //         let file_1_new = SecretString::from_str("file-1-new").unwrap();
 //         fs.rename(ROOT_INODE, &file_1, new_parent, &file_1_new).unwrap();
 //         assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1), true);
@@ -279,7 +149,7 @@
 //         // new directory in same directory
 //         let new_parent = ROOT_INODE;
 //         let dir_1 = SecretString::from_str("dir-1").unwrap();
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_1, create_attr(FileType::Directory), false, false).unwrap();
 //         let dir_1_new = SecretString::from_str("dir-1-new").unwrap();
 //         fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_1_new).unwrap();
 //         assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_1), true);
@@ -296,11 +166,11 @@
 //         assert_eq!(fs.read_dir(new_attr.ino).unwrap().into_iter().filter(|entry| entry.as_ref().unwrap().name.expose_secret() == ".").count(), 1);
 //
 //         let dir_new_parent = SecretString::from_str("dir-new-parent").unwrap();
-//         let (_, new_parent_attr) = fs.create_nod(ROOT_INODE, &dir_new_parent, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_, new_parent_attr) = fs.create_nod(ROOT_INODE, &dir_new_parent, create_attr(FileType::Directory), false, false).unwrap();
 //
 //         // new file to another directory
 //         let new_parent = new_parent_attr.ino;
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_1, create_attr(FileType::RegularFile), false, false).unwrap();
 //         let file_2 = SecretString::from_str("file-2").unwrap();
 //         fs.rename(ROOT_INODE, &file_1, new_parent, &file_2).unwrap();
 //         assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1), true);
@@ -318,7 +188,7 @@
 //
 //         // new directory to another directory
 //         let new_parent = new_parent_attr.ino;
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_1, create_attr(FileType::Directory), false, false).unwrap();
 //         let dir_2 = SecretString::from_str("dir-2").unwrap();
 //         fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_2).unwrap();
 //         assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_1), true);
@@ -337,8 +207,8 @@
 //
 //         // file to existing file in same directory
 //         let new_parent = ROOT_INODE;
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
-//         let (_, _attr_2) = fs.create_nod(new_parent, &file_2, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_1, create_attr(FileType::RegularFile), false, false).unwrap();
+//         let (_, _attr_2) = fs.create_nod(new_parent, &file_2, create_attr(FileType::RegularFile), false, false).unwrap();
 //         fs.rename(ROOT_INODE, &file_1, new_parent, &file_2).unwrap();
 //         assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1), true);
 //         assert_eq!(fs.exists_by_name(new_parent, &file_2), true);
@@ -351,8 +221,8 @@
 //
 //         // directory to existing directory in same directory
 //         let new_parent = ROOT_INODE;
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
-//         let (_, _attr_2) = fs.create_nod(new_parent, &dir_2, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_1, create_attr(FileType::Directory), false, false).unwrap();
+//         let (_, _attr_2) = fs.create_nod(new_parent, &dir_2, create_attr(FileType::Directory), false, false).unwrap();
 //         fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_2).unwrap();
 //         assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_1), true);
 //         assert_eq!(fs.exists_by_name(new_parent, &dir_2), true);
@@ -369,8 +239,8 @@
 //
 //         // file to existing file in another directory
 //         let new_parent = new_parent_attr.ino;
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
-//         let (_, _attr_2) = fs.create_nod(new_parent, &file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_1, create_attr(FileType::RegularFile), false, false).unwrap();
+//         let (_, _attr_2) = fs.create_nod(new_parent, &file_1, create_attr(FileType::RegularFile), false, false).unwrap();
 //         fs.rename(ROOT_INODE, &file_1, new_parent, &file_1).unwrap();
 //         assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1), true);
 //         assert_eq!(fs.exists_by_name(new_parent, &file_1), true);
@@ -383,8 +253,8 @@
 //
 //         // directory to existing directory in another directory
 //         let new_parent = new_parent_attr.ino;
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
-//         let (_, _attr_2) = fs.create_nod(new_parent, &dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_1, create_attr(FileType::Directory), false, false).unwrap();
+//         let (_, _attr_2) = fs.create_nod(new_parent, &dir_1, create_attr(FileType::Directory), false, false).unwrap();
 //         fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_1).unwrap();
 //         assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_1), true);
 //         assert_eq!(fs.exists_by_name(new_parent, &dir_1), true);
@@ -401,8 +271,8 @@
 //
 //         // overwriting directory with file
 //         let new_parent = ROOT_INODE;
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_1, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
-//         let (_, _attr_2) = fs.create_nod(new_parent, &dir_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_1, create_attr(FileType::RegularFile), false, false).unwrap();
+//         let (_, _attr_2) = fs.create_nod(new_parent, &dir_1, create_attr(FileType::Directory), false, false).unwrap();
 //         fs.rename(ROOT_INODE, &file_1, new_parent, &dir_1).unwrap();
 //         assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1), true);
 //         assert_eq!(fs.exists_by_name(new_parent, &dir_1), true);
@@ -416,8 +286,8 @@
 //         // overwriting file with directory
 //         let new_parent = ROOT_INODE;
 //         let dir_3 = SecretString::from_str("dir-3").unwrap();
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_3, create_attr_from_type(FileType::Directory), false, false).unwrap();
-//         let (_, _attr_2) = fs.create_nod(new_parent, &file_1, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_3, create_attr(FileType::Directory), false, false).unwrap();
+//         let (_, _attr_2) = fs.create_nod(new_parent, &file_1, create_attr(FileType::Directory), false, false).unwrap();
 //         fs.rename(ROOT_INODE, &dir_3, new_parent, &file_1).unwrap();
 //         assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_3), true);
 //         assert_eq!(fs.exists_by_name(new_parent, &file_1), true);
@@ -434,7 +304,7 @@
 //
 //         // overwriting non-empty directory
 //         let new_parent = ROOT_INODE;
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_3, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_3, create_attr(FileType::Directory), false, false).unwrap();
 //         let _attr_2 = new_parent_attr;
 //         let name_2 = dir_new_parent;
 //         assert!(matches!(fs.rename(ROOT_INODE, &dir_3, new_parent, &name_2), Err(FsError::NotEmpty)));
@@ -460,7 +330,7 @@
 //         // same file in same directory
 //         let new_parent = ROOT_INODE;
 //         let file_3 = SecretString::from_str("file-3").unwrap();
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_3, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &file_3, create_attr(FileType::RegularFile), false, false).unwrap();
 //         fs.rename(ROOT_INODE, &file_3, new_parent, &file_3).unwrap();
 //         assert_eq!(fs.exists_by_name(new_parent, &file_3), true);
 //         let new_attr = fs.find_by_name(new_parent, &file_3).unwrap().unwrap();
@@ -472,7 +342,7 @@
 //         // same directory in same directory
 //         let new_parent = ROOT_INODE;
 //         let dir_5 = SecretString::from_str("dir-5").unwrap();
-//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_5, create_attr_from_type(FileType::Directory), false, false).unwrap();
+//         let (_, attr) = fs.create_nod(ROOT_INODE, &dir_5, create_attr(FileType::Directory), false, false).unwrap();
 //         fs.rename(ROOT_INODE, &dir_5, new_parent, &dir_5).unwrap();
 //         assert_eq!(fs.exists_by_name(new_parent, &dir_5), true);
 //         let new_attr = fs.find_by_name(new_parent, &dir_5).unwrap().unwrap();
@@ -489,7 +359,7 @@
 //         let invalid = SecretString::from_str("invalid").unwrap();
 //         assert!(matches!(fs.rename(0, &invalid, 0, &invalid), Err(FsError::InodeNotFound)));
 //         let existing_file = SecretString::from_str("existing-file").unwrap();
-//         let (_, attr_file) = fs.create_nod(ROOT_INODE, &existing_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+//         let (_, attr_file) = fs.create_nod(ROOT_INODE, &existing_file, create_attr(FileType::RegularFile), false, false).unwrap();
 //         assert!(matches!(fs.rename(attr_file.ino, &invalid, 0, &invalid), Err(FsError::InvalidInodeType)));
 //         assert!(matches!(fs.rename(ROOT_INODE, &invalid, ROOT_INODE, &invalid), Err(FsError::NotFound(_))));
 //         assert!(matches!(fs.rename(ROOT_INODE, &existing_file, 0, &invalid), Err(FsError::InodeNotFound)));
@@ -503,7 +373,7 @@
 //         let fs = setup.fs.as_mut().unwrap();
 //
 //         let test_file = SecretString::from_str("test-file").unwrap();
-//         let (_fh, attr) = fs.create_nod(ROOT_INODE, &test_file, create_attr_from_type(FileType::RegularFile), false, false).unwrap();
+//         let (_fh, attr) = fs.create_nod(ROOT_INODE, &test_file, create_attr(FileType::RegularFile), false, false).unwrap();
 //         // single read
 //         let fh = fs.open(attr.ino, true, false).unwrap();
 //         assert_ne!(fh, 0);

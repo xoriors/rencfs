@@ -38,7 +38,7 @@ use crate::{crypto, fs_util, stream_util};
 
 mod bench;
 #[cfg(test)]
-pub(crate) mod test;
+mod test;
 
 pub(crate) const INODES_DIR: &str = "inodes";
 pub(crate) const CONTENTS_DIR: &str = "contents";
@@ -46,8 +46,8 @@ pub(crate) const SECURITY_DIR: &str = "security";
 pub(crate) const KEY_ENC_FILENAME: &str = "key.enc";
 pub(crate) const KEY_SALT_FILENAME: &str = "key.salt";
 
-const LS_DIR: &str = "ls";
-const HASH_DIR: &str = "hash";
+pub(crate) const LS_DIR: &str = "ls";
+pub(crate) const HASH_DIR: &str = "hash";
 
 pub(crate) const ROOT_INODE: u64 = 1;
 
@@ -638,12 +638,12 @@ impl EncryptedFs {
         self.ino_file(ino).is_file()
     }
 
-    pub fn is_dir(&self, ino: u64) -> FsResult<bool> {
-        Ok(self.contents_path(ino).is_dir())
+    pub fn is_dir(&self, ino: u64) -> bool {
+        self.contents_path(ino).is_dir()
     }
 
-    pub fn is_file(&self, ino: u64) -> FsResult<bool> {
-        Ok(self.contents_path(ino).is_file())
+    pub fn is_file(&self, ino: u64) -> bool {
+        self.contents_path(ino).is_file()
     }
 
     /// Create a new node in the filesystem
@@ -811,7 +811,7 @@ impl EncryptedFs {
         if !self.node_exists(parent) {
             return Err(FsError::InodeNotFound);
         }
-        if !self.is_dir(parent)? {
+        if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
         let hash = hex::encode(crypto::hash_secret_string(name));
@@ -835,7 +835,7 @@ impl EncryptedFs {
     /// Count children of a directory. This **EXCLUDES** "." and "..".
     #[allow(clippy::missing_errors_doc)]
     pub fn children_count(&self, ino: u64) -> FsResult<usize> {
-        if !self.is_dir(ino)? {
+        if !self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
         let mut count = fs::read_dir(self.contents_path(ino).join(LS_DIR))?.count();
@@ -852,7 +852,7 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
     pub async fn delete_dir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
-        if !self.is_dir(parent)? {
+        if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
 
@@ -923,7 +923,7 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
     pub async fn delete_file(&self, parent: u64, name: &SecretString) -> FsResult<()> {
-        if !self.is_dir(parent)? {
+        if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
         if !self.exists_by_name(parent, name)? {
@@ -992,7 +992,7 @@ impl EncryptedFs {
         if !self.node_exists(parent) {
             return Err(FsError::InodeNotFound);
         }
-        if !self.is_dir(parent)? {
+        if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
         let hash = hex::encode(crypto::hash_secret_string(name));
@@ -1315,7 +1315,7 @@ impl EncryptedFs {
         if !self.node_exists(ino) {
             return Err(FsError::InodeNotFound);
         }
-        if !self.is_file(ino)? {
+        if !self.is_file(ino) {
             return Err(FsError::InvalidInodeType);
         }
         if !self.read_handles.read().await.contains_key(&handle) {
@@ -1328,7 +1328,7 @@ impl EncryptedFs {
         if ctx.ino != ino {
             return Err(FsError::InvalidFileHandle);
         }
-        if self.is_dir(ino)? {
+        if self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
         if buf.is_empty() {
@@ -1450,7 +1450,7 @@ impl EncryptedFs {
         if !self.node_exists(ino) {
             return Err(FsError::InodeNotFound);
         }
-        if !self.is_file(ino)? {
+        if !self.is_file(ino) {
             return Err(FsError::InvalidInodeType);
         }
         {
@@ -1551,7 +1551,7 @@ impl EncryptedFs {
         src_fh: u64,
         dest_fh: u64,
     ) -> FsResult<usize> {
-        if self.is_dir(src_ino)? || self.is_dir(dest_ino)? {
+        if self.is_dir(src_ino) || self.is_dir(dest_ino) {
             return Err(FsError::InvalidInodeType);
         }
 
@@ -1582,7 +1582,7 @@ impl EncryptedFs {
                 "read and write cannot be false at the same time",
             ));
         }
-        if self.is_dir(ino)? {
+        if self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
 
@@ -1718,13 +1718,13 @@ impl EncryptedFs {
         if !self.node_exists(parent) {
             return Err(FsError::InodeNotFound);
         }
-        if !self.is_dir(parent)? {
+        if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
         if !self.node_exists(new_parent) {
             return Err(FsError::InodeNotFound);
         }
-        if !self.is_dir(new_parent)? {
+        if !self.is_dir(new_parent) {
             return Err(FsError::InvalidInodeType);
         }
         if !self.exists_by_name(parent, name)? {
@@ -2107,7 +2107,7 @@ impl EncryptedFs {
             .unwrap();
         let entry_hash = entry.clone();
         tokio::spawn(async move {
-            let name = crypto::hash_file_name(&entry_hash.name)?;
+            let name = crypto::hash_file_name(&entry_hash.name);
             let file_path = parent_path.join(HASH_DIR).join(name);
             let lock = self_clone
                 .serialize_dir_entries_hash_locks
@@ -2142,7 +2142,7 @@ impl EncryptedFs {
     async fn remove_directory_entry(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         let parent_path = self.contents_path(parent);
         // remove from HASH
-        let name = crypto::hash_file_name(name)?;
+        let name = crypto::hash_file_name(name);
         let path = parent_path.join(HASH_DIR).join(name);
         let lock = self
             .serialize_dir_entries_hash_locks

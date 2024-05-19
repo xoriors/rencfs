@@ -1,12 +1,15 @@
-use crate::test_common::create_attr_from_type;
-use crate::test_common::SETUP_RESULT;
+use crate::encryptedfs::HASH_DIR;
+use crate::encryptedfs::LS_DIR;
+use std::fs::File;
 use std::future::Future;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::string::ToString;
 use std::sync::{Arc, LazyLock};
 use std::{fs, io};
 
+use bincode::deserialize_from;
 use secrecy::{ExposeSecret, SecretString};
 use tempfile::NamedTempFile;
 use thread_local::ThreadLocal;
@@ -14,13 +17,21 @@ use tokio::sync::Mutex;
 use tracing_test::traced_test;
 
 use crate::encryptedfs::write_all_bytes_to_fs;
+use crate::encryptedfs::INODES_DIR;
+use crate::encryptedfs::KEY_ENC_FILENAME;
+use crate::encryptedfs::KEY_SALT_FILENAME;
+use crate::encryptedfs::SECURITY_DIR;
 use crate::encryptedfs::{
     Cipher, CreateFileAttr, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType, FsError,
     FsResult, PasswordProvider, CONTENTS_DIR, ROOT_INODE,
 };
-use crate::test_common;
+use crate::test_common::create_attr;
 use crate::test_common::run_test;
 use crate::test_common::TestSetup;
+use crate::test_common::SETUP_RESULT;
+use crate::{crypto, test_common};
+
+static ROOT_INODE_STR: &str = "1";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
@@ -35,7 +46,7 @@ async fn test_write() {
             .create_nod(
                 ROOT_INODE,
                 &test_file,
-                create_attr_from_type(FileType::RegularFile),
+                create_attr(FileType::RegularFile),
                 false,
                 true,
             )
@@ -98,7 +109,7 @@ async fn test_write() {
             .create_nod(
                 ROOT_INODE,
                 &test_file_2,
-                create_attr_from_type(FileType::RegularFile),
+                create_attr(FileType::RegularFile),
                 false,
                 true,
             )
@@ -134,7 +145,7 @@ async fn test_write() {
             .create_nod(
                 ROOT_INODE,
                 &test_file_3,
-                create_attr_from_type(FileType::RegularFile),
+                create_attr(FileType::RegularFile),
                 false,
                 true,
             )
@@ -174,7 +185,7 @@ async fn test_write() {
             .create_nod(
                 ROOT_INODE,
                 &test_dir,
-                create_attr_from_type(FileType::Directory),
+                create_attr(FileType::Directory),
                 false,
                 true,
             )
@@ -202,7 +213,7 @@ async fn test_read() {
             .create_nod(
                 ROOT_INODE,
                 &test_file,
-                create_attr_from_type(FileType::RegularFile),
+                create_attr(FileType::RegularFile),
                 false,
                 true,
             )
@@ -247,7 +258,7 @@ async fn test_read() {
             .create_nod(
                 ROOT_INODE,
                 &test_file_2,
-                create_attr_from_type(FileType::RegularFile),
+                create_attr(FileType::RegularFile),
                 false,
                 true,
             )
@@ -278,7 +289,7 @@ async fn test_read() {
             .create_nod(
                 ROOT_INODE,
                 &test_file_3,
-                create_attr_from_type(FileType::RegularFile),
+                create_attr(FileType::RegularFile),
                 false,
                 true,
             )
@@ -309,7 +320,7 @@ async fn test_read() {
             .create_nod(
                 ROOT_INODE,
                 &test_file_4,
-                create_attr_from_type(FileType::RegularFile),
+                create_attr(FileType::RegularFile),
                 false,
                 true,
             )
@@ -349,7 +360,7 @@ async fn test_read() {
             .create_nod(
                 ROOT_INODE,
                 &test_dir,
-                create_attr_from_type(FileType::Directory),
+                create_attr(FileType::Directory),
                 true,
                 false,
             )
@@ -380,7 +391,7 @@ async fn test_truncate() {
                 .create_nod(
                     ROOT_INODE,
                     &test_file,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     true,
                 )
@@ -476,7 +487,7 @@ async fn test_copy_file_range() {
                 .create_nod(
                     ROOT_INODE,
                     &test_file_1,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     true,
                     true,
                 )
@@ -494,7 +505,7 @@ async fn test_copy_file_range() {
                 .create_nod(
                     ROOT_INODE,
                     &test_file_2,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     true,
                     true,
                 )
@@ -564,7 +575,7 @@ async fn test_read_dir() {
                 .create_nod(
                     ROOT_INODE,
                     &test_file,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     false,
                 )
@@ -576,7 +587,7 @@ async fn test_read_dir() {
                 .create_nod(
                     ROOT_INODE,
                     &test_dir,
-                    create_attr_from_type(FileType::Directory),
+                    create_attr(FileType::Directory),
                     false,
                     false,
                 )
@@ -647,7 +658,7 @@ async fn test_read_dir() {
                 .create_nod(
                     parent,
                     &test_file_2,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     false,
                 )
@@ -659,7 +670,7 @@ async fn test_read_dir() {
                 .create_nod(
                     parent,
                     &test_dir_2,
-                    create_attr_from_type(FileType::Directory),
+                    create_attr(FileType::Directory),
                     false,
                     false,
                 )
@@ -743,7 +754,7 @@ async fn test_read_dir_plus() {
                 .create_nod(
                     ROOT_INODE,
                     &test_file,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     false,
                 )
@@ -755,7 +766,7 @@ async fn test_read_dir_plus() {
                 .create_nod(
                     ROOT_INODE,
                     &test_dir,
-                    create_attr_from_type(FileType::Directory),
+                    create_attr(FileType::Directory),
                     false,
                     false,
                 )
@@ -835,7 +846,7 @@ async fn test_read_dir_plus() {
                 .create_nod(
                     parent,
                     &test_file_2,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     false,
                 )
@@ -847,7 +858,7 @@ async fn test_read_dir_plus() {
                 .create_nod(
                     parent,
                     &test_dir_2,
-                    create_attr_from_type(FileType::Directory),
+                    create_attr(FileType::Directory),
                     false,
                     false,
                 )
@@ -940,7 +951,7 @@ async fn test_find_by_name() {
                 .create_nod(
                     ROOT_INODE,
                     &test_file,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     false,
                 )
@@ -979,7 +990,7 @@ async fn test_exists_by_name() {
                 .create_nod(
                     ROOT_INODE,
                     &test_file,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     false,
                 )
@@ -1014,7 +1025,7 @@ async fn test_remove_dir() {
                 .create_nod(
                     ROOT_INODE,
                     &test_dir,
-                    create_attr_from_type(FileType::Directory),
+                    create_attr(FileType::Directory),
                     false,
                     false,
                 )
@@ -1057,7 +1068,7 @@ async fn test_remove_file() {
                 .create_nod(
                     ROOT_INODE,
                     &test_file,
-                    create_attr_from_type(FileType::RegularFile),
+                    create_attr(FileType::RegularFile),
                     false,
                     false,
                 )
@@ -1101,7 +1112,7 @@ async fn test_find_by_name_exists_by_name100files() {
                     .create_nod(
                         ROOT_INODE,
                         &test_file,
-                        create_attr_from_type(FileType::RegularFile),
+                        create_attr(FileType::RegularFile),
                         false,
                         false,
                     )
@@ -1117,5 +1128,276 @@ async fn test_find_by_name_exists_by_name100files() {
             ));
         },
     )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
+async fn test_create_structure_and_root() {
+    run_test(TestSetup { key: "test_sample" }, async {
+        let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
+        let mut fs = fs.lock().await;
+        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+
+        assert!(fs.node_exists(ROOT_INODE));
+        assert!(fs.is_dir(ROOT_INODE));
+
+        assert!(fs.data_dir.join(INODES_DIR).is_dir());
+        assert!(fs.data_dir.join(CONTENTS_DIR).is_dir());
+        assert!(fs.data_dir.join(SECURITY_DIR).is_dir());
+        assert!(fs
+            .data_dir
+            .join(SECURITY_DIR)
+            .join(KEY_ENC_FILENAME)
+            .is_file());
+        assert!(fs
+            .data_dir
+            .join(SECURITY_DIR)
+            .join(KEY_SALT_FILENAME)
+            .is_file());
+
+        assert!(fs.data_dir.join(INODES_DIR).join(ROOT_INODE_STR).is_file());
+        assert!(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).is_dir());
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
+async fn test_create_nod() {
+    run_test(
+        TestSetup {
+            key: "test_create_nod",
+        },
+        async {
+            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
+            let mut fs = fs.lock().await;
+            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+
+            // file in root
+            let test_file = SecretString::from_str("test-file").unwrap();
+            let (fh, attr) = fs
+                .create_nod(
+                    ROOT_INODE,
+                    &test_file,
+                    create_attr(FileType::RegularFile),
+                    true,
+                    false,
+                )
+                .await
+                .unwrap();
+            assert_ne!(fh, 0);
+            assert_ne!(attr.ino, 0);
+            assert!(fs
+                .data_dir
+                .join(INODES_DIR)
+                .join(attr.ino.to_string())
+                .is_file());
+            assert!(fs
+                .data_dir
+                .join(CONTENTS_DIR)
+                .join(attr.ino.to_string())
+                .is_file());
+            assert!(fs
+                .data_dir
+                .join(CONTENTS_DIR)
+                .join(ROOT_INODE_STR)
+                .join(HASH_DIR)
+                .join(crypto::hash_file_name(&test_file))
+                .is_file());
+            assert!(fs.node_exists(attr.ino));
+            assert_eq!(attr, fs.get_inode(attr.ino).await.unwrap());
+
+            let entry_in_parent: (u64, FileType) = deserialize_from(
+                File::open(
+                    fs.data_dir
+                        .join(CONTENTS_DIR)
+                        .join(ROOT_INODE_STR)
+                        .join(LS_DIR)
+                        .join(crypto::hash_file_name(&test_file)),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(entry_in_parent, (attr.ino, FileType::RegularFile));
+
+            // directory in root
+            let test_dir = SecretString::from_str("test-dir").unwrap();
+            let (_fh, attr) = fs
+                .create_nod(
+                    ROOT_INODE,
+                    &test_dir,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+            assert_ne!(attr.ino, 0);
+            assert!(fs
+                .data_dir
+                .join(INODES_DIR)
+                .join(attr.ino.to_string())
+                .is_file());
+            assert!(fs
+                .data_dir
+                .join(CONTENTS_DIR)
+                .join(attr.ino.to_string())
+                .is_dir());
+            assert!(fs
+                .data_dir
+                .join(CONTENTS_DIR)
+                .join(ROOT_INODE_STR)
+                .join(HASH_DIR)
+                .join(crypto::hash_file_name(&test_dir))
+                .is_file());
+            assert!(fs.node_exists(attr.ino));
+            assert_eq!(attr, fs.get_inode(attr.ino).await.unwrap());
+            assert!(fs.is_dir(attr.ino));
+            let entry_in_parent: (u64, FileType) = deserialize_from(
+                File::open(
+                    fs.data_dir
+                        .join(CONTENTS_DIR)
+                        .join(ROOT_INODE_STR)
+                        .join(LS_DIR)
+                        .join(crypto::hash_file_name(&test_dir)),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(entry_in_parent, (attr.ino, FileType::Directory));
+            let dot_entry_in_parent: (u64, FileType) = deserialize_from(
+                File::open(
+                    fs.data_dir
+                        .join(CONTENTS_DIR)
+                        .join(attr.ino.to_string())
+                        .join(LS_DIR)
+                        .join("$."),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(dot_entry_in_parent, (attr.ino, FileType::Directory));
+            let dot_dot_entry_in_parent: (u64, FileType) = deserialize_from(
+                File::open(
+                    fs.data_dir
+                        .join(CONTENTS_DIR)
+                        .join(attr.ino.to_string())
+                        .join(LS_DIR)
+                        .join("$.."),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(dot_dot_entry_in_parent, (ROOT_INODE, FileType::Directory));
+
+            // directory in another directory
+            let parent = attr.ino;
+            let test_dir_2 = SecretString::from_str("test-dir-2").unwrap();
+            let (_fh, attr) = fs
+                .create_nod(
+                    parent,
+                    &test_dir_2,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+            assert!(fs
+                .data_dir
+                .join(INODES_DIR)
+                .join(attr.ino.to_string())
+                .is_file());
+            assert!(fs
+                .data_dir
+                .join(CONTENTS_DIR)
+                .join(attr.ino.to_string())
+                .is_dir());
+            assert!(fs
+                .data_dir
+                .join(CONTENTS_DIR)
+                .join(parent.to_string())
+                .join(HASH_DIR)
+                .join(crypto::hash_file_name(&test_dir_2))
+                .is_file());
+            assert!(fs.node_exists(attr.ino));
+            assert_eq!(attr, fs.get_inode(attr.ino).await.unwrap());
+            assert!(fs.is_dir(attr.ino));
+            let entry_in_parent: (u64, FileType) = deserialize_from(
+                File::open(
+                    fs.data_dir
+                        .join(CONTENTS_DIR)
+                        .join(parent.to_string())
+                        .join(LS_DIR)
+                        .join(crypto::hash_file_name(&test_dir_2)),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(entry_in_parent, (attr.ino, FileType::Directory));
+            let dot_entry_in_parent: (u64, FileType) = deserialize_from(
+                File::open(
+                    fs.data_dir
+                        .join(CONTENTS_DIR)
+                        .join(attr.ino.to_string())
+                        .join(LS_DIR)
+                        .join("$."),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(dot_entry_in_parent, (attr.ino, FileType::Directory));
+            let dot_dot_entry_in_parent: (u64, FileType) = deserialize_from(
+                File::open(
+                    fs.data_dir
+                        .join(CONTENTS_DIR)
+                        .join(attr.ino.to_string())
+                        .join(LS_DIR)
+                        .join("$.."),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(dot_dot_entry_in_parent, (parent, FileType::Directory));
+
+            // existing file
+            assert!(matches!(
+                fs.create_nod(
+                    ROOT_INODE,
+                    &test_file,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    false
+                )
+                .await,
+                Err(FsError::AlreadyExists)
+            ));
+
+            // existing directory
+            assert!(matches!(
+                fs.create_nod(
+                    ROOT_INODE,
+                    &test_dir,
+                    create_attr(FileType::Directory),
+                    false,
+                    false
+                )
+                .await,
+                Err(FsError::AlreadyExists)
+            ));
+        },
+    )
+    .await
+}
+
+// #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// #[traced_test]
+async fn test_sample() {
+    run_test(TestSetup { key: "test_sample" }, async {
+        let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
+        let mut fs = fs.lock().await;
+        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+    })
     .await
 }
