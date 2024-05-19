@@ -177,3 +177,10 @@ pub fn block_on<F: Future>(future: F, worker_threads: usize) -> F::Output {
         .unwrap()
         .block_on(future)
 }
+
+pub async fn get_fs() -> Arc<EncryptedFs> {
+    // todo: see if we can simplify how we keep in SETUP_RESULT
+    let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
+    let mut fs = fs.lock().await;
+    fs.as_mut().unwrap().fs.as_ref().unwrap().clone()
+}

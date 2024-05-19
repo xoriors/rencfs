@@ -3,6 +3,7 @@ use std::io;
 use std::io::{Read, Seek, Write};
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::arc_hashmap::Holder;
@@ -194,7 +195,7 @@ pub fn create_file_reader(
 }
 
 #[allow(clippy::missing_errors_doc)]
-pub fn encrypt_string(s: &SecretString, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<String> {
+pub fn encrypt(s: &SecretString, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<String> {
     let mut cursor = io::Cursor::new(vec![]);
     let mut writer = create_writer(cursor, cipher, key);
     writer.write_all(s.expose_secret().as_bytes())?;
@@ -206,7 +207,7 @@ pub fn encrypt_string(s: &SecretString, cipher: Cipher, key: Arc<SecretVec<u8>>)
 
 #[allow(clippy::missing_panics_doc)]
 #[allow(clippy::missing_errors_doc)]
-pub fn decrypt_string(s: &str, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<SecretString> {
+pub fn decrypt(s: &str, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<SecretString> {
     let vec = BASE64.decode(s)?;
     let cursor = io::Cursor::new(vec);
 
@@ -223,7 +224,7 @@ pub fn decrypt_file_name(
     key: Arc<SecretVec<u8>>,
 ) -> Result<SecretString> {
     let name = String::from(name).replace('|', "/");
-    decrypt_string(&name, cipher, key)
+    decrypt(&name, cipher, key)
 }
 
 #[instrument(skip(password, salt))]
@@ -246,9 +247,11 @@ pub fn encrypt_file_name(
 ) -> FsResult<String> {
     if name.expose_secret() == "$." || name.expose_secret() == "$.." {
         Ok(name.expose_secret().clone())
+    } else if name.expose_secret() == "." || name.expose_secret() == ".." {
+        Ok(format!("${}", name.expose_secret()))
     } else {
         let normalized_name = SecretString::new(name.expose_secret().replace(['/', '\\'], " "));
-        let mut encrypted = encrypt_string(&normalized_name, cipher, key)?;
+        let mut encrypted = encrypt(&normalized_name, cipher, key)?;
         encrypted = encrypted.replace('/', "|");
         Ok(encrypted)
     }
@@ -258,6 +261,8 @@ pub fn encrypt_file_name(
 pub fn hash_file_name(name: &SecretString) -> String {
     if name.expose_secret() == "$." || name.expose_secret() == "$.." {
         name.expose_secret().clone()
+    } else if name.expose_secret() == "." || name.expose_secret() == ".." {
+        format!("${}", name.expose_secret())
     } else {
         hex::encode(hash_secret_string(name))
     }

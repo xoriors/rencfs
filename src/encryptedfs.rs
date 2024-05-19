@@ -814,7 +814,7 @@ impl EncryptedFs {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
-        let hash = hex::encode(crypto::hash_secret_string(name));
+        let hash = crypto::hash_file_name(name);
         let hash_path = self.contents_path(parent).join(HASH_DIR).join(hash);
         if !hash_path.is_file() {
             return Ok(None);
@@ -995,7 +995,7 @@ impl EncryptedFs {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
-        let hash = hex::encode(crypto::hash_secret_string(name));
+        let hash = crypto::hash_file_name(name);
         let hash_path = self.contents_path(parent).join(HASH_DIR).join(hash);
         Ok(hash_path.is_file())
     }
@@ -1851,11 +1851,7 @@ impl EncryptedFs {
 
     /// Decrypts a string using internal encryption info.
     pub async fn decrypt_string(&self, s: &str) -> FsResult<SecretString> {
-        Ok(crypto::decrypt_string(
-            s,
-            self.cipher,
-            self.key.get().await?,
-        )?)
+        Ok(crypto::decrypt(s, self.cipher, self.key.get().await?)?)
     }
 
     /// Change the password of the filesystem used to access the encryption key.
@@ -2179,6 +2175,30 @@ impl EncryptedFs {
 
             return ino;
         }
+    }
+
+    #[allow(clippy::missing_errors_doc)]
+    pub async fn encrypt_file_name(&self, name: &SecretString) -> FsResult<String> {
+        crypto::encrypt_file_name(name, self.cipher, self.key.get().await?)
+    }
+
+    pub async fn decrypt_file_name(&self, name: &str) -> FsResult<SecretString> {
+        Ok(crypto::decrypt_file_name(
+            name,
+            self.cipher,
+            self.key.get().await?,
+        )?)
+    }
+
+    #[allow(clippy::missing_errors_doc)]
+    pub async fn encrypt(&self, s: &SecretString) -> FsResult<String> {
+        Ok(crypto::encrypt(s, self.cipher, self.key.get().await?)?)
+    }
+
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::missing_errors_doc)]
+    pub async fn decrypt(&self, s: &str) -> FsResult<SecretString> {
+        Ok(crypto::decrypt(s, self.cipher, self.key.get().await?)?)
     }
 }
 
