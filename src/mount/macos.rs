@@ -8,7 +8,7 @@ use std::task::{Context, Poll};
 use tracing::{error, warn};
 
 use crate::crypto::Cipher;
-use crate::encryptedfs::{FsResult, PasswordProvider};
+use crate::encryptedfs::{FsError, FsResult, PasswordProvider};
 use crate::mount;
 use crate::mount::{MountHandleInner, MountPoint};
 
@@ -49,9 +49,9 @@ impl MountPoint for MountPointImpl {
     }
 
     async fn mount(mut self) -> FsResult<mount::MountHandle> {
-        Ok(mount::MountHandle {
-            inner: MountHandleInnerImpl {},
-        })
+        Err(FsError::Other(
+            "he he, not yet ready for this platform, but soon my friend, soon :)",
+        ))
     }
 }
 
