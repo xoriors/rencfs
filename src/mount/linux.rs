@@ -1,15 +1,19 @@
-use async_trait::async_trait;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
+use std::future::Future;
+use std::io;
 use std::io::{BufRead, BufReader};
 use std::iter::Skip;
 use std::num::NonZeroU32;
 use std::os::raw::c_int;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use bytes::Bytes;
 use fuse3::raw::prelude::{
     DirectoryEntry, DirectoryEntryPlus, ReplyAttr, ReplyCopyFileRange, ReplyCreated, ReplyData,
@@ -17,8 +21,8 @@ use fuse3::raw::prelude::{
 };
 use fuse3::raw::{Filesystem, MountHandle, Request, Session};
 use fuse3::{Errno, Inode, MountOptions, Result, SetAttr, Timestamp};
-use futures_util::stream;
 use futures_util::stream::Iter;
+use futures_util::{stream, FutureExt};
 use libc::{EACCES, EEXIST, EFBIG, EIO, EISDIR, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, error, instrument, trace, warn};
@@ -29,7 +33,8 @@ use crate::encryptedfs::{
     CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult, PasswordProvider,
     SetFileAttr,
 };
-use crate::mount::MountPoint;
+use crate::mount;
+use crate::mount::{MountHandleInner, MountPoint};
 
 const TTL: Duration = Duration::from_secs(1);
 const STATFS: ReplyStatFs = ReplyStatFs {
@@ -1370,7 +1375,8 @@ fn system_time_from_timestamp(t: Timestamp) -> SystemTime {
     UNIX_EPOCH + Duration::new(t.sec as u64, t.nsec)
 }
 
-pub(super) struct Fuse3MountPoint {
+#[allow(clippy::struct_excessive_bools)]
+pub struct MountPointImpl {
     mountpoint: PathBuf,
     data_dir: PathBuf,
     password_provider: Option<Box<dyn PasswordProvider>>,
@@ -1379,10 +1385,11 @@ pub(super) struct Fuse3MountPoint {
     allow_other: bool,
     direct_io: bool,
     suid_support: bool,
-    mount_handle: Option<MountHandle>, // todo: see how we can use it later to umount
 }
-impl Fuse3MountPoint {
-    pub(super) fn new(
+
+#[async_trait]
+impl MountPoint for MountPointImpl {
+    fn new(
         mountpoint: PathBuf,
         data_dir: PathBuf,
         password_provider: Box<dyn PasswordProvider>,
@@ -1401,37 +1408,48 @@ impl Fuse3MountPoint {
             allow_other,
             direct_io,
             suid_support,
-            mount_handle: None,
         }
     }
-}
-#[async_trait]
-impl MountPoint for Fuse3MountPoint {
-    async fn mount(&mut self) -> FsResult<()> {
-        self.mount_handle = Some(
-            run_fuse(
-                self.mountpoint.clone(),
-                self.data_dir.clone(),
-                self.password_provider.take().unwrap(),
-                self.cipher,
-                self.allow_root,
-                self.allow_other,
-                self.direct_io,
-                self.suid_support,
-            )
-            .await?,
-        );
 
-        Ok(())
+    async fn mount(mut self) -> FsResult<mount::MountHandle> {
+        let handle = mount_fuse(
+            self.mountpoint.clone(),
+            self.data_dir.clone(),
+            self.password_provider.take().unwrap(),
+            self.cipher,
+            self.allow_root,
+            self.allow_other,
+            self.direct_io,
+            self.suid_support,
+        )
+        .await?;
+        Ok(mount::MountHandle {
+            inner: MountHandleInnerImpl { inner: handle },
+        })
     }
+}
 
-    async fn umount(&mut self) -> FsResult<()> {
-        todo!()
+pub(in crate::mount) struct MountHandleInnerImpl {
+    inner: MountHandle,
+}
+
+impl Future for MountHandleInnerImpl {
+    type Output = io::Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.inner.poll_unpin(cx)
+    }
+}
+
+#[async_trait]
+impl MountHandleInner for MountHandleInnerImpl {
+    async fn umount(mut self) -> io::Result<()> {
+        self.inner.unmount().await
     }
 }
 
 #[instrument(skip(password_provider))]
-pub async fn run_fuse(
+async fn mount_fuse(
     mountpoint: PathBuf,
     data_dir: PathBuf,
     password_provider: Box<dyn PasswordProvider>,

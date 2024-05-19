@@ -836,7 +836,6 @@ impl CryptoWriterSeek<File> for FileCryptoWriter {}
 
 #[cfg(test)]
 mod test {
-    use blake3::portable::hash1;
     use std::io;
     use std::io::Write;
     use std::io::{Read, Seek};
@@ -932,7 +931,8 @@ mod test {
 mod bench {
     use ::test::{black_box, Bencher};
     use std::io;
-    use std::io::{Error, SeekFrom, Write};
+    use std::io::Write;
+    use std::io::{Error, SeekFrom};
     use std::io::{Read, Seek};
     use std::sync::Arc;
 
@@ -1064,6 +1064,9 @@ mod bench {
     }
 
     impl Seek for RandomReader {
+        #[allow(clippy::cast_possible_wrap)]
+        #[allow(clippy::cast_possible_truncation)]
+        #[allow(clippy::cast_sign_loss)]
         fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
             let new_pos = match pos {
                 SeekFrom::Start(pos) => pos as i64,

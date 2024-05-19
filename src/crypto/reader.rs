@@ -513,17 +513,18 @@ impl CryptoReader for FileCryptoReader {}
 // impl CryptoReader for ChunkedFileCryptoReader {}
 
 mod bench {
-    use crate::crypto;
-    use crate::crypto::Cipher;
-    use rand::RngCore;
-    use secrecy::SecretVec;
     use std::io;
     use std::io::Seek;
     use std::io::Write;
     use std::sync::Arc;
     use test::{black_box, Bencher};
 
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
     use crate::crypto::writer::CryptoWriter;
+    use crate::crypto::Cipher;
 
     #[bench]
     fn bench_reader_10mb_cha_cha20poly1305_file(b: &mut Bencher) {

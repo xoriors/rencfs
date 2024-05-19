@@ -226,11 +226,7 @@ pub fn decrypt_file_name(
 
 #[instrument(skip(password, salt))]
 #[allow(clippy::missing_errors_doc)]
-pub fn derive_key(
-    password: &SecretString,
-    cipher: Cipher,
-    salt: &Vec<u8>,
-) -> Result<SecretVec<u8>> {
+pub fn derive_key(password: &SecretString, cipher: Cipher, salt: &[u8]) -> Result<SecretVec<u8>> {
     let mut dk = vec![];
     let key_len = cipher.key_len();
     dk.resize(key_len, 0);

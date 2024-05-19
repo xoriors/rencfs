@@ -1,7 +1,10 @@
+use std::cell::RefCell;
 use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use std::{env, io, panic, process};
 
 use anyhow::Result;
@@ -19,7 +22,8 @@ use tracing_subscriber::EnvFilter;
 
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
-use rencfs::{is_debug, mount};
+use rencfs::mount::MountPoint;
+use rencfs::{async_util, is_debug, mount};
 
 mod keyring;
 
@@ -159,14 +163,6 @@ fn get_cli_args() -> ArgMatches {
                         .short('u')
                         .action(ArgAction::SetTrue)
                         .help("If we should try to umount the mountpoint before starting the FUSE server. This can be useful when the previous run crashed or was forced kll and the mountpoint is still mounted."),
-                )
-                .arg(
-                    Arg::new("auto_unmount")
-                        .long("auto_unmount")
-                        .short('x')
-                        .default_value("true")
-                        .action(ArgAction::SetTrue)
-                        .help("Automatically unmount on process exit"),
                 )
                 .arg(
                     Arg::new("allow-root")
@@ -336,29 +332,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         });
     }
 
-    let auto_unmount = matches.get_flag("auto_unmount");
-    let mountpoint_kill = mountpoint.clone();
-    // unmount on process kill
-    set_handler(move || {
-        info!("Received signal to exit");
-        let mut status: Option<ExitStatusError> = None;
-        remove_pass();
-        if auto_unmount {
-            info!("Unmounting {}", mountpoint_kill);
-        }
-        umount(mountpoint_kill.as_str())
-            .map_err(|err| {
-                error!(err = %err);
-                status.replace(ExitStatusError::Failure(1));
-            })
-            .ok();
-
-        process::exit(status.map_or(0, |x| match x {
-            ExitStatusError::Failure(status) => status,
-        }));
-    })
-    .unwrap();
-
     #[allow(clippy::items_after_statements)]
     struct PasswordProviderImpl {}
     #[allow(clippy::items_after_statements)]
@@ -380,7 +353,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             }
         }
     }
-
     let mut mount_point = mount::create_mount_point(
         Path::new(&mountpoint).to_path_buf(),
         Path::new(&data_dir).to_path_buf(),
@@ -391,11 +363,62 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         matches.get_flag("direct-io"),
         matches.get_flag("suid"),
     );
-    mount_point.mount().await?;
+    let mount_handle = mount_point.mount().await.map_err(|err| {
+        error!(err = %err);
+        ExitStatusError::Failure(1)
+    })?;
+    let mut mount_handle = Arc::new(Mutex::new(Some(Some(mount_handle))));
+    let mount_handle_clone = mount_handle.clone();
+    // cleanup on process kill
+    set_handler(move || {
+        // can't use tracing methods here as guard cannot be dropper to flush content before we exit
+        eprintln!("Received signal to exit");
+        let mut status: Option<ExitStatusError> = None;
+        remove_pass();
+        eprintln!("Unmounting {}", mountpoint);
+        // create new tokio runtime
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _ = rt
+            .block_on(async {
+                mount_handle_clone
+                    .lock()
+                    .unwrap()
+                    .replace(None)
+                    .unwrap()
+                    .unwrap()
+                    .umount()
+                    .await?;
+                Ok::<(), io::Error>(())
+            })
+            .map_err(|err| {
+                eprintln!("Error: {}", err);
+                status.replace(ExitStatusError::Failure(1));
+                err
+            });
+        eprintln!("Bye!");
+        process::exit(status.map_or(0, |x| match x {
+            ExitStatusError::Failure(status) => status,
+        }));
+    })?;
 
-    remove_pass();
-
-    info!("Bye!");
+    // mount_handle
+    //     .lock()
+    //     .unwrap()
+    //     .as_mut()
+    //     .unwrap()
+    //     .as_mut()
+    //     .unwrap()
+    //     .await?;
+    task::spawn_blocking(|| {
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async {
+            tokio::time::sleep(tokio::time::Duration::from_secs(u64::MAX)).await;
+        })
+    })
+    .await?;
 
     Ok(())
 }
