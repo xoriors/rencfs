@@ -1,5 +1,3 @@
-use crate::mount::MountHandleInner;
-use crate::mount::MountPoint;
 use async_trait::async_trait;
 use std::future::Future;
 use std::io;
