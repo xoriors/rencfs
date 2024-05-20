@@ -1,8 +1,5 @@
-use std::cell::RefCell;
-use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{env, io, panic, process};
@@ -16,14 +13,14 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use tokio::{fs, task};
 use tracing::level_filters::LevelFilter;
-use tracing::{error, info, instrument, warn, Level};
+use tracing::{error, info, warn, Level};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
-use rencfs::{async_util, is_debug, mount};
+use rencfs::{is_debug, mount};
 
 mod keyring;
 
@@ -361,7 +358,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             }
         }
     }
-    let mut mount_point = mount::create_mount_point(
+    let mount_point = mount::create_mount_point(
         Path::new(&mountpoint),
         Path::new(&data_dir),
         Box::new(PasswordProviderImpl {}),
@@ -375,7 +372,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         error!(err = %err);
         ExitStatusError::Failure(1)
     })?;
-    let mut mount_handle = Arc::new(Mutex::new(Some(Some(mount_handle))));
+    let mount_handle = Arc::new(Mutex::new(Some(Some(mount_handle))));
     let mount_handle_clone = mount_handle.clone();
     // cleanup on process kill
     set_handler(move || {
