@@ -1147,208 +1147,203 @@ async fn test_create_structure_and_root() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
-async fn test_create_nod() {
-    run_test(
-        TestSetup {
-            key: "test_create_nod",
-        },
-        async {
-            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+async fn test_create() {
+    run_test(TestSetup { key: "test_create" }, async {
+        let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
+        let mut fs = fs.lock().await;
+        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
 
-            // file in root
-            let test_file = SecretString::from_str("test-file").unwrap();
-            let (fh, attr) = fs
-                .create(
-                    ROOT_INODE,
-                    &test_file,
-                    create_attr(FileType::RegularFile),
-                    true,
-                    false,
-                )
-                .await
-                .unwrap();
-            assert_ne!(fh, 0);
-            assert_ne!(attr.ino, 0);
-            assert!(fs
-                .data_dir
-                .join(INODES_DIR)
-                .join(attr.ino.to_string())
-                .is_file());
-            assert!(fs
-                .data_dir
-                .join(CONTENTS_DIR)
-                .join(attr.ino.to_string())
-                .is_file());
-            assert!(fs
-                .data_dir
-                .join(CONTENTS_DIR)
-                .join(ROOT_INODE_STR)
-                .join(HASH_DIR)
-                .join(crypto::hash_file_name(&test_file))
-                .is_file());
-            assert!(fs.exists(attr.ino));
-            assert_eq!(attr, fs.get_attr(attr.ino).await.unwrap());
-            let mut entries: Vec<DirectoryEntryPlus> = fs
-                .read_dir_plus(ROOT_INODE)
+        // file in root
+        let test_file = SecretString::from_str("test-file").unwrap();
+        let (fh, attr) = fs
+            .create(
+                ROOT_INODE,
+                &test_file,
+                create_attr(FileType::RegularFile),
+                true,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_ne!(fh, 0);
+        assert_ne!(attr.ino, 0);
+        assert!(fs
+            .data_dir
+            .join(INODES_DIR)
+            .join(attr.ino.to_string())
+            .is_file());
+        assert!(fs
+            .data_dir
+            .join(CONTENTS_DIR)
+            .join(attr.ino.to_string())
+            .is_file());
+        assert!(fs
+            .data_dir
+            .join(CONTENTS_DIR)
+            .join(ROOT_INODE_STR)
+            .join(HASH_DIR)
+            .join(crypto::hash_file_name(&test_file))
+            .is_file());
+        assert!(fs.exists(attr.ino));
+        assert_eq!(attr, fs.get_attr(attr.ino).await.unwrap());
+        let mut entries: Vec<DirectoryEntryPlus> = fs
+            .read_dir_plus(ROOT_INODE)
+            .await
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+        assert_eq!(attr, entries[1].attr);
+        assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
+        assert_eq!(
+            attr,
+            fs.find_by_name(ROOT_INODE, &test_file)
                 .await
                 .unwrap()
-                .map(Result::unwrap)
-                .collect();
-            entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
-            assert_eq!(attr, entries[1].attr);
-            assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
-            assert_eq!(
-                attr,
-                fs.find_by_name(ROOT_INODE, &test_file)
-                    .await
-                    .unwrap()
-                    .unwrap()
-            );
+                .unwrap()
+        );
 
-            // directory in root
-            let test_dir = SecretString::from_str("test-dir").unwrap();
-            let (_fh, attr) = fs
-                .create(
-                    ROOT_INODE,
-                    &test_dir,
-                    create_attr(FileType::Directory),
-                    false,
-                    false,
-                )
-                .await
-                .unwrap();
-            assert_ne!(attr.ino, 0);
-            assert!(fs
-                .data_dir
-                .join(INODES_DIR)
-                .join(attr.ino.to_string())
-                .is_file());
-            assert!(fs
-                .data_dir
-                .join(CONTENTS_DIR)
-                .join(attr.ino.to_string())
-                .is_dir());
-            assert!(fs
-                .data_dir
-                .join(CONTENTS_DIR)
-                .join(ROOT_INODE_STR)
-                .join(HASH_DIR)
-                .join(crypto::hash_file_name(&test_dir))
-                .is_file());
-            assert!(fs.exists(attr.ino));
-            assert_eq!(attr, fs.get_attr(attr.ino).await.unwrap());
-            assert!(fs.is_dir(attr.ino));
-            let mut entries: Vec<DirectoryEntryPlus> = fs
-                .read_dir_plus(ROOT_INODE)
+        // directory in root
+        let test_dir = SecretString::from_str("test-dir").unwrap();
+        let (_fh, attr) = fs
+            .create(
+                ROOT_INODE,
+                &test_dir,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_ne!(attr.ino, 0);
+        assert!(fs
+            .data_dir
+            .join(INODES_DIR)
+            .join(attr.ino.to_string())
+            .is_file());
+        assert!(fs
+            .data_dir
+            .join(CONTENTS_DIR)
+            .join(attr.ino.to_string())
+            .is_dir());
+        assert!(fs
+            .data_dir
+            .join(CONTENTS_DIR)
+            .join(ROOT_INODE_STR)
+            .join(HASH_DIR)
+            .join(crypto::hash_file_name(&test_dir))
+            .is_file());
+        assert!(fs.exists(attr.ino));
+        assert_eq!(attr, fs.get_attr(attr.ino).await.unwrap());
+        assert!(fs.is_dir(attr.ino));
+        let mut entries: Vec<DirectoryEntryPlus> = fs
+            .read_dir_plus(ROOT_INODE)
+            .await
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+        assert_eq!(attr, entries[1].attr);
+        let mut entries: Vec<DirectoryEntryPlus> = fs
+            .read_dir_plus(attr.ino)
+            .await
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+        assert_eq!(attr, entries[0].attr);
+        assert_eq!(ROOT_INODE, entries[1].attr.ino);
+        assert!(fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
+        assert_eq!(
+            attr,
+            fs.find_by_name(ROOT_INODE, &test_dir)
                 .await
                 .unwrap()
-                .map(Result::unwrap)
-                .collect();
-            entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
-            assert_eq!(attr, entries[1].attr);
-            let mut entries: Vec<DirectoryEntryPlus> = fs
-                .read_dir_plus(attr.ino)
-                .await
                 .unwrap()
-                .map(Result::unwrap)
-                .collect();
-            entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
-            assert_eq!(attr, entries[0].attr);
-            assert_eq!(ROOT_INODE, entries[1].attr.ino);
-            assert!(fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
-            assert_eq!(
-                attr,
-                fs.find_by_name(ROOT_INODE, &test_dir)
-                    .await
-                    .unwrap()
-                    .unwrap()
-            );
+        );
 
-            // directory in another directory
-            let parent = attr.ino;
-            let test_dir_2 = SecretString::from_str("test-dir-2").unwrap();
-            let (_fh, attr) = fs
-                .create(
-                    parent,
-                    &test_dir_2,
-                    create_attr(FileType::Directory),
-                    false,
-                    false,
-                )
-                .await
-                .unwrap();
-            assert!(fs
-                .data_dir
-                .join(INODES_DIR)
-                .join(attr.ino.to_string())
-                .is_file());
-            assert!(fs
-                .data_dir
-                .join(CONTENTS_DIR)
-                .join(attr.ino.to_string())
-                .is_dir());
-            assert!(fs
-                .data_dir
-                .join(CONTENTS_DIR)
-                .join(parent.to_string())
-                .join(HASH_DIR)
-                .join(crypto::hash_file_name(&test_dir_2))
-                .is_file());
-            assert!(fs.exists(attr.ino));
-            assert_eq!(attr, fs.get_attr(attr.ino).await.unwrap());
-            assert!(fs.is_dir(attr.ino));
-            let mut entries: Vec<DirectoryEntryPlus> = fs
-                .read_dir_plus(parent)
-                .await
-                .unwrap()
-                .map(Result::unwrap)
-                .collect();
-            entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
-            assert_eq!(attr, entries[2].attr);
-            let mut entries: Vec<DirectoryEntryPlus> = fs
-                .read_dir_plus(attr.ino)
-                .await
-                .unwrap()
-                .map(Result::unwrap)
-                .collect();
-            entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
-            assert_eq!(attr, entries[0].attr);
-            assert_eq!(parent, entries[1].attr.ino);
-            assert!(fs.exists_by_name(parent, &test_dir_2).unwrap());
-            assert_eq!(
-                attr,
-                fs.find_by_name(parent, &test_dir_2).await.unwrap().unwrap()
-            );
+        // directory in another directory
+        let parent = attr.ino;
+        let test_dir_2 = SecretString::from_str("test-dir-2").unwrap();
+        let (_fh, attr) = fs
+            .create(
+                parent,
+                &test_dir_2,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(fs
+            .data_dir
+            .join(INODES_DIR)
+            .join(attr.ino.to_string())
+            .is_file());
+        assert!(fs
+            .data_dir
+            .join(CONTENTS_DIR)
+            .join(attr.ino.to_string())
+            .is_dir());
+        assert!(fs
+            .data_dir
+            .join(CONTENTS_DIR)
+            .join(parent.to_string())
+            .join(HASH_DIR)
+            .join(crypto::hash_file_name(&test_dir_2))
+            .is_file());
+        assert!(fs.exists(attr.ino));
+        assert_eq!(attr, fs.get_attr(attr.ino).await.unwrap());
+        assert!(fs.is_dir(attr.ino));
+        let mut entries: Vec<DirectoryEntryPlus> = fs
+            .read_dir_plus(parent)
+            .await
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+        assert_eq!(attr, entries[2].attr);
+        let mut entries: Vec<DirectoryEntryPlus> = fs
+            .read_dir_plus(attr.ino)
+            .await
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+        assert_eq!(attr, entries[0].attr);
+        assert_eq!(parent, entries[1].attr.ino);
+        assert!(fs.exists_by_name(parent, &test_dir_2).unwrap());
+        assert_eq!(
+            attr,
+            fs.find_by_name(parent, &test_dir_2).await.unwrap().unwrap()
+        );
 
-            // existing file
-            assert!(matches!(
-                fs.create(
-                    ROOT_INODE,
-                    &test_file,
-                    create_attr(FileType::RegularFile),
-                    false,
-                    false
-                )
-                .await,
-                Err(FsError::AlreadyExists)
-            ));
+        // existing file
+        assert!(matches!(
+            fs.create(
+                ROOT_INODE,
+                &test_file,
+                create_attr(FileType::RegularFile),
+                false,
+                false
+            )
+            .await,
+            Err(FsError::AlreadyExists)
+        ));
 
-            // existing directory
-            assert!(matches!(
-                fs.create(
-                    ROOT_INODE,
-                    &test_dir,
-                    create_attr(FileType::Directory),
-                    false,
-                    false
-                )
-                .await,
-                Err(FsError::AlreadyExists)
-            ));
-        },
-    )
+        // existing directory
+        assert!(matches!(
+            fs.create(
+                ROOT_INODE,
+                &test_dir,
+                create_attr(FileType::Directory),
+                false,
+                false
+            )
+            .await,
+            Err(FsError::AlreadyExists)
+        ));
+    })
     .await
 }
 

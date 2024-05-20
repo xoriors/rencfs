@@ -9,8 +9,8 @@ use crate::test_common::{create_attr, get_fs};
 use crate::{async_util, test_common};
 
 #[bench]
-fn bench_create_nod(b: &mut Bencher) {
-    test_common::bench("bench_create_nod", 1, async {
+fn bench_create(b: &mut Bencher) {
+    test_common::bench("bench_create", 1, async {
         let fs = get_fs().await;
 
         let mut i = 1;
