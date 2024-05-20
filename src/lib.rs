@@ -115,7 +115,7 @@
 //!     let mut fs = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl{}), cipher ).await?;
 //!
 //!     let  file1 = SecretString::from_str("file1").unwrap();
-//!     let (fh, attr) = fs.mk(ROOT_INODE, &file1, file_attr(), false, true).await?;
+//!     let (fh, attr) = fs.create(ROOT_INODE, &file1, file_attr(), false, true).await?;
 //!     let data = "Hello, world!";
 //!     write_all_string_to_fs( &fs, attr.ino, 0,data, fh).await?;
 //!     fs.flush(fh).await?;

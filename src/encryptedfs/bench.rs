@@ -20,7 +20,7 @@ fn bench_create_nod(b: &mut Bencher) {
                 async_util::call_async(async {
                     let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
                     let _ = fs
-                        .mk(
+                        .create(
                             ROOT_INODE,
                             &test_file,
                             create_attr(FileType::RegularFile),
@@ -71,7 +71,7 @@ fn bench_find_by_name(b: &mut Bencher) {
         for i in 0..100 {
             let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
             let _ = fs
-                .mk(
+                .create(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -86,7 +86,7 @@ fn bench_find_by_name(b: &mut Bencher) {
         b.iter(|| {
             black_box({
                 async_util::call_async(async {
-                    let _ = fs.get(ROOT_INODE).await.unwrap();
+                    let _ = fs.get_attr(ROOT_INODE).await.unwrap();
                     let _ = fs
                         .find_by_name(
                             ROOT_INODE,
@@ -112,7 +112,7 @@ fn bench_read_dir(b: &mut Bencher) {
         for i in 0..100 {
             let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
             let _ = fs
-                .mk(
+                .create(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -126,7 +126,7 @@ fn bench_read_dir(b: &mut Bencher) {
         b.iter(|| {
             black_box({
                 async_util::call_async(async {
-                    let iter = fs.ls(ROOT_INODE).await.unwrap();
+                    let iter = fs.read_dir(ROOT_INODE).await.unwrap();
                     let vec: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
                     black_box(vec);
                 });
@@ -143,7 +143,7 @@ fn bench_read_dir_plus(b: &mut Bencher) {
         for i in 0..100 {
             let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
             let _ = fs
-                .mk(
+                .create(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -157,7 +157,7 @@ fn bench_read_dir_plus(b: &mut Bencher) {
         b.iter(|| {
             black_box({
                 async_util::call_async(async {
-                    let iter = fs.ls_plus(ROOT_INODE).await.unwrap();
+                    let iter = fs.read_dir_plus(ROOT_INODE).await.unwrap();
                     let vec: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
                     black_box(vec);
                 });

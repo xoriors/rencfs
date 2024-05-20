@@ -650,7 +650,7 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
     #[allow(clippy::too_many_lines)]
-    pub async fn mk(
+    pub async fn create(
         &self,
         parent: u64,
         name: &SecretString,
@@ -834,7 +834,7 @@ impl EncryptedFs {
 
     /// Count children of a directory. This **EXCLUDES** "." and "..".
     #[allow(clippy::missing_errors_doc)]
-    pub fn count(&self, ino: u64) -> FsResult<usize> {
+    pub fn len(&self, ino: u64) -> FsResult<usize> {
         if !self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
@@ -852,7 +852,7 @@ impl EncryptedFs {
     /// Delete a directory
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
-    pub async fn rmdir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
+    pub async fn remove_dir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
@@ -869,7 +869,7 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
         // check if it's empty
-        if self.count(attr.ino)? > 0 {
+        if self.len(attr.ino)? > 0 {
             return Err(FsError::NotEmpty);
         }
         let self_clone = self
@@ -924,7 +924,7 @@ impl EncryptedFs {
     /// Delete a file
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
-    pub async fn rmfile(&self, parent: u64, name: &SecretString) -> FsResult<()> {
+    pub async fn remove_file(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
@@ -1003,7 +1003,7 @@ impl EncryptedFs {
     }
 
     #[allow(clippy::missing_errors_doc)]
-    pub async fn ls(&self, ino: u64) -> FsResult<DirectoryEntryIterator> {
+    pub async fn read_dir(&self, ino: u64) -> FsResult<DirectoryEntryIterator> {
         let ls_dir = self.contents_path(ino).join(LS_DIR);
         if !ls_dir.is_dir() {
             return Err(FsError::InvalidInodeType);
@@ -1013,8 +1013,8 @@ impl EncryptedFs {
         Ok(self.create_directory_entry_iterator(iter).await)
     }
 
-    /// Like [`EncryptedFs::ls`] but with [`FileAttr`] so we don't need to query again for those.
-    pub async fn ls_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
+    /// Like [`EncryptedFs::read_dir`] but with [`FileAttr`] so we don't need to query again for those.
+    pub async fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
         let ls_dir = self.contents_path(ino).join(LS_DIR);
         if !ls_dir.is_dir() {
             return Err(FsError::InvalidInodeType);
@@ -1218,7 +1218,7 @@ impl EncryptedFs {
 
     /// Get metadata
     #[allow(clippy::missing_errors_doc)]
-    pub async fn get(&self, ino: u64) -> FsResult<FileAttr> {
+    pub async fn get_attr(&self, ino: u64) -> FsResult<FileAttr> {
         let mut attr = self.get_inode_from_cache_or_storage(ino).await?;
 
         // merge time info with any open read handles
@@ -1259,7 +1259,7 @@ impl EncryptedFs {
             .get_or_insert_with(ino, || Mutex::new(false));
         let _guard_serialize_update = lock_serialize_update.lock().await;
 
-        let mut attr = self.get(ino).await?;
+        let mut attr = self.get_attr(ino).await?;
         merge_attr(&mut attr, &set_attr);
 
         self.write_inode_to_storage(&attr).await?;
@@ -1615,7 +1615,7 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::too_many_lines)]
     pub async fn truncate(&self, ino: u64, size: u64) -> FsResult<()> {
-        let attr = self.get(ino).await?;
+        let attr = self.get_attr(ino).await?;
         if matches!(attr.kind, FileType::Directory) {
             return Err(FsError::InvalidInodeType);
         }
@@ -1731,7 +1731,7 @@ impl EncryptedFs {
 
         // Only overwrite an existing directory if it's empty
         if let Ok(Some(new_attr)) = self.find_by_name(new_parent, new_name).await {
-            if new_attr.kind == FileType::Directory && self.count(new_attr.ino)? > 0 {
+            if new_attr.kind == FileType::Directory && self.len(new_attr.ino)? > 0 {
                 return Err(FsError::NotEmpty);
             }
         }
@@ -1757,11 +1757,11 @@ impl EncryptedFs {
         )
         .await?;
 
-        let mut parent_attr = self.get(parent).await?;
+        let mut parent_attr = self.get_attr(parent).await?;
         parent_attr.mtime = SystemTime::now();
         parent_attr.ctime = SystemTime::now();
 
-        let mut new_parent_attr = self.get(new_parent).await?;
+        let mut new_parent_attr = self.get_attr(new_parent).await?;
         new_parent_attr.mtime = SystemTime::now();
         new_parent_attr.ctime = SystemTime::now();
 
@@ -1963,7 +1963,7 @@ impl EncryptedFs {
         );
         match op {
             WriteHandleContextOperation::Create { ino } => {
-                let attr = self.get(ino).await?.into();
+                let attr = self.get_attr(ino).await?.into();
                 let metadata_provider = Box::new(LocalFileCryptoWriterMetadataProvider(
                     (*self.self_weak.lock().unwrap().as_ref().unwrap()).clone(),
                     ino,
