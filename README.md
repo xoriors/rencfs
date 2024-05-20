@@ -106,7 +106,7 @@ decrypting the master key with the old password and re-encrypting it with the ne
 To change the password, you can run the following command
 
 ```bash
-rencfs change-password --data-dir DATA_DIR 
+rencfs passwd --data-dir DATA_DIR 
 ```
 
 `DATA_DIR` where the encrypted data is stored

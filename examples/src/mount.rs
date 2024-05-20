@@ -26,10 +26,11 @@ async fn main() -> Result<()> {
     struct PasswordProviderImpl {}
     impl PasswordProvider for PasswordProviderImpl {
         fn get_password(&self) -> Option<SecretString> {
+            // dummy password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
             Some(SecretString::from_str("pass42").unwrap())
         }
     }
-    let mut mount_point = create_mount_point(
+    let mount_point = create_mount_point(
         Path::new(&mount_path),
         Path::new(&data_path),
         Box::new(PasswordProviderImpl {}),

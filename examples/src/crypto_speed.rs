@@ -1,4 +1,4 @@
-use rand_core::RngCore;
+1use rand_core::RngCore;
 use std::env::args;
 use std::fs::File;
 use std::future::Future;
@@ -37,12 +37,6 @@ async fn main() -> Result<()> {
     stream_speed(&path_in, &path_out, cipher, &key)?;
     println!();
     file_speed(&path_in, &path_out, cipher, key.clone())?;
-    // println!();
-    // let dir_path_out = format!(
-    //     "/tmp/{}.dir.enc",
-    //     Path::new(&path_in).file_name().unwrap().to_str().unwrap()
-    // );
-    // chunks_speed(&path_in, &dir_path_out, cipher, key.clone())?;
 
     Ok(())
 }
@@ -56,21 +50,6 @@ where
     let duration = start.elapsed();
     println!(
         "{label} duration = {:?}, speed MB/s {:.2}",
-        duration,
-        (size as f64 / duration.as_secs_f64()) / 1024.0 / 1024.0
-    );
-    Ok(())
-}
-
-async fn speed_async<F>(f: F, label: &str, size: u64) -> Result<()>
-where
-    F: Future<Output = Result<()>>,
-{
-    let start = Instant::now();
-    f.await?;
-    let duration = start.elapsed();
-    println!(
-        "{label} duration = {:?}, speed MB/s {}",
         duration,
         (size as f64 / duration.as_secs_f64()) / 1024.0 / 1024.0
     );
@@ -134,7 +113,7 @@ fn file_speed(
     test_speed(&mut file_in, &mut *writer, size, f)?;
     file_in.seek(io::SeekFrom::Start(0)).unwrap();
     check_hash(&mut file_in, &mut *f())?;
-    // fs::remove_file(path_out)?;
+    fs::remove_file(path_out)?;
     Ok(())
 }
 

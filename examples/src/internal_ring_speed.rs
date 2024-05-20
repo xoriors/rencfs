@@ -26,7 +26,6 @@ impl NonceSequence for CounterNonceSequence {
 
         let bytes = self.0.to_be_bytes();
         nonce_bytes[8..].copy_from_slice(&bytes);
-        // println!("nonce_bytes = {}", hex::encode(&nonce_bytes));
 
         self.0 += 1; // advance the counter
         Nonce::try_assume_unique_for_key(&nonce_bytes)
@@ -111,8 +110,8 @@ fn main() -> io::Result<()> {
             .seal_in_place_separate_tag(Aad::empty(), &mut data)
             .unwrap();
 
-        out.write(&data).unwrap();
-        out.write(tag.as_ref()).unwrap();
+        let _ = out.write(&data).unwrap();
+        let _ = out.write(tag.as_ref()).unwrap();
     }
     out.flush().unwrap();
     let end = std::time::Instant::now();
@@ -174,7 +173,7 @@ fn main() -> io::Result<()> {
             .unwrap();
         // let dec = opening_key.open_in_place(Aad::empty(), &mut data).unwrap();
 
-        out.write(&dec).unwrap();
+        let _ = out.write(&dec).unwrap();
     }
     out.flush().unwrap();
     let end = std::time::Instant::now();

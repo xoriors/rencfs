@@ -33,6 +33,7 @@ use windows::MountPointImpl;
 #[allow(clippy::module_name_repetitions)]
 #[allow(clippy::struct_excessive_bools)]
 pub trait MountPoint {
+    #[allow(clippy::fn_params_excessive_bools)]
     fn new(
         mountpoint: PathBuf,
         data_dir: PathBuf,
@@ -48,6 +49,7 @@ pub trait MountPoint {
     async fn mount(mut self) -> FsResult<MountHandle>;
 }
 
+#[allow(clippy::module_name_repetitions)]
 pub struct MountHandle {
     inner: MountHandleInnerImpl,
 }
@@ -80,7 +82,7 @@ pub(crate) trait MountHandleInner: Future<Output = io::Result<()>> {
 /// **`suid_support`** if it should allow setting `SUID` and `SGID` when files are created. On `false` it will unset those flags when creating files
 ///
 #[must_use]
-#[allow(clippy::struct_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools)]
 pub fn create_mount_point(
     mountpoint: &Path,
     data_dir: &Path,

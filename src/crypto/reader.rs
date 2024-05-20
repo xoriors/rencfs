@@ -513,6 +513,7 @@ impl CryptoReader for FileCryptoReader {}
 //
 // impl CryptoReader for ChunkedFileCryptoReader {}
 
+#[allow(unused_imports)]
 mod bench {
     use std::io;
     use std::io::Seek;
@@ -540,7 +541,7 @@ mod bench {
         let file = tempfile::tempfile().unwrap();
         let mut writer = crypto::create_writer(file, cipher, key.clone());
         let mut cursor_random = io::Cursor::new(vec![0; len]);
-        crypto::create_rng().fill_bytes(&mut cursor_random.get_mut());
+        crypto::create_rng().fill_bytes(cursor_random.get_mut());
         cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
         io::copy(&mut cursor_random, &mut writer).unwrap();
         writer.flush().unwrap();
@@ -552,7 +553,7 @@ mod bench {
                 file.seek(io::SeekFrom::Start(0)).unwrap();
                 let mut reader = crypto::create_reader(file, cipher, key.clone());
                 io::copy(&mut reader, &mut io::sink()).unwrap();
-            })
+            });
         });
     }
 
@@ -581,7 +582,7 @@ mod bench {
                 file.seek(io::SeekFrom::Start(0)).unwrap();
                 let mut reader = crypto::create_reader(file, cipher, key.clone());
                 io::copy(&mut reader, &mut io::sink()).unwrap();
-            })
+            });
         });
     }
 
@@ -610,7 +611,7 @@ mod bench {
                 cursor.seek(io::SeekFrom::Start(0)).unwrap();
                 let mut reader = crypto::create_reader(cursor, cipher, key.clone());
                 io::copy(&mut reader, &mut io::sink()).unwrap();
-            })
+            });
         });
     }
 
@@ -639,7 +640,7 @@ mod bench {
                 cursor.seek(io::SeekFrom::Start(0)).unwrap();
                 let mut reader = crypto::create_reader(cursor, cipher, key.clone());
                 io::copy(&mut reader, &mut io::sink()).unwrap();
-            })
+            });
         });
     }
 }

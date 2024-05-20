@@ -257,6 +257,7 @@ pub fn encrypt_file_name(
 }
 
 #[allow(clippy::missing_errors_doc)]
+#[must_use]
 pub fn hash_file_name(name: &SecretString) -> String {
     if name.expose_secret() == "$." || name.expose_secret() == "$.." {
         name.expose_secret().clone()

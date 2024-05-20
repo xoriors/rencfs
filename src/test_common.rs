@@ -1,19 +1,21 @@
-use crate::crypto::Cipher;
-use crate::encryptedfs::{CreateFileAttr, EncryptedFs, FileType, PasswordProvider};
-use secrecy::SecretString;
 use std::fs::File;
 use std::future::Future;
 use std::io::Read;
-use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use std::{fs, io};
+
+use secrecy::SecretString;
 use tempfile::NamedTempFile;
 use thread_local::ThreadLocal;
 use tokio::sync::Mutex;
 
-pub(crate) const TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
+use crate::crypto::Cipher;
+use crate::encryptedfs::{CreateFileAttr, EncryptedFs, FileType, PasswordProvider};
+
+#[allow(dead_code)]
+pub static TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
     let tmp = NamedTempFile::new().unwrap().into_temp_path();
     fs::remove_file(tmp.to_str().unwrap()).expect("cannot remove tmp file");
     tmp.parent()
@@ -21,9 +23,11 @@ pub(crate) const TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
         .join("rencfs-test-data")
 });
 
-pub(crate) static SETUP_RESULT: ThreadLocal<Mutex<Option<SetupResult>>> = ThreadLocal::new();
+#[allow(dead_code)]
+pub static SETUP_RESULT: ThreadLocal<Mutex<Option<SetupResult>>> = ThreadLocal::new();
 
-pub(crate) fn create_attr(kind: FileType) -> CreateFileAttr {
+#[allow(dead_code)]
+pub const fn create_attr(kind: FileType) -> CreateFileAttr {
     CreateFileAttr {
         kind,
         perm: 0,
@@ -35,28 +39,32 @@ pub(crate) fn create_attr(kind: FileType) -> CreateFileAttr {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct TestSetup {
-    pub(crate) key: &'static str,
+pub struct TestSetup {
+    #[allow(dead_code)]
+    pub key: &'static str,
 }
 
-pub(crate) struct SetupResult {
-    pub(crate) fs: Option<Arc<EncryptedFs>>,
+pub struct SetupResult {
+    #[allow(dead_code)]
+    pub fs: Option<Arc<EncryptedFs>>,
+    #[allow(dead_code)]
     setup: TestSetup,
 }
 
+#[allow(dead_code)]
+struct PasswordProviderImpl {}
+impl PasswordProvider for PasswordProviderImpl {
+    fn get_password(&self) -> Option<SecretString> {
+        Some(SecretString::from_str("password").unwrap())
+    }
+}
+#[allow(dead_code)]
 async fn setup(setup: TestSetup) -> SetupResult {
-    let path = TESTS_DATA_DIR.join(setup.key).to_path_buf();
+    let path = TESTS_DATA_DIR.join(setup.key);
     let data_dir_str = path.to_str().unwrap();
     let _ = fs::remove_dir_all(data_dir_str);
     let _ = fs::create_dir_all(data_dir_str);
-    println!("data dir {}", data_dir_str);
-
-    struct PasswordProviderImpl {}
-    impl PasswordProvider for PasswordProviderImpl {
-        fn get_password(&self) -> Option<SecretString> {
-            Some(SecretString::from_str("password").unwrap())
-        }
-    }
+    println!("data dir {data_dir_str}");
 
     let fs = EncryptedFs::new(
         Path::new(data_dir_str).to_path_buf(),
@@ -72,40 +80,32 @@ async fn setup(setup: TestSetup) -> SetupResult {
     }
 }
 
+#[allow(dead_code)]
 async fn teardown() -> Result<(), io::Error> {
     let s = SETUP_RESULT.get_or(|| Mutex::new(None));
     let s = s.lock().await;
-    let path = TESTS_DATA_DIR
-        .join(s.as_ref().unwrap().setup.key)
-        .to_path_buf();
+    let path = TESTS_DATA_DIR.join(s.as_ref().unwrap().setup.key);
     let data_dir_str = path.to_str().unwrap();
     fs::remove_dir_all(data_dir_str)?;
 
     Ok(())
 }
 
-pub(crate) async fn run_test<T>(init: TestSetup, t: T)
+#[allow(dead_code)]
+pub async fn run_test<T>(init: TestSetup, t: T)
 where
-    T: std::future::Future, // + std::panic::UnwindSafe
+    T: Future + Send + Sync,
 {
     {
         let s = SETUP_RESULT.get_or(|| Mutex::new(None));
         let mut s = s.lock().await;
-        *s.deref_mut() = Some(setup(init).await);
+        *s = Some(setup(init).await);
     }
-
-    // let res = std::panic::catch_unwind(|| {
-    //     let handle = tokio::runtime::Handle::current();
-    //     handle.block_on(async {
     t.await;
-    // });
-    // });
-
     teardown().await.unwrap();
-
-    // assert!(res.is_ok());
 }
 
+#[allow(dead_code)]
 pub async fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
     let mut buf: Vec<u8> = vec![];
     fs.create_reader(File::open(path).unwrap())
@@ -116,6 +116,7 @@ pub async fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
     String::from_utf8(buf).unwrap()
 }
 
+#[allow(dead_code)]
 pub async fn copy_all_file_range(
     fs: &EncryptedFs,
     src_ino: u64,
@@ -140,13 +141,12 @@ pub async fn copy_all_file_range(
             )
             .await
             .unwrap();
-        if len == 0 && copied < size {
-            panic!("Failed to copy all bytes");
-        }
+        assert!(!(len == 0 && copied < size), "Failed to copy all bytes");
         copied += len;
     }
 }
 
+#[allow(dead_code)]
 pub async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8], handle: u64) {
     let mut read = 0;
     while read < buf.len() {
@@ -154,14 +154,13 @@ pub async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8],
             .read(ino, offset + read as u64, &mut buf[read..], handle)
             .await
             .unwrap();
-        if len == 0 && read < buf.len() {
-            panic!("Failed to read all bytes");
-        }
+        assert!(!(len == 0 && read < buf.len()), "Failed to read all bytes");
         read += len;
     }
 }
 
-pub(crate) fn bench<F: Future>(key: &'static str, worker_threads: usize, f: F) {
+#[allow(dead_code)]
+pub fn bench<F: Future + Send + Sync>(key: &'static str, worker_threads: usize, f: F) {
     block_on(
         async {
             run_test(TestSetup { key }, f).await;
@@ -170,6 +169,7 @@ pub(crate) fn bench<F: Future>(key: &'static str, worker_threads: usize, f: F) {
     );
 }
 
+#[allow(dead_code)]
 pub fn block_on<F: Future>(future: F, worker_threads: usize) -> F::Output {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(worker_threads)
@@ -179,6 +179,7 @@ pub fn block_on<F: Future>(future: F, worker_threads: usize) -> F::Output {
         .block_on(future)
 }
 
+#[allow(dead_code)]
 pub async fn get_fs() -> Arc<EncryptedFs> {
     // todo: see if we can simplify how we keep in SETUP_RESULT
     let fs = SETUP_RESULT.get_or(|| Mutex::new(None));

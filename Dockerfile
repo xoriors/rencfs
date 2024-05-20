@@ -21,6 +21,7 @@ RUN . ~/.cargo/env && rustup default nightly && rustup update
 # Build our actual code
 COPY Cargo.toml Cargo.lock /usr/src/rencfs/
 COPY src /usr/src/rencfs/src
+COPY examples /usr/src/rencfs/examples
 RUN . ~/.cargo/env &&  \
     cd /usr/src/rencfs/ &&  \
     cargo build --target x86_64-unknown-linux-musl --release

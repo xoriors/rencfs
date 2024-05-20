@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::{env, io, panic, process};
 
 use anyhow::Result;
@@ -11,6 +11,7 @@ use rpassword::read_password;
 use secrecy::{ExposeSecret, SecretString};
 use strum::IntoEnumIterator;
 use thiserror::Error;
+use tokio::sync::Mutex;
 use tokio::{fs, task};
 use tracing::level_filters::LevelFilter;
 use tracing::{error, info, warn, Level};
@@ -314,12 +315,10 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     }
     // save password in keyring
     info!("Save password in keyring");
-    if keyring::save(&password, "password")
-        .map_err(|err| {
-            warn!(err = %err);
-        })
-        .is_err()
-    {
+    let res = keyring::save(&password, "password").map_err(|err| {
+        warn!(err = %err);
+    });
+    if res.is_err() {
         // maybe we don't have security manager, keep it in mem
         unsafe {
             warn!("Cannot save password in keyring, keep it in memory");
@@ -342,7 +341,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             unsafe {
                 if PASS.is_some() {
                     info!("Get password from memory");
-                    PASS.as_ref().map(|v| v.clone())
+                    PASS.clone()
                 } else {
                     info!("Get password from keyring");
                     keyring::get("password")
@@ -387,7 +386,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             .block_on(async {
                 mount_handle_clone
                     .lock()
-                    .unwrap()
+                    .await
                     .replace(None)
                     .unwrap()
                     .unwrap()

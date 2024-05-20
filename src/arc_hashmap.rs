@@ -92,3 +92,24 @@ impl<K: Eq + Hash, V> ArcHashMap<K, V> {
         self.map.read().expect("cannot obtain lock").len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_arc_hashmap() {
+        let m = ArcHashMap::default();
+        {
+            let v = m.insert(1, 2);
+            assert_eq!(*v, 2);
+            assert_eq!(m.len(), 1);
+            m.insert(2, 3);
+            assert_eq!(m.len(), 1);
+            let v = m.get_or_insert_with(3, || 4);
+            assert_eq!(*v, 4);
+            assert_eq!(m.len(), 2);
+        }
+        assert_eq!(m.len(), 0);
+    }
+}

@@ -43,7 +43,9 @@ pub struct RingCryptoWriter<W: Write + Send + Sync> {
     buf: BufMut,
     nonce_sequence: Arc<Mutex<RandomNonceSequence>>,
     block_index: u64,
+    #[allow(dead_code)]
     algorithm: &'static Algorithm,
+    #[allow(dead_code)]
     key: Arc<SecretVec<u8>>,
 }
 
@@ -930,6 +932,7 @@ mod test {
     }
 }
 
+#[allow(unused_imports)]
 mod bench {
     use ::test::{black_box, Bencher};
     use std::io;
@@ -1037,12 +1040,14 @@ mod bench {
         });
     }
 
+    #[allow(dead_code)]
     struct RandomReader {
         buf: Arc<Vec<u8>>,
         pos: usize,
     }
 
     impl RandomReader {
+        #[allow(dead_code)]
         pub fn new(len: usize) -> Self {
             let mut buf = vec![0; len];
             crypto::create_rng().fill_bytes(&mut buf);

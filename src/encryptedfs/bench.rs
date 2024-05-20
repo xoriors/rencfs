@@ -1,11 +1,18 @@
+#[allow(unused_imports)]
 use std::str::FromStr;
+#[allow(unused_imports)]
 use test::{black_box, Bencher};
 
+#[allow(unused_imports)]
 use rand::Rng;
+#[allow(unused_imports)]
 use secrecy::SecretString;
 
+#[allow(unused_imports)]
 use crate::encryptedfs::{DirectoryEntry, DirectoryEntryPlus, FileType, ROOT_INODE};
+#[allow(unused_imports)]
 use crate::test_common::{create_attr, get_fs};
+#[allow(unused_imports)]
 use crate::{async_util, test_common};
 
 #[bench]

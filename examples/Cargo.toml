@@ -1,8 +1,14 @@
 [package]
 name = "examples"
+description = "Examples for rencfs"
 version = "0.1.0"
 edition = "2021"
 authors = ["Radu Marias <radumarias@gmail.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/radumarias/rencfs"
+keywords = ["filesystem", "fuse", "encryption", "system", "security"]
+readme = "../README.md"
+categories = ["cryptography", "filesystem"]
 
 [[bin]]
 name = "change_password"
@@ -13,16 +19,12 @@ name = "change_password_cli"
 path = "src/change_password_cli.rs"
 
 [[bin]]
-name = "crypto_check"
-path = "src/crypto_check.rs"
+name = "internal_crypto_debug"
+path = "internal_crypto_debug.rs"
 
 [[bin]]
 name = "crypto_write_read"
 path = "src/crypto_write_read.rs"
-
-[[bin]]
-name = "internal_arc_hashmap"
-path = "src/internal_arc_hashmap.rs"
 
 [[bin]]
 name = "internal_ring"
