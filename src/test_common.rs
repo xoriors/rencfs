@@ -1,6 +1,7 @@
 use crate::crypto::Cipher;
 use crate::encryptedfs::{CreateFileAttr, EncryptedFs, FileType, PasswordProvider};
 use secrecy::SecretString;
+use std::fs::File;
 use std::future::Future;
 use std::io::Read;
 use std::ops::DerefMut;
@@ -107,7 +108,7 @@ where
 
 pub async fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
     let mut buf: Vec<u8> = vec![];
-    fs.create_file_reader(&path, None)
+    fs.create_reader(File::open(path).unwrap())
         .await
         .unwrap()
         .read_to_end(&mut buf)

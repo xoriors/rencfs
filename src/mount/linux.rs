@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::iter::Skip;
 use std::num::NonZeroU32;
 use std::os::raw::c_int;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -185,7 +185,7 @@ impl EncryptedFsFuse3 {
         read: bool,
         write: bool,
     ) -> std::result::Result<(u64, FileAttr), c_int> {
-        let parent_attr = match self.get_fs().get_inode(parent).await {
+        let parent_attr = match self.get_fs().get(parent).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(ENOENT);
@@ -220,7 +220,7 @@ impl EncryptedFsFuse3 {
 
         let (fh, attr) = self
             .get_fs()
-            .create_nod(
+            .mk(
                 parent,
                 &SecretString::from_str(name.to_str().unwrap()).unwrap(),
                 attr,
@@ -303,7 +303,7 @@ impl Filesystem for EncryptedFsFuse3 {
         //     return Err(ENAMETOOLONG.into());
         // }
 
-        match self.get_fs().get_inode(parent).await {
+        match self.get_fs().get(parent).await {
             Err(err) => {
                 error!(parent, err = %err, "not found");
                 return Err(ENOENT.into());
@@ -362,7 +362,7 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyAttr> {
         trace!("");
 
-        match self.get_fs().get_inode(inode).await {
+        match self.get_fs().get(inode).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(ENOENT.into());
@@ -386,7 +386,7 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
         debug!("{set_attr:#?}");
 
-        let attr = self.get_fs().get_inode(inode).await.map_err(|err| {
+        let attr = self.get_fs().get(inode).await.map_err(|err| {
             error!(err = %err);
             Errno::from(ENOENT)
         })?;
@@ -408,7 +408,7 @@ impl Filesystem for EncryptedFsFuse3 {
             }
             set_attr2 = set_attr2.with_atime(SystemTime::now());
             self.get_fs()
-                .update_inode(inode, set_attr2)
+                .set_attr(inode, set_attr2)
                 .await
                 .map_err(|err| {
                     error!(err = %err);
@@ -418,7 +418,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 ttl: TTL,
                 attr: self
                     .get_fs()
-                    .get_inode(inode)
+                    .get(inode)
                     .await
                     .map_err(|_err| Errno::from(ENOENT))?
                     .into(),
@@ -469,7 +469,7 @@ impl Filesystem for EncryptedFsFuse3 {
             }
             set_attr2 = set_attr2.with_atime(SystemTime::now());
             self.get_fs()
-                .update_inode(inode, set_attr2)
+                .set_attr(inode, set_attr2)
                 .await
                 .map_err(|err| {
                     error!(err = %err);
@@ -479,7 +479,7 @@ impl Filesystem for EncryptedFsFuse3 {
                 ttl: TTL,
                 attr: self
                     .get_fs()
-                    .get_inode(inode)
+                    .get(inode)
                     .await
                     .map_err(|_err| Errno::from(ENOENT))?
                     .into(),
@@ -526,7 +526,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         self.get_fs()
-            .update_inode(inode, set_attr2)
+            .set_attr(inode, set_attr2)
             .await
             .map_err(|err| {
                 error!(err = %err);
@@ -537,7 +537,7 @@ impl Filesystem for EncryptedFsFuse3 {
             ttl: TTL,
             attr: self
                 .get_fs()
-                .get_inode(inode)
+                .get(inode)
                 .await
                 .map_err(|_err| Errno::from(ENOENT))?
                 .into(),
@@ -594,7 +594,7 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
         debug!("mode={mode:o}");
 
-        let parent_attr = match self.get_fs().get_inode(parent).await {
+        let parent_attr = match self.get_fs().get(parent).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(ENOENT.into());
@@ -630,7 +630,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         let (_, attr) = self
             .get_fs()
-            .create_nod(
+            .mk(
                 parent,
                 &SecretString::from_str(name.to_str().unwrap()).unwrap(),
                 attr,
@@ -653,7 +653,7 @@ impl Filesystem for EncryptedFsFuse3 {
     async fn unlink(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         trace!("");
 
-        let parent_attr = match self.get_fs().get_inode(parent).await {
+        let parent_attr = match self.get_fs().get(parent).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(ENOENT.into());
@@ -701,7 +701,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         if let Err(err) = self
             .get_fs()
-            .delete_file(
+            .rmfile(
                 parent,
                 &SecretString::from_str(name.to_str().unwrap()).unwrap(),
             )
@@ -718,7 +718,7 @@ impl Filesystem for EncryptedFsFuse3 {
     async fn rmdir(&self, req: Request, parent: Inode, name: &OsStr) -> Result<()> {
         trace!("");
 
-        let Ok(parent_attr) = self.get_fs().get_inode(parent).await else {
+        let Ok(parent_attr) = self.get_fs().get(parent).await else {
             error!(parent, "not found");
             return Err(ENOENT.into());
         };
@@ -763,7 +763,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         if let Err(err) = self
             .get_fs()
-            .delete_dir(
+            .rmdir(
                 parent,
                 &SecretString::from_str(name.to_str().unwrap()).unwrap(),
             )
@@ -806,7 +806,7 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(ENOENT.into());
         };
 
-        let Ok(parent_attr) = self.get_fs().get_inode(parent).await else {
+        let Ok(parent_attr) = self.get_fs().get(parent).await else {
             error!(parent, "parent not found");
             return Err(ENOENT.into());
         };
@@ -832,7 +832,7 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(EACCES.into());
         }
 
-        let Ok(new_parent_attr) = self.get_fs().get_inode(new_parent).await else {
+        let Ok(new_parent_attr) = self.get_fs().get(new_parent).await else {
             error!(new_parent, "not found");
             return Err(ENOENT.into());
         };
@@ -920,7 +920,7 @@ impl Filesystem for EncryptedFsFuse3 {
         let truncate = flags & libc::O_TRUNC as u32 != 0;
         // let _append = flags & libc::O_APPEND as u32 != 0;
 
-        let attr = self.get_fs().get_inode(inode).await.map_err(|err| {
+        let attr = self.get_fs().get(inode).await.map_err(|err| {
             error!(err = %err);
             EIO
         })?;
@@ -1041,7 +1041,7 @@ impl Filesystem for EncryptedFsFuse3 {
         }
 
         if is_write_handle.await {
-            let attr = fs.get_inode(inode).await.map_err(|err| {
+            let attr = fs.get(inode).await.map_err(|err| {
                 error!(err = %err);
                 Errno::from(ENOENT)
             })?;
@@ -1050,7 +1050,7 @@ impl Filesystem for EncryptedFsFuse3 {
             // XXX: In theory we should only need to do this when WRITE_KILL_PRIV is set for 7.31+
             // However, xfstests fail in that case
             set_attr = set_attr.with_perm(clear_suid_sgid(attr.perm));
-            fs.update_inode(inode, set_attr).await.map_err(|err| {
+            fs.set_attr(inode, set_attr).await.map_err(|err| {
                 error!(err = %err, "replace attr");
                 Errno::from(EIO)
             })?;
@@ -1092,7 +1092,7 @@ impl Filesystem for EncryptedFsFuse3 {
             }
         };
 
-        let attr = match self.get_fs().get_inode(inode).await {
+        let attr = match self.get_fs().get(inode).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(ENOENT.into());
@@ -1124,7 +1124,7 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
 
         #[allow(clippy::cast_sign_loss)]
-        let iter = match self.get_fs().read_dir(inode, offset as u64).await {
+        let iter = match self.get_fs().ls(inode).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());
@@ -1136,7 +1136,9 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(ReplyDirectory {
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_sign_loss)]
-            entries: stream::iter(iter.skip(offset as usize)),
+            // entries: stream::iter(iter.skip(offset as usize)),
+            // todo: see https://github.com/users/radumarias/projects/1/views/2?pane=issue&itemId=63083915
+            entries: stream::iter(iter.skip(0)),
         })
     }
 
@@ -1151,7 +1153,7 @@ impl Filesystem for EncryptedFsFuse3 {
     async fn access(&self, req: Request, inode: u64, mask: u32) -> Result<()> {
         trace!("");
 
-        self.get_fs().get_inode(inode).await.map_or_else(
+        self.get_fs().get(inode).await.map_or_else(
             |_| Err(ENOENT.into()),
             |attr| {
                 #[allow(clippy::cast_possible_wrap)]
@@ -1216,7 +1218,7 @@ impl Filesystem for EncryptedFsFuse3 {
         trace!("");
 
         #[allow(clippy::cast_sign_loss)]
-        let iter = match self.get_fs().read_dir_plus(parent, offset).await {
+        let iter = match self.get_fs().ls_plus(parent).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());
@@ -1227,7 +1229,9 @@ impl Filesystem for EncryptedFsFuse3 {
 
         Ok(ReplyDirectoryPlus {
             #[allow(clippy::cast_possible_truncation)]
-            entries: stream::iter(iter.skip(offset as usize)),
+            // entries: stream::iter(iter.skip(offset as usize)),
+            // todo: see https://github.com/users/radumarias/projects/1/views/2?pane=issue&itemId=63083915
+            entries: stream::iter(iter.skip(0)),
         })
     }
 
@@ -1461,7 +1465,7 @@ async fn mount_fuse(
 ) -> FsResult<MountHandle> {
     let mut mount_options = &mut MountOptions::default();
     {
-        #[cfg(any(target_os = "unix", target_os = "linux"))]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         unsafe {
             mount_options = mount_options.uid(libc::getuid()).gid(libc::getgid());
         }

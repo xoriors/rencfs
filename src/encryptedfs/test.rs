@@ -1,29 +1,18 @@
-use crate::encryptedfs::HASH_DIR;
-use crate::encryptedfs::LS_DIR;
-use std::fs::File;
-use std::future::Future;
-use std::ops::DerefMut;
-use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::string::ToString;
-use std::sync::{Arc, LazyLock};
-use std::{fs, io};
 
-use bincode::deserialize_from;
 use secrecy::{ExposeSecret, SecretString};
-use tempfile::NamedTempFile;
-use thread_local::ThreadLocal;
 use tokio::sync::Mutex;
 use tracing_test::traced_test;
 
 use crate::encryptedfs::write_all_bytes_to_fs;
+use crate::encryptedfs::HASH_DIR;
 use crate::encryptedfs::INODES_DIR;
 use crate::encryptedfs::KEY_ENC_FILENAME;
 use crate::encryptedfs::KEY_SALT_FILENAME;
 use crate::encryptedfs::SECURITY_DIR;
 use crate::encryptedfs::{
-    Cipher, CreateFileAttr, DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType, FsError,
-    FsResult, PasswordProvider, CONTENTS_DIR, ROOT_INODE,
+    DirectoryEntry, DirectoryEntryPlus, FileType, FsError, FsResult, CONTENTS_DIR, ROOT_INODE,
 };
 use crate::test_common::run_test;
 use crate::test_common::TestSetup;
@@ -37,13 +26,11 @@ static ROOT_INODE_STR: &str = "1";
 #[traced_test]
 async fn test_write() {
     run_test(TestSetup { key: "test_write" }, async {
-        let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-        let mut fs = fs.lock().await;
-        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+        let fs = get_fs().await;
 
         let test_file = SecretString::from_str("test-file").unwrap();
         let (fh, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &test_file,
                 create_attr(FileType::RegularFile),
@@ -66,7 +53,7 @@ async fn test_write() {
             )
             .await
         );
-        let attr = fs.get_inode(attr.ino).await.unwrap();
+        let attr = fs.get(attr.ino).await.unwrap();
         assert_eq!(data.len() as u64, attr.size);
 
         // offset greater than current position
@@ -106,7 +93,7 @@ async fn test_write() {
         // offset before current position, several blocks
         let test_file_2 = SecretString::from_str("test-file-2").unwrap();
         let (fh, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &test_file_2,
                 create_attr(FileType::RegularFile),
@@ -142,7 +129,7 @@ async fn test_write() {
         // the first write to offset to end of the file
         let test_file_3 = SecretString::from_str("test-file-3").unwrap();
         let (fh, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &test_file_3,
                 create_attr(FileType::RegularFile),
@@ -182,7 +169,7 @@ async fn test_write() {
         ));
         let test_dir = SecretString::from_str("test-dir").unwrap();
         let (fh, dir_attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &test_dir,
                 create_attr(FileType::Directory),
@@ -203,14 +190,12 @@ async fn test_write() {
 #[traced_test]
 async fn test_read() {
     run_test(TestSetup { key: "test_read" }, async {
-        let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-        let mut fs = fs.lock().await;
-        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+        let fs = get_fs().await;
 
         let test_test_file = SecretString::from_str("test-file").unwrap();
         let test_file = test_test_file;
         let (fh, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &test_file,
                 create_attr(FileType::RegularFile),
@@ -227,7 +212,7 @@ async fn test_read() {
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
         let fh = fs.open(attr.ino, true, false).await.unwrap();
-        test_common::read_exact(fs, attr.ino, 0, &mut buf, fh).await;
+        test_common::read_exact(&fs, attr.ino, 0, &mut buf, fh).await;
         assert_eq!(data, &buf);
 
         // larger buffer
@@ -244,7 +229,7 @@ async fn test_read() {
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
         let fh = fs.open(attr.ino, true, false).await.unwrap();
-        test_common::read_exact(fs, attr.ino, 5, &mut buf, fh).await;
+        test_common::read_exact(&fs, attr.ino, 5, &mut buf, fh).await;
         assert_eq!(b"37", &buf);
 
         // offset after file end
@@ -255,7 +240,7 @@ async fn test_read() {
         // if it picks up new value after a write after current read position
         let test_file_2 = SecretString::from_str("test-file-2").unwrap();
         let (fh, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &test_file_2,
                 create_attr(FileType::RegularFile),
@@ -271,7 +256,7 @@ async fn test_read() {
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
         let fh = fs.open(attr.ino, true, false).await.unwrap();
-        test_common::read_exact(fs, attr.ino, 0, &mut [0_u8; 1], fh).await;
+        test_common::read_exact(&fs, attr.ino, 0, &mut [0_u8; 1], fh).await;
         let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
         let new_data = "37";
         write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
@@ -280,13 +265,13 @@ async fn test_read() {
         fs.flush(fh_2).await.unwrap();
         fs.release(fh_2).await.unwrap();
         let mut buf = [0_u8; 2];
-        test_common::read_exact(fs, attr.ino, 5, &mut buf, fh).await;
+        test_common::read_exact(&fs, attr.ino, 5, &mut buf, fh).await;
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
         // if it picks up new value after a write before current read position
         let test_file_3 = SecretString::from_str("test-file-3").unwrap();
         let (fh, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &test_file_3,
                 create_attr(FileType::RegularFile),
@@ -302,7 +287,7 @@ async fn test_read() {
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
         let fh = fs.open(attr.ino, true, false).await.unwrap();
-        test_common::read_exact(fs, attr.ino, 8, &mut [0_u8; 1], fh).await;
+        test_common::read_exact(&fs, attr.ino, 8, &mut [0_u8; 1], fh).await;
         let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
         let new_data = "37";
         write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
@@ -311,13 +296,13 @@ async fn test_read() {
         fs.flush(fh_2).await.unwrap();
         fs.release(fh_2).await.unwrap();
         let mut buf = [0_u8; 2];
-        test_common::read_exact(fs, attr.ino, 5, &mut buf, fh).await;
+        test_common::read_exact(&fs, attr.ino, 5, &mut buf, fh).await;
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
         // if it continues to read correctly after a write before current read position
         let test_file_4 = SecretString::from_str("test-file-4").unwrap();
         let (fh, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &test_file_4,
                 create_attr(FileType::RegularFile),
@@ -333,7 +318,7 @@ async fn test_read() {
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
         let fh = fs.open(attr.ino, true, false).await.unwrap();
-        test_common::read_exact(fs, attr.ino, 7, &mut [0_u8; 1], fh).await;
+        test_common::read_exact(&fs, attr.ino, 7, &mut [0_u8; 1], fh).await;
         let fh_2 = fs.open(attr.ino, false, true).await.unwrap();
         let new_data = "37";
         write_all_bytes_to_fs(&fs, attr.ino, 5, new_data.as_bytes(), fh_2)
@@ -342,7 +327,7 @@ async fn test_read() {
         fs.flush(fh_2).await.unwrap();
         fs.release(fh_2).await.unwrap();
         let mut buf = [0_u8; 2];
-        test_common::read_exact(fs, attr.ino, 8, &mut buf, fh).await;
+        test_common::read_exact(&fs, attr.ino, 8, &mut buf, fh).await;
         assert_eq!(new_data, String::from_utf8(buf.to_vec()).unwrap());
 
         // invalid values
@@ -357,7 +342,7 @@ async fn test_read() {
         ));
         let test_dir = SecretString::from_str("test-dir").unwrap();
         let (fh, dir_attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &test_dir,
                 create_attr(FileType::Directory),
@@ -388,7 +373,7 @@ async fn test_truncate() {
 
             let test_file = SecretString::from_str("test-file").unwrap();
             let (fh, attr) = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -411,7 +396,7 @@ async fn test_truncate() {
                 .await
                 .unwrap();
             fs.truncate(attr.ino, 10).await.unwrap();
-            assert_eq!(10, fs.get_inode(attr.ino).await.unwrap().size);
+            assert_eq!(10, fs.get(attr.ino).await.unwrap().size);
             assert_eq!(
                 format!("test-37{}", "\0".repeat(3)),
                 test_common::read_to_string(
@@ -424,7 +409,7 @@ async fn test_truncate() {
 
             // size doesn't change
             fs.truncate(attr.ino, 10).await.unwrap();
-            assert_eq!(10, fs.get_inode(attr.ino).await.unwrap().size);
+            assert_eq!(10, fs.get(attr.ino).await.unwrap().size);
             assert_eq!(
                 format!("test-37{}", "\0".repeat(3)),
                 test_common::read_to_string(
@@ -441,7 +426,7 @@ async fn test_truncate() {
                 .await
                 .unwrap();
             fs.truncate(attr.ino, 4).await.unwrap();
-            assert_eq!(4, fs.get_inode(attr.ino).await.unwrap().size);
+            assert_eq!(4, fs.get(attr.ino).await.unwrap().size);
             assert_eq!(
                 "37st",
                 test_common::read_to_string(
@@ -454,7 +439,7 @@ async fn test_truncate() {
 
             // size decrease to 0
             fs.truncate(attr.ino, 0).await.unwrap();
-            assert_eq!(0, fs.get_inode(attr.ino).await.unwrap().size);
+            assert_eq!(0, fs.get(attr.ino).await.unwrap().size);
             assert_eq!(
                 "".to_string(),
                 test_common::read_to_string(
@@ -472,7 +457,7 @@ async fn test_truncate() {
 // called `Result::unwrap` on an `Err` value: Io { source: Os { code: 2, kind: NotFound, message: "No such file or directory" }, backtrace: <disabled> }
 // #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 // #[traced_test]
-async fn test_copy_file_range() {
+async fn _test_copy_file_range() {
     run_test(
         TestSetup {
             key: "test_copy_file_range",
@@ -484,7 +469,7 @@ async fn test_copy_file_range() {
 
             let test_file_1 = SecretString::from_str("test-file-1").unwrap();
             let (fh, attr_1) = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_file_1,
                     create_attr(FileType::RegularFile),
@@ -502,7 +487,7 @@ async fn test_copy_file_range() {
             let fh = fs.open(attr_1.ino, true, false).await.unwrap();
             let test_file_2 = SecretString::from_str("test-file-2").unwrap();
             let (fh2, attr_2) = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_file_2,
                     create_attr(FileType::RegularFile),
@@ -518,7 +503,7 @@ async fn test_copy_file_range() {
             fs.release(fh2).await.unwrap();
             let mut buf = [0; 7];
             let fh = fs.open(attr_2.ino, true, false).await.unwrap();
-            test_common::read_exact(fs, attr_2.ino, 0, &mut buf, fh).await;
+            test_common::read_exact(&fs, attr_2.ino, 0, &mut buf, fh).await;
             assert_eq!(data, String::from_utf8(buf.to_vec()).unwrap());
 
             // offset
@@ -535,7 +520,7 @@ async fn test_copy_file_range() {
             fs.flush(fh_2).await.unwrap();
             fs.release(fh_2).await.unwrap();
             let fh = fs.open(attr_2.ino, true, false).await.unwrap();
-            test_common::read_exact(fs, attr_2.ino, 0, &mut buf, fh).await;
+            test_common::read_exact(&fs, attr_2.ino, 0, &mut buf, fh).await;
             assert_eq!("test-37", String::from_utf8(buf.to_vec()).unwrap());
 
             // out of bounds
@@ -572,7 +557,7 @@ async fn test_read_dir() {
             // file and directory in root
             let test_file = SecretString::from_str("test-file").unwrap();
             let (_fh, file_attr) = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -584,7 +569,7 @@ async fn test_read_dir() {
 
             let test_dir = SecretString::from_str("test-dir").unwrap();
             let (_fh, dir_attr) = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_dir,
                     create_attr(FileType::Directory),
@@ -594,7 +579,7 @@ async fn test_read_dir() {
                 .await
                 .unwrap();
             let mut entries: Vec<FsResult<DirectoryEntry>> =
-                fs.read_dir(dir_attr.ino, 0).await.unwrap().collect();
+                fs.ls(dir_attr.ino).await.unwrap().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
                     .unwrap()
@@ -621,7 +606,7 @@ async fn test_read_dir() {
             );
 
             let mut entries: Vec<FsResult<DirectoryEntry>> =
-                fs.read_dir(ROOT_INODE, 0).await.unwrap().collect();
+                fs.ls(ROOT_INODE).await.unwrap().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
                     .unwrap()
@@ -655,7 +640,7 @@ async fn test_read_dir() {
             let parent = dir_attr.ino;
             let test_file_2 = SecretString::from_str("test-file-2").unwrap();
             let (_fh, file_attr) = fs
-                .create_nod(
+                .mk(
                     parent,
                     &test_file_2,
                     create_attr(FileType::RegularFile),
@@ -667,7 +652,7 @@ async fn test_read_dir() {
 
             let test_dir_2 = SecretString::from_str("test-dir-2").unwrap();
             let (_fh, dir_attr) = fs
-                .create_nod(
+                .mk(
                     parent,
                     &test_dir_2,
                     create_attr(FileType::Directory),
@@ -677,7 +662,7 @@ async fn test_read_dir() {
                 .await
                 .unwrap();
             let mut entries: Vec<FsResult<DirectoryEntry>> =
-                fs.read_dir(dir_attr.ino, 0).await.unwrap().collect();
+                fs.ls(dir_attr.ino).await.unwrap().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
                     .unwrap()
@@ -703,7 +688,7 @@ async fn test_read_dir() {
                 entries
             );
 
-            let iter = fs.read_dir(parent, 0).await.unwrap();
+            let iter = fs.ls(parent).await.unwrap();
             let mut entries: Vec<DirectoryEntry> = iter.map(Result::unwrap).collect();
             entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
             let mut sample = vec![
@@ -751,7 +736,7 @@ async fn test_read_dir_plus() {
             // file and directory in root
             let test_file = SecretString::from_str("test-file").unwrap();
             let (_fh, file_attr) = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -763,7 +748,7 @@ async fn test_read_dir_plus() {
 
             let test_dir = SecretString::from_str("test-dir").unwrap();
             let (_fh, dir_attr) = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_dir,
                     create_attr(FileType::Directory),
@@ -773,7 +758,7 @@ async fn test_read_dir_plus() {
                 .await
                 .unwrap();
             let mut entries: Vec<FsResult<DirectoryEntryPlus>> =
-                fs.read_dir_plus(dir_attr.ino, 0).await.unwrap().collect();
+                fs.ls_plus(dir_attr.ino).await.unwrap().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
                     .unwrap()
@@ -784,7 +769,7 @@ async fn test_read_dir_plus() {
             let entries: Vec<DirectoryEntryPlus> =
                 entries.into_iter().map(Result::unwrap).collect();
             assert_eq!(entries.len(), 2);
-            let attr_root = fs.get_inode(ROOT_INODE).await.unwrap();
+            let attr_root = fs.get(ROOT_INODE).await.unwrap();
             assert_eq!(
                 vec![
                     DirectoryEntryPlus {
@@ -804,7 +789,7 @@ async fn test_read_dir_plus() {
             );
 
             let mut entries: Vec<FsResult<DirectoryEntryPlus>> =
-                fs.read_dir_plus(ROOT_INODE, 0).await.unwrap().collect();
+                fs.ls_plus(ROOT_INODE).await.unwrap().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
                     .unwrap()
@@ -843,7 +828,7 @@ async fn test_read_dir_plus() {
             let attr_parent = dir_attr;
             let test_file_2 = SecretString::from_str("test-file-2").unwrap();
             let (_fh, file_attr) = fs
-                .create_nod(
+                .mk(
                     parent,
                     &test_file_2,
                     create_attr(FileType::RegularFile),
@@ -855,7 +840,7 @@ async fn test_read_dir_plus() {
 
             let test_dir_2 = SecretString::from_str("test-dir-2").unwrap();
             let (_fh, dir_attr) = fs
-                .create_nod(
+                .mk(
                     parent,
                     &test_dir_2,
                     create_attr(FileType::Directory),
@@ -865,10 +850,10 @@ async fn test_read_dir_plus() {
                 .await
                 .unwrap();
             // for some reason the tv_nsec is not the same between what create_nod() and read_dir_plus() returns, so we reload it again
-            let dir_attr = fs.get_inode(dir_attr.ino).await.unwrap();
-            let attr_parent = fs.get_inode(attr_parent.ino).await.unwrap();
+            let dir_attr = fs.get(dir_attr.ino).await.unwrap();
+            let attr_parent = fs.get(attr_parent.ino).await.unwrap();
             let mut entries: Vec<FsResult<DirectoryEntryPlus>> =
-                fs.read_dir_plus(dir_attr.ino, 0).await.unwrap().collect();
+                fs.ls_plus(dir_attr.ino).await.unwrap().collect();
             entries.sort_by(|a, b| {
                 a.as_ref()
                     .unwrap()
@@ -897,7 +882,7 @@ async fn test_read_dir_plus() {
                 entries
             );
 
-            let iter = fs.read_dir_plus(parent, 0).await.unwrap();
+            let iter = fs.ls_plus(parent).await.unwrap();
             let mut entries: Vec<DirectoryEntryPlus> = iter.map(Result::unwrap).collect();
             entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
             let mut sample = vec![
@@ -948,7 +933,7 @@ async fn test_find_by_name() {
 
             let test_file = SecretString::from_str("test-file").unwrap();
             let (_fh, file_attr) = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -987,7 +972,7 @@ async fn test_exists_by_name() {
 
             let test_file = SecretString::from_str("test-file").unwrap();
             let _ = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -1022,7 +1007,7 @@ async fn test_remove_dir() {
 
             let test_dir = SecretString::from_str("test-dir").unwrap();
             let _ = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_dir,
                     create_attr(FileType::Directory),
@@ -1033,12 +1018,12 @@ async fn test_remove_dir() {
                 .unwrap();
 
             assert!(fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
-            fs.delete_dir(ROOT_INODE, &test_dir).await.unwrap();
+            fs.rmdir(ROOT_INODE, &test_dir).await.unwrap();
             assert_eq!(false, fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
             assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_dir).await.unwrap());
             assert_eq!(
                 0,
-                fs.read_dir(ROOT_INODE, 0)
+                fs.ls(ROOT_INODE)
                     .await
                     .unwrap()
                     .filter(|entry| {
@@ -1065,7 +1050,7 @@ async fn test_remove_file() {
 
             let test_file = SecretString::from_str("test-file").unwrap();
             let _ = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -1076,12 +1061,12 @@ async fn test_remove_file() {
                 .unwrap();
 
             assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
-            fs.delete_file(ROOT_INODE, &test_file).await.unwrap();
+            fs.rmfile(ROOT_INODE, &test_file).await.unwrap();
             assert_eq!(false, fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
             assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_file).await.unwrap());
             assert_eq!(
                 0,
-                fs.read_dir(ROOT_INODE, 0)
+                fs.ls(ROOT_INODE)
                     .await
                     .unwrap()
                     .filter(|entry| {
@@ -1109,7 +1094,7 @@ async fn test_find_by_name_exists_by_name100files() {
             for i in 0..100 {
                 let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
                 let _ = fs
-                    .create_nod(
+                    .mk(
                         ROOT_INODE,
                         &test_file,
                         create_attr(FileType::RegularFile),
@@ -1135,11 +1120,9 @@ async fn test_find_by_name_exists_by_name100files() {
 #[traced_test]
 async fn test_create_structure_and_root() {
     run_test(TestSetup { key: "test_sample" }, async {
-        let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-        let mut fs = fs.lock().await;
-        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+        let fs = get_fs().await;
 
-        assert!(fs.node_exists(ROOT_INODE));
+        assert!(fs.exists(ROOT_INODE));
         assert!(fs.is_dir(ROOT_INODE));
 
         assert!(fs.data_dir.join(INODES_DIR).is_dir());
@@ -1177,7 +1160,7 @@ async fn test_create_nod() {
             // file in root
             let test_file = SecretString::from_str("test-file").unwrap();
             let (fh, attr) = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -1205,10 +1188,10 @@ async fn test_create_nod() {
                 .join(HASH_DIR)
                 .join(crypto::hash_file_name(&test_file))
                 .is_file());
-            assert!(fs.node_exists(attr.ino));
-            assert_eq!(attr, fs.get_inode(attr.ino).await.unwrap());
+            assert!(fs.exists(attr.ino));
+            assert_eq!(attr, fs.get(attr.ino).await.unwrap());
             let mut entries: Vec<DirectoryEntryPlus> = fs
-                .read_dir_plus(ROOT_INODE, 0)
+                .ls_plus(ROOT_INODE)
                 .await
                 .unwrap()
                 .map(Result::unwrap)
@@ -1227,7 +1210,7 @@ async fn test_create_nod() {
             // directory in root
             let test_dir = SecretString::from_str("test-dir").unwrap();
             let (_fh, attr) = fs
-                .create_nod(
+                .mk(
                     ROOT_INODE,
                     &test_dir,
                     create_attr(FileType::Directory),
@@ -1254,11 +1237,11 @@ async fn test_create_nod() {
                 .join(HASH_DIR)
                 .join(crypto::hash_file_name(&test_dir))
                 .is_file());
-            assert!(fs.node_exists(attr.ino));
-            assert_eq!(attr, fs.get_inode(attr.ino).await.unwrap());
+            assert!(fs.exists(attr.ino));
+            assert_eq!(attr, fs.get(attr.ino).await.unwrap());
             assert!(fs.is_dir(attr.ino));
             let mut entries: Vec<DirectoryEntryPlus> = fs
-                .read_dir_plus(ROOT_INODE, 0)
+                .ls_plus(ROOT_INODE)
                 .await
                 .unwrap()
                 .map(Result::unwrap)
@@ -1266,7 +1249,7 @@ async fn test_create_nod() {
             entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
             assert_eq!(attr, entries[1].attr);
             let mut entries: Vec<DirectoryEntryPlus> = fs
-                .read_dir_plus(attr.ino, 0)
+                .ls_plus(attr.ino)
                 .await
                 .unwrap()
                 .map(Result::unwrap)
@@ -1287,7 +1270,7 @@ async fn test_create_nod() {
             let parent = attr.ino;
             let test_dir_2 = SecretString::from_str("test-dir-2").unwrap();
             let (_fh, attr) = fs
-                .create_nod(
+                .mk(
                     parent,
                     &test_dir_2,
                     create_attr(FileType::Directory),
@@ -1313,11 +1296,11 @@ async fn test_create_nod() {
                 .join(HASH_DIR)
                 .join(crypto::hash_file_name(&test_dir_2))
                 .is_file());
-            assert!(fs.node_exists(attr.ino));
-            assert_eq!(attr, fs.get_inode(attr.ino).await.unwrap());
+            assert!(fs.exists(attr.ino));
+            assert_eq!(attr, fs.get(attr.ino).await.unwrap());
             assert!(fs.is_dir(attr.ino));
             let mut entries: Vec<DirectoryEntryPlus> = fs
-                .read_dir_plus(parent, 0)
+                .ls_plus(parent)
                 .await
                 .unwrap()
                 .map(Result::unwrap)
@@ -1325,7 +1308,7 @@ async fn test_create_nod() {
             entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
             assert_eq!(attr, entries[2].attr);
             let mut entries: Vec<DirectoryEntryPlus> = fs
-                .read_dir_plus(attr.ino, 0)
+                .ls_plus(attr.ino)
                 .await
                 .unwrap()
                 .map(Result::unwrap)
@@ -1341,7 +1324,7 @@ async fn test_create_nod() {
 
             // existing file
             assert!(matches!(
-                fs.create_nod(
+                fs.mk(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -1354,7 +1337,7 @@ async fn test_create_nod() {
 
             // existing directory
             assert!(matches!(
-                fs.create_nod(
+                fs.mk(
                     ROOT_INODE,
                     &test_dir,
                     create_attr(FileType::Directory),
@@ -1379,7 +1362,7 @@ async fn test_rename() {
         let new_parent = ROOT_INODE;
         let file_1 = SecretString::from_str("file-1").unwrap();
         let (_, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &file_1,
                 create_attr(FileType::RegularFile),
@@ -1403,7 +1386,7 @@ async fn test_rename() {
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
-            fs.read_dir(ROOT_INODE, 0)
+            fs.ls(ROOT_INODE)
                 .await
                 .unwrap()
                 .filter(
@@ -1413,7 +1396,7 @@ async fn test_rename() {
             0
         );
         assert_eq!(
-            fs.read_dir(new_parent, 0)
+            fs.ls(new_parent)
                 .await
                 .unwrap()
                 .filter(|entry| entry.as_ref().unwrap().name.expose_secret()
@@ -1426,7 +1409,7 @@ async fn test_rename() {
         let new_parent = ROOT_INODE;
         let dir_1 = SecretString::from_str("dir-1").unwrap();
         let (_, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &dir_1,
                 create_attr(FileType::Directory),
@@ -1450,7 +1433,7 @@ async fn test_rename() {
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
-            fs.read_dir(ROOT_INODE, 0)
+            fs.ls(ROOT_INODE)
                 .await
                 .unwrap()
                 .filter(
@@ -1460,7 +1443,7 @@ async fn test_rename() {
             0
         );
         assert_eq!(
-            fs.read_dir(new_parent, 0)
+            fs.ls(new_parent)
                 .await
                 .unwrap()
                 .filter(|entry| entry.as_ref().unwrap().name.expose_secret()
@@ -1485,7 +1468,7 @@ async fn test_rename() {
             new_attr.ino
         );
         assert_eq!(
-            fs.read_dir(new_attr.ino, 0)
+            fs.ls(new_attr.ino)
                 .await
                 .unwrap()
                 .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == "..")
@@ -1493,7 +1476,7 @@ async fn test_rename() {
             1
         );
         assert_eq!(
-            fs.read_dir(new_attr.ino, 0)
+            fs.ls(new_attr.ino)
                 .await
                 .unwrap()
                 .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == ".")
@@ -1503,7 +1486,7 @@ async fn test_rename() {
 
         let dir_new_parent = SecretString::from_str("dir-new-parent").unwrap();
         let (_, new_parent_attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &dir_new_parent,
                 create_attr(FileType::Directory),
@@ -1516,7 +1499,7 @@ async fn test_rename() {
         // new file to another directory
         let new_parent = new_parent_attr.ino;
         let (_, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &file_1,
                 create_attr(FileType::RegularFile),
@@ -1536,7 +1519,7 @@ async fn test_rename() {
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
-            fs.read_dir(ROOT_INODE, 0)
+            fs.ls(ROOT_INODE)
                 .await
                 .unwrap()
                 .filter(
@@ -1546,7 +1529,7 @@ async fn test_rename() {
             0
         );
         assert_eq!(
-            fs.read_dir(ROOT_INODE, 0)
+            fs.ls(ROOT_INODE)
                 .await
                 .unwrap()
                 .filter(|entry| {
@@ -1557,7 +1540,7 @@ async fn test_rename() {
             0
         );
         assert_eq!(
-            fs.read_dir(new_parent, 0)
+            fs.ls(new_parent)
                 .await
                 .unwrap()
                 .filter(
@@ -1570,7 +1553,7 @@ async fn test_rename() {
         // new directory to another directory
         let new_parent = new_parent_attr.ino;
         let (_, attr) = fs
-            .create_nod(
+            .mk(
                 ROOT_INODE,
                 &dir_1,
                 create_attr(FileType::Directory),
@@ -1590,7 +1573,7 @@ async fn test_rename() {
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
-            fs.read_dir(ROOT_INODE, 0)
+            fs.ls(ROOT_INODE)
                 .await
                 .unwrap()
                 .filter(
@@ -1600,7 +1583,7 @@ async fn test_rename() {
             0
         );
         assert_eq!(
-            fs.read_dir(ROOT_INODE, 0)
+            fs.ls(ROOT_INODE)
                 .await
                 .unwrap()
                 .filter(
@@ -1610,7 +1593,7 @@ async fn test_rename() {
             0
         );
         assert_eq!(
-            fs.read_dir(new_parent, 0)
+            fs.ls(new_parent)
                 .await
                 .unwrap()
                 .filter(
@@ -1636,7 +1619,7 @@ async fn test_rename() {
             new_attr.ino
         );
         assert_eq!(
-            fs.read_dir(new_attr.ino, 0)
+            fs.ls(new_attr.ino)
                 .await
                 .unwrap()
                 .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == "..")
@@ -1644,24 +1627,681 @@ async fn test_rename() {
             1
         );
         assert_eq!(
-            fs.read_dir(new_attr.ino, 0)
+            fs.ls(new_attr.ino)
                 .await
                 .unwrap()
                 .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == ".")
                 .count(),
             1
         );
+
+        // file to existing file in same directory
+        let file_1 = SecretString::from_str("file-1").unwrap();
+        let file_2 = SecretString::from_str("file-2").unwrap();
+        let new_parent = ROOT_INODE;
+        let (_, attr) = fs
+            .mk(
+                ROOT_INODE,
+                &file_1,
+                create_attr(FileType::RegularFile),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        let (_, _attr_2) = fs
+            .mk(
+                new_parent,
+                &file_2,
+                create_attr(FileType::RegularFile),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        fs.rename(ROOT_INODE, &file_1, new_parent, &file_2)
+            .await
+            .unwrap();
+        assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1).unwrap(), true);
+        assert_eq!(fs.exists_by_name(new_parent, &file_2).unwrap(), true);
+        let new_attr = fs.find_by_name(new_parent, &file_2).await.unwrap().unwrap();
+        assert_eq!(fs.is_file(new_attr.ino), true);
+        assert_eq!(new_attr.ino, attr.ino);
+        assert_eq!(new_attr.kind, attr.kind);
+        assert_eq!(
+            fs.ls(ROOT_INODE)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == file_1.expose_secret()
+                )
+                .count(),
+            0
+        );
+        assert_eq!(
+            fs.ls(new_parent)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == file_2.expose_secret()
+                )
+                .count(),
+            1
+        );
+
+        // directory to existing directory in same directory
+        let new_parent = ROOT_INODE;
+        let (_, attr) = fs
+            .mk(
+                ROOT_INODE,
+                &dir_1,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        let (_, _attr_2) = fs
+            .mk(
+                new_parent,
+                &dir_2,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_2)
+            .await
+            .unwrap();
+        assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_1).unwrap(), true);
+        assert_eq!(fs.exists_by_name(new_parent, &dir_2).unwrap(), true);
+        let new_attr = fs.find_by_name(new_parent, &dir_2).await.unwrap().unwrap();
+        assert_eq!(fs.is_dir(new_attr.ino), true);
+        assert_eq!(new_attr.ino, attr.ino);
+        assert_eq!(new_attr.kind, attr.kind);
+        assert_eq!(
+            fs.ls(ROOT_INODE)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == dir_1.expose_secret()
+                )
+                .count(),
+            0
+        );
+        assert_eq!(
+            fs.ls(new_parent)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == dir_2.expose_secret()
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.find_by_name(new_attr.ino, &SecretString::from_str("..").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            new_parent
+        );
+        assert_eq!(
+            fs.find_by_name(new_attr.ino, &SecretString::from_str(".").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            new_attr.ino
+        );
+        assert_eq!(
+            fs.ls(new_attr.ino)
+                .await
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == "..")
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.ls(new_attr.ino)
+                .await
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == ".")
+                .count(),
+            1
+        );
+
+        // file to existing file in another directory
+        let new_parent = new_parent_attr.ino;
+        let (_, attr) = fs
+            .mk(
+                ROOT_INODE,
+                &file_1,
+                create_attr(FileType::RegularFile),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        let (_, _attr_2) = fs
+            .mk(
+                new_parent,
+                &file_1,
+                create_attr(FileType::RegularFile),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        fs.rename(ROOT_INODE, &file_1, new_parent, &file_1)
+            .await
+            .unwrap();
+        assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1).unwrap(), true);
+        assert_eq!(fs.exists_by_name(new_parent, &file_1).unwrap(), true);
+        let new_attr = fs.find_by_name(new_parent, &file_1).await.unwrap().unwrap();
+        assert_eq!(fs.is_file(new_attr.ino), true);
+        assert_eq!(new_attr.ino, attr.ino);
+        assert_eq!(new_attr.kind, attr.kind);
+        assert_eq!(
+            fs.ls(ROOT_INODE)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == file_1.expose_secret()
+                )
+                .count(),
+            0
+        );
+        assert_eq!(
+            fs.ls(new_parent)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == file_1.expose_secret()
+                )
+                .count(),
+            1
+        );
+
+        // directory to existing directory in another directory
+        let new_parent = new_parent_attr.ino;
+        let (_, attr) = fs
+            .mk(
+                ROOT_INODE,
+                &dir_1,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        let (_, _attr_2) = fs
+            .mk(
+                new_parent,
+                &dir_1,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_1)
+            .await
+            .unwrap();
+        assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_1).unwrap(), true);
+        assert_eq!(fs.exists_by_name(new_parent, &dir_1).unwrap(), true);
+        let new_attr = fs.find_by_name(new_parent, &dir_1).await.unwrap().unwrap();
+        assert_eq!(fs.is_dir(new_attr.ino), true);
+        assert_eq!(new_attr.ino, attr.ino);
+        assert_eq!(new_attr.kind, attr.kind);
+        assert_eq!(
+            fs.ls(ROOT_INODE)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == dir_1.expose_secret()
+                )
+                .count(),
+            0
+        );
+        assert_eq!(
+            fs.ls(new_parent)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == dir_1.expose_secret()
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.find_by_name(new_attr.ino, &SecretString::from_str("..").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            new_parent
+        );
+        assert_eq!(
+            fs.find_by_name(new_attr.ino, &SecretString::from_str(".").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            new_attr.ino
+        );
+        assert_eq!(
+            fs.ls(new_attr.ino)
+                .await
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == "..")
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.ls(new_attr.ino)
+                .await
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == ".")
+                .count(),
+            1
+        );
+
+        // overwriting directory with file
+        let new_parent = ROOT_INODE;
+        let (_, attr) = fs
+            .mk(
+                ROOT_INODE,
+                &file_1,
+                create_attr(FileType::RegularFile),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        let (_, _attr_2) = fs
+            .mk(
+                new_parent,
+                &dir_1,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        fs.rename(ROOT_INODE, &file_1, new_parent, &dir_1)
+            .await
+            .unwrap();
+        assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1).unwrap(), true);
+        assert_eq!(fs.exists_by_name(new_parent, &dir_1).unwrap(), true);
+        let new_attr = fs.find_by_name(new_parent, &dir_1).await.unwrap().unwrap();
+        assert_eq!(fs.is_file(new_attr.ino), true);
+        assert_eq!(new_attr.ino, attr.ino);
+        assert_eq!(new_attr.kind, attr.kind);
+        assert_eq!(
+            fs.ls(ROOT_INODE)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == file_1.expose_secret()
+                )
+                .count(),
+            0
+        );
+        assert_eq!(
+            fs.ls(new_parent)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == dir_1.expose_secret()
+                )
+                .count(),
+            1
+        );
+
+        // overwriting file with directory
+        let new_parent = ROOT_INODE;
+        let dir_3 = SecretString::from_str("dir-3").unwrap();
+        let (_, attr) = fs
+            .mk(
+                ROOT_INODE,
+                &dir_3,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        let (_, _attr_2) = fs
+            .mk(
+                new_parent,
+                &file_1,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        fs.rename(ROOT_INODE, &dir_3, new_parent, &file_1)
+            .await
+            .unwrap();
+        assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_3).unwrap(), true);
+        assert_eq!(fs.exists_by_name(new_parent, &file_1).unwrap(), true);
+        let new_attr = fs.find_by_name(new_parent, &file_1).await.unwrap().unwrap();
+        assert_eq!(fs.is_dir(new_attr.ino), true);
+        assert_eq!(new_attr.ino, attr.ino);
+        assert_eq!(new_attr.kind, attr.kind);
+        assert_eq!(
+            fs.ls(ROOT_INODE)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == dir_3.expose_secret()
+                )
+                .count(),
+            0
+        );
+        assert_eq!(
+            fs.ls(new_parent)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == file_1.expose_secret()
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.find_by_name(new_attr.ino, &SecretString::from_str("..").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            new_parent
+        );
+        assert_eq!(
+            fs.find_by_name(new_attr.ino, &SecretString::from_str(".").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            new_attr.ino
+        );
+        assert_eq!(
+            fs.ls(new_attr.ino)
+                .await
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == "..")
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.ls(new_attr.ino)
+                .await
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == ".")
+                .count(),
+            1
+        );
+
+        // overwriting non-empty directory
+        let new_parent = ROOT_INODE;
+        let (_, attr) = fs
+            .mk(
+                ROOT_INODE,
+                &dir_3,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        let _attr_2 = new_parent_attr;
+        let name_2 = dir_new_parent;
+        assert!(matches!(
+            fs.rename(ROOT_INODE, &dir_3, new_parent, &name_2).await,
+            Err(FsError::NotEmpty)
+        ));
+        assert_eq!(fs.exists_by_name(ROOT_INODE, &dir_3).unwrap(), true);
+        assert_eq!(fs.exists_by_name(new_parent, &name_2).unwrap(), true);
+        let attr_3 = fs.find_by_name(ROOT_INODE, &dir_3).await.unwrap().unwrap();
+        assert_eq!(fs.is_dir(attr_3.ino), true);
+        let attr_2 = fs.find_by_name(new_parent, &name_2).await.unwrap().unwrap();
+        assert_eq!(fs.is_dir(attr_2.ino), true);
+        let new_attr = fs.find_by_name(new_parent, &dir_3).await.unwrap().unwrap();
+        assert_eq!(new_attr.ino, attr.ino);
+        assert_eq!(new_attr.kind, attr.kind);
+        let new_attr_2 = fs.find_by_name(new_parent, &name_2).await.unwrap().unwrap();
+        assert_eq!(new_attr_2.ino, attr_2.ino);
+        assert_eq!(new_attr_2.kind, attr_2.kind);
+        assert_eq!(
+            fs.ls(ROOT_INODE)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == dir_3.expose_secret()
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.ls(new_parent)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == name_2.expose_secret()
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.find_by_name(new_attr_2.ino, &SecretString::from_str("..").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            new_parent
+        );
+        assert_eq!(
+            fs.find_by_name(new_attr_2.ino, &SecretString::from_str(".").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            new_attr_2.ino
+        );
+        assert_eq!(
+            fs.ls(new_attr.ino)
+                .await
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == "..")
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.ls(new_attr.ino)
+                .await
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == ".")
+                .count(),
+            1
+        );
+
+        // same file in same directory
+        let new_parent = ROOT_INODE;
+        let file_3 = SecretString::from_str("file-3").unwrap();
+        let (_, attr) = fs
+            .mk(
+                ROOT_INODE,
+                &file_3,
+                create_attr(FileType::RegularFile),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        fs.rename(ROOT_INODE, &file_3, new_parent, &file_3)
+            .await
+            .unwrap();
+        assert_eq!(fs.exists_by_name(new_parent, &file_3).unwrap(), true);
+        let new_attr = fs.find_by_name(new_parent, &file_3).await.unwrap().unwrap();
+        assert_eq!(fs.is_file(new_attr.ino), true);
+        assert_eq!(new_attr.ino, attr.ino);
+        assert_eq!(new_attr.kind, attr.kind);
+        assert_eq!(
+            fs.ls(new_parent)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == file_3.expose_secret()
+                )
+                .count(),
+            1
+        );
+
+        // same directory in same directory
+        let new_parent = ROOT_INODE;
+        let dir_5 = SecretString::from_str("dir-5").unwrap();
+        let (_, attr) = fs
+            .mk(
+                ROOT_INODE,
+                &dir_5,
+                create_attr(FileType::Directory),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        fs.rename(ROOT_INODE, &dir_5, new_parent, &dir_5)
+            .await
+            .unwrap();
+        assert_eq!(fs.exists_by_name(new_parent, &dir_5).unwrap(), true);
+        let new_attr = fs.find_by_name(new_parent, &dir_5).await.unwrap().unwrap();
+        assert_eq!(fs.is_dir(new_attr.ino), true);
+        assert_eq!(new_attr.ino, attr.ino);
+        assert_eq!(new_attr.kind, attr.kind);
+        assert_eq!(
+            fs.ls(new_parent)
+                .await
+                .unwrap()
+                .filter(
+                    |entry| entry.as_ref().unwrap().name.expose_secret() == dir_5.expose_secret()
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.find_by_name(new_attr.ino, &SecretString::from_str("..").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            new_parent
+        );
+        assert_eq!(
+            fs.find_by_name(new_attr.ino, &SecretString::from_str(".").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            new_attr.ino
+        );
+        assert_eq!(
+            fs.ls(new_attr.ino)
+                .await
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == "..")
+                .count(),
+            1
+        );
+        assert_eq!(
+            fs.ls(new_attr.ino)
+                .await
+                .unwrap()
+                .filter(|entry| entry.as_ref().unwrap().name.expose_secret() == ".")
+                .count(),
+            1
+        );
+
+        // invalid nodes and name
+        let invalid = SecretString::from_str("invalid").unwrap();
+        assert!(matches!(
+            fs.rename(0, &invalid, 0, &invalid).await,
+            Err(FsError::InodeNotFound)
+        ));
+        let existing_file = SecretString::from_str("existing-file").unwrap();
+        let (_, attr_file) = fs
+            .mk(
+                ROOT_INODE,
+                &existing_file,
+                create_attr(FileType::RegularFile),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            fs.rename(attr_file.ino, &invalid, 0, &invalid).await,
+            Err(FsError::InvalidInodeType)
+        ));
+        assert!(matches!(
+            fs.rename(ROOT_INODE, &invalid, ROOT_INODE, &invalid).await,
+            Err(FsError::NotFound(_))
+        ));
+        assert!(matches!(
+            fs.rename(ROOT_INODE, &existing_file, 0, &invalid).await,
+            Err(FsError::InodeNotFound)
+        ));
+        assert!(matches!(
+            fs.rename(ROOT_INODE, &existing_file, attr_file.ino, &invalid)
+                .await,
+            Err(FsError::InvalidInodeType)
+        ));
+    })
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
+async fn test_open() {
+    run_test(TestSetup { key: "test_open" }, async {
+        let fs = get_fs().await;
+
+        let test_file = SecretString::from_str("test-file").unwrap();
+        let (_fh, attr) = fs
+            .mk(
+                ROOT_INODE,
+                &test_file,
+                create_attr(FileType::RegularFile),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        // single read
+        let fh = fs.open(attr.ino, true, false).await.unwrap();
+        assert_ne!(fh, 0);
+        // multiple read
+        let fh_2 = fs.open(attr.ino, true, false).await.unwrap();
+        assert_ne!(fh_2, 0);
+        // write and read
+        let _ = fs.open(attr.ino, false, true).await.unwrap();
+        // ensure cannot open multiple write
+        assert!(matches!(
+            fs.open(attr.ino, false, true).await,
+            Err(FsError::AlreadyOpenForWrite)
+        ));
     })
     .await
 }
 
 // #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 // #[traced_test]
-async fn test_sample() {
+async fn _test_sample() {
     run_test(TestSetup { key: "test_sample" }, async {
-        let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-        let mut fs = fs.lock().await;
-        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+        let fs = get_fs().await;
     })
     .await
 }

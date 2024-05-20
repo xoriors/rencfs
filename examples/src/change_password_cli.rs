@@ -34,7 +34,7 @@ async fn main() {
         return;
     }
     println!("Changing password...");
-    match EncryptedFs::change_password(
+    match EncryptedFs::passwd(
         Path::new(&data_dir),
         old_password,
         new_password,

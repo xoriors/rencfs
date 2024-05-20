@@ -3,7 +3,6 @@ use std::io;
 use std::io::{Read, Seek, Write};
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::arc_hashmap::Holder;

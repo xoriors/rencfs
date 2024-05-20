@@ -115,7 +115,7 @@
 //!     let mut fs = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl{}), cipher ).await?;
 //!
 //!     let  file1 = SecretString::from_str("file1").unwrap();
-//!     let (fh, attr) = fs.create_nod(ROOT_INODE, &file1, file_attr(), false, true).await?;
+//!     let (fh, attr) = fs.mk(ROOT_INODE, &file1, file_attr(), false, true).await?;
 //!     let data = "Hello, world!";
 //!     write_all_string_to_fs( &fs, attr.ino, 0,data, fh).await?;
 //!     fs.flush(fh).await?;
@@ -160,7 +160,7 @@
 //!     let _ = args.next(); // skip the program name
 //!     let data_dir = args.next().expect("data_dir is missing");
 //!
-//!     match EncryptedFs::change_password(
+//!     match EncryptedFs::passwd(
 //!         Path::new(&data_dir),
 //!         SecretString::from_str("old-pass").unwrap(),
 //!         SecretString::from_str("new-pass").unwrap(),
@@ -215,7 +215,7 @@
 //!         return;
 //!     }
 //!     println!("Changing password...");
-//!     match EncryptedFs::change_password(
+//!     match EncryptedFs::passwd(
 //!         Path::new(&data_dir),
 //!         old_password,
 //!         new_password,

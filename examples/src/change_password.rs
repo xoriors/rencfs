@@ -13,7 +13,7 @@ async fn main() {
     let _ = args.next(); // skip the program name
     let data_dir = args.next().expect("data_dir is missing");
 
-    match EncryptedFs::change_password(
+    match EncryptedFs::passwd(
         Path::new(&data_dir),
         SecretString::from_str("old-pass").unwrap(),
         SecretString::from_str("new-pass").unwrap(),

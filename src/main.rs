@@ -266,7 +266,7 @@ async fn run_change_password(cipher: Cipher, matches: &ArgMatches) -> Result<()>
         return Err(ExitStatusError::Failure(1).into());
     }
     println!("Changing password...");
-    EncryptedFs::change_password(Path::new(&data_dir), password, new_password, cipher)
+    EncryptedFs::passwd(Path::new(&data_dir), password, new_password, cipher)
         .await
         .map_err(|err| {
             match err {

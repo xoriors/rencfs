@@ -52,7 +52,7 @@ pub struct MountHandle {
     inner: MountHandleInnerImpl,
 }
 impl MountHandle {
-    pub async fn umount(mut self) -> io::Result<()> {
+    pub async fn umount(self) -> io::Result<()> {
         self.inner.umount().await
     }
 }
