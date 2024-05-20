@@ -520,6 +520,7 @@ mod bench {
     use std::sync::Arc;
     use test::{black_box, Bencher};
 
+    use rand::RngCore;
     use secrecy::SecretVec;
 
     use crate::crypto;
