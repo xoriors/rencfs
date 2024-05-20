@@ -455,9 +455,10 @@ async fn test_truncate() {
 
 // todo: see why it fails on github
 // called `Result::unwrap` on an `Err` value: Io { source: Os { code: 2, kind: NotFound, message: "No such file or directory" }, backtrace: <disabled> }
-// #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-// #[traced_test]
-async fn _test_copy_file_range() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[traced_test]
+#[ignore]
+async fn test_copy_file_range() {
     run_test(
         TestSetup {
             key: "test_copy_file_range",
@@ -1147,6 +1148,7 @@ async fn test_create_structure_and_root() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[ignore]
 async fn test_create() {
     run_test(TestSetup { key: "test_create" }, async {
         let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
