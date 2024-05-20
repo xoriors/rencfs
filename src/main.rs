@@ -136,10 +136,7 @@ fn get_cli_args() -> ArgMatches {
                 .value_name("cipher")
                 .default_value("ChaCha20Poly1305")
                 .help(format!("Cipher used for encryption, possible values: {}",
-                              Cipher::iter().fold(String::new(), |mut acc, x| {
-                                  acc.push_str(format!("{acc}{}{x}", if acc.is_empty() { "" } else { ", " }).as_str());
-                                  acc
-                              }).as_str()),
+                              Cipher::iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ")),
                 )
         )
         .subcommand_required(true)
@@ -199,7 +196,7 @@ fn get_cli_args() -> ArgMatches {
                         .help("If it should allow setting SUID and SGID when files are created. Default is false and it will unset those flags when creating files"),
                 )
         ).subcommand(
-        Command::new("change-password")
+        Command::new("passwd")
             .about("Change password for the master key used to encrypt the data")
             .arg(
                 Arg::new("data-dir")
