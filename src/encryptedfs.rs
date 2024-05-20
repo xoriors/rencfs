@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime};
 use std::{fs, io};
 
 use argon2::password_hash::rand_core::RngCore;
+use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use lru::LruCache;
 use num_format::{Locale, ToFormattedString};
@@ -511,8 +512,9 @@ struct KeyProvider {
     cipher: Cipher,
 }
 
+#[async_trait]
 impl ValueProvider<SecretVec<u8>, FsError> for KeyProvider {
-    fn provide(&self) -> Result<SecretVec<u8>, FsError> {
+    async fn provide(&self) -> Result<SecretVec<u8>, FsError> {
         let password = self
             .password_provider
             .get_password()
@@ -526,22 +528,25 @@ pub trait PasswordProvider: Send + Sync + 'static {
 }
 
 struct DirEntryNameCacheProvider {}
+#[async_trait]
 impl ValueProvider<Mutex<LruCache<String, SecretString>>, FsError> for DirEntryNameCacheProvider {
-    fn provide(&self) -> Result<Mutex<LruCache<String, SecretString>>, FsError> {
+    async fn provide(&self) -> Result<Mutex<LruCache<String, SecretString>>, FsError> {
         Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }
 
 struct DirEntryMetaCacheProvider {}
+#[async_trait]
 impl ValueProvider<Mutex<DirEntryMetaCache>, FsError> for DirEntryMetaCacheProvider {
-    fn provide(&self) -> Result<Mutex<DirEntryMetaCache>, FsError> {
+    async fn provide(&self) -> Result<Mutex<DirEntryMetaCache>, FsError> {
         Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }
 
 struct AttrCacheProvider {}
+#[async_trait]
 impl ValueProvider<Mutex<LruCache<u64, FileAttr>>, FsError> for AttrCacheProvider {
-    fn provide(&self) -> Result<Mutex<LruCache<u64, FileAttr>>, FsError> {
+    async fn provide(&self) -> Result<Mutex<LruCache<u64, FileAttr>>, FsError> {
         Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }

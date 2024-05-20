@@ -867,7 +867,7 @@ mod test {
         let mut cursor = std::io::Cursor::new(vec![0; 0]);
         let mut writer = crypto::create_writer(cursor, cipher, key.clone());
         let data = "hello, this is my secret message";
-        writer.write_all(&data.as_bytes()).unwrap();
+        writer.write_all(data.as_bytes()).unwrap();
         cursor = writer.finish().unwrap();
         cursor.seek(io::SeekFrom::Start(0)).unwrap();
         let mut reader = crypto::create_reader(cursor, cipher, key.clone());
@@ -883,7 +883,7 @@ mod test {
         writer.write_all(&data).unwrap();
         cursor = writer.finish().unwrap();
         cursor.seek(std::io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, cipher, key.clone());
+        let mut reader = crypto::create_reader(cursor, cipher, key);
         let mut data2 = vec![];
         reader.read_to_end(&mut data2).unwrap();
         assert_eq!(data.len(), data2.len());
@@ -905,7 +905,7 @@ mod test {
         let mut cursor = io::Cursor::new(vec![0; 0]);
         let mut writer = crypto::create_writer(cursor, cipher, key.clone());
         let mut cursor_random = io::Cursor::new(vec![0; len]);
-        crypto::create_rng().fill_bytes(&mut cursor_random.get_mut());
+        crypto::create_rng().fill_bytes(cursor_random.get_mut());
         cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
         io::copy(&mut cursor_random, &mut writer).unwrap();
         cursor = writer.finish().unwrap();
@@ -924,7 +924,7 @@ mod test {
         writer.write_all(&data).unwrap();
         cursor = writer.finish().unwrap();
         cursor.seek(std::io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, cipher, key.clone());
+        let mut reader = crypto::create_reader(cursor, cipher, key);
         let mut data2 = vec![];
         reader.read_to_end(&mut data2).unwrap();
         assert_eq!(data.len(), data2.len());

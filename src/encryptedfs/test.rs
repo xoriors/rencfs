@@ -24,6 +24,7 @@ static ROOT_INODE_STR: &str = "1";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_write() {
     run_test(TestSetup { key: "test_write" }, async {
         let fs = get_fs().await;
@@ -183,11 +184,12 @@ async fn test_write() {
             Err(FsError::InvalidInodeType)
         ));
     })
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_read() {
     run_test(TestSetup { key: "test_read" }, async {
         let fs = get_fs().await;
@@ -356,20 +358,19 @@ async fn test_read() {
             Err(FsError::InvalidInodeType)
         ));
     })
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_truncate() {
     run_test(
         TestSetup {
             key: "test_truncate",
         },
         async {
-            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+            let fs = get_fs().await;
 
             let test_file = SecretString::from_str("test-file").unwrap();
             let (fh, attr) = fs
@@ -441,7 +442,7 @@ async fn test_truncate() {
             fs.truncate(attr.ino, 0).await.unwrap();
             assert_eq!(0, fs.get_attr(attr.ino).await.unwrap().size);
             assert_eq!(
-                "".to_string(),
+                String::new(),
                 test_common::read_to_string(
                     fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
                     &fs,
@@ -450,23 +451,22 @@ async fn test_truncate() {
             );
         },
     )
-    .await
+    .await;
 }
 
 // todo: see why it fails on github
 // called `Result::unwrap` on an `Err` value: Io { source: Os { code: 2, kind: NotFound, message: "No such file or directory" }, backtrace: <disabled> }
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
-#[ignore]
+#[allow(clippy::too_many_lines)]
 async fn test_copy_file_range() {
     run_test(
         TestSetup {
             key: "test_copy_file_range",
         },
         async {
-            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+            let fs = get_fs().await;
 
             let test_file_1 = SecretString::from_str("test-file-1").unwrap();
             let (fh, attr_1) = fs
@@ -480,7 +480,7 @@ async fn test_copy_file_range() {
                 .await
                 .unwrap();
             let data = "test-42";
-            write_all_bytes_to_fs(fs, attr_1.ino, 0, data.as_bytes(), fh)
+            write_all_bytes_to_fs(&fs, attr_1.ino, 0, data.as_bytes(), fh)
                 .await
                 .unwrap();
             fs.flush(fh).await.unwrap();
@@ -499,7 +499,7 @@ async fn test_copy_file_range() {
                 .unwrap();
 
             // whole file
-            test_common::copy_all_file_range(fs, attr_1.ino, 0, attr_2.ino, 0, 7, fh, fh2).await;
+            test_common::copy_all_file_range(&fs, attr_1.ino, 0, attr_2.ino, 0, 7, fh, fh2).await;
             fs.flush(fh2).await.unwrap();
             fs.release(fh2).await.unwrap();
             let mut buf = [0; 7];
@@ -517,7 +517,7 @@ async fn test_copy_file_range() {
             fs.release(fh).await.unwrap();
             let fh = fs.open(attr_1.ino, true, false).await.unwrap();
             let fh_2 = fs.open(attr_2.ino, false, true).await.unwrap();
-            test_common::copy_all_file_range(fs, attr_1.ino, 7, attr_2.ino, 5, 2, fh, fh_2).await;
+            test_common::copy_all_file_range(&fs, attr_1.ino, 7, attr_2.ino, 5, 2, fh, fh_2).await;
             fs.flush(fh_2).await.unwrap();
             fs.release(fh_2).await.unwrap();
             let fh = fs.open(attr_2.ino, true, false).await.unwrap();
@@ -540,20 +540,19 @@ async fn test_copy_file_range() {
             ));
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_read_dir() {
     run_test(
         TestSetup {
             key: "test_read_dir",
         },
         async {
-            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+            let fs = get_fs().await;
 
             // file and directory in root
             let test_file = SecretString::from_str("test-file").unwrap();
@@ -586,7 +585,7 @@ async fn test_read_dir() {
                     .unwrap()
                     .name
                     .expose_secret()
-                    .cmp(&b.as_ref().unwrap().name.expose_secret())
+                    .cmp(b.as_ref().unwrap().name.expose_secret())
             });
             let entries: Vec<DirectoryEntry> = entries.into_iter().map(Result::unwrap).collect();
             assert_eq!(entries.len(), 2);
@@ -613,7 +612,7 @@ async fn test_read_dir() {
                     .unwrap()
                     .name
                     .expose_secret()
-                    .cmp(&b.as_ref().unwrap().name.expose_secret())
+                    .cmp(b.as_ref().unwrap().name.expose_secret())
             });
             let entries: Vec<DirectoryEntry> = entries.into_iter().map(Result::unwrap).collect();
             let mut sample = vec![
@@ -633,7 +632,7 @@ async fn test_read_dir() {
                     kind: FileType::Directory,
                 },
             ];
-            sample.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+            sample.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
             assert_eq!(entries.len(), 3);
             assert_eq!(sample, entries);
 
@@ -669,7 +668,7 @@ async fn test_read_dir() {
                     .unwrap()
                     .name
                     .expose_secret()
-                    .cmp(&b.as_ref().unwrap().name.expose_secret())
+                    .cmp(b.as_ref().unwrap().name.expose_secret())
             });
             let entries: Vec<DirectoryEntry> = entries.into_iter().map(Result::unwrap).collect();
             assert_eq!(entries.len(), 2);
@@ -691,7 +690,7 @@ async fn test_read_dir() {
 
             let iter = fs.read_dir(parent).await.unwrap();
             let mut entries: Vec<DirectoryEntry> = iter.map(Result::unwrap).collect();
-            entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+            entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
             let mut sample = vec![
                 DirectoryEntry {
                     ino: parent,
@@ -714,25 +713,24 @@ async fn test_read_dir() {
                     kind: FileType::Directory,
                 },
             ];
-            sample.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+            sample.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
             assert_eq!(entries.len(), 4);
             assert_eq!(sample, entries);
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_read_dir_plus() {
     run_test(
         TestSetup {
             key: "test_read_dir_plus",
         },
         async {
-            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+            let fs = get_fs().await;
 
             // file and directory in root
             let test_file = SecretString::from_str("test-file").unwrap();
@@ -765,7 +763,7 @@ async fn test_read_dir_plus() {
                     .unwrap()
                     .name
                     .expose_secret()
-                    .cmp(&b.as_ref().unwrap().name.expose_secret())
+                    .cmp(b.as_ref().unwrap().name.expose_secret())
             });
             let entries: Vec<DirectoryEntryPlus> =
                 entries.into_iter().map(Result::unwrap).collect();
@@ -796,7 +794,7 @@ async fn test_read_dir_plus() {
                     .unwrap()
                     .name
                     .expose_secret()
-                    .cmp(&b.as_ref().unwrap().name.expose_secret())
+                    .cmp(b.as_ref().unwrap().name.expose_secret())
             });
             let entries: Vec<DirectoryEntryPlus> =
                 entries.into_iter().map(Result::unwrap).collect();
@@ -820,7 +818,7 @@ async fn test_read_dir_plus() {
                     attr: dir_attr,
                 },
             ];
-            sample.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+            sample.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
             assert_eq!(entries.len(), 3);
             assert_eq!(sample, entries);
 
@@ -860,7 +858,7 @@ async fn test_read_dir_plus() {
                     .unwrap()
                     .name
                     .expose_secret()
-                    .cmp(&b.as_ref().unwrap().name.expose_secret())
+                    .cmp(b.as_ref().unwrap().name.expose_secret())
             });
             let entries: Vec<DirectoryEntryPlus> =
                 entries.into_iter().map(Result::unwrap).collect();
@@ -885,7 +883,7 @@ async fn test_read_dir_plus() {
 
             let iter = fs.read_dir_plus(parent).await.unwrap();
             let mut entries: Vec<DirectoryEntryPlus> = iter.map(Result::unwrap).collect();
-            entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+            entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
             let mut sample = vec![
                 DirectoryEntryPlus {
                     ino: parent,
@@ -912,25 +910,24 @@ async fn test_read_dir_plus() {
                     attr: dir_attr,
                 },
             ];
-            sample.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+            sample.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
             assert_eq!(entries.len(), 4);
             assert_eq!(sample, entries);
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_find_by_name() {
     run_test(
         TestSetup {
             key: "test_find_by_name",
         },
         async {
-            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+            let fs = get_fs().await;
 
             let test_file = SecretString::from_str("test-file").unwrap();
             let (_fh, file_attr) = fs
@@ -956,20 +953,19 @@ async fn test_find_by_name() {
             );
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_exists_by_name() {
     run_test(
         TestSetup {
             key: "test_exists_by_name",
         },
         async {
-            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+            let fs = get_fs().await;
 
             let test_file = SecretString::from_str("test-file").unwrap();
             let _ = fs
@@ -984,27 +980,25 @@ async fn test_exists_by_name() {
                 .unwrap();
 
             assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
-            assert_eq!(
-                false,
-                (fs.exists_by_name(ROOT_INODE, &SecretString::from_str("42").unwrap())
+            assert!(
+                !(fs.exists_by_name(ROOT_INODE, &SecretString::from_str("42").unwrap())
                     .unwrap())
             );
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_remove_dir() {
     run_test(
         TestSetup {
             key: "test_remove_dir",
         },
         async {
-            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+            let fs = get_fs().await;
 
             let test_dir = SecretString::from_str("test-dir").unwrap();
             let _ = fs
@@ -1020,7 +1014,7 @@ async fn test_remove_dir() {
 
             assert!(fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
             fs.remove_dir(ROOT_INODE, &test_dir).await.unwrap();
-            assert_eq!(false, fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
+            assert!(!fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
             assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_dir).await.unwrap());
             assert_eq!(
                 0,
@@ -1031,23 +1025,22 @@ async fn test_remove_dir() {
                         entry.as_ref().unwrap().name.expose_secret() == test_dir.expose_secret()
                     })
                     .count()
-            )
+            );
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_remove_file() {
     run_test(
         TestSetup {
             key: "test_remove_file",
         },
         async {
-            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+            let fs = get_fs().await;
 
             let test_file = SecretString::from_str("test-file").unwrap();
             let _ = fs
@@ -1063,7 +1056,7 @@ async fn test_remove_file() {
 
             assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
             fs.remove_file(ROOT_INODE, &test_file).await.unwrap();
-            assert_eq!(false, fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
+            assert!(!fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
             assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_file).await.unwrap());
             assert_eq!(
                 0,
@@ -1074,23 +1067,22 @@ async fn test_remove_file() {
                         entry.as_ref().unwrap().name.expose_secret() == test_file.expose_secret()
                     })
                     .count()
-            )
+            );
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_find_by_name_exists_by_name100files() {
     run_test(
         TestSetup {
             key: "test_find_by_name_exists_by_name_many_files",
         },
         async {
-            let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-            let mut fs = fs.lock().await;
-            let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+            let fs = get_fs().await;
 
             for i in 0..100 {
                 let test_file = SecretString::from_str(&format!("test-file-{i}")).unwrap();
@@ -1108,17 +1100,19 @@ async fn test_find_by_name_exists_by_name100files() {
 
             let test_file = SecretString::from_str("test-file-42").unwrap();
             assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
-            assert!(matches!(
-                fs.find_by_name(ROOT_INODE, &test_file).await.unwrap(),
-                Some(_)
-            ));
+            assert!(fs
+                .find_by_name(ROOT_INODE, &test_file)
+                .await
+                .unwrap()
+                .is_some());
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_create_structure_and_root() {
     run_test(TestSetup { key: "test_sample" }, async {
         let fs = get_fs().await;
@@ -1143,17 +1137,16 @@ async fn test_create_structure_and_root() {
         assert!(fs.data_dir.join(INODES_DIR).join(ROOT_INODE_STR).is_file());
         assert!(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).is_dir());
     })
-    .await
+    .await;
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
-#[ignore]
+#[allow(clippy::too_many_lines)]
 async fn test_create() {
     run_test(TestSetup { key: "test_create" }, async {
-        let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
-        let mut fs = fs.lock().await;
-        let fs = fs.as_mut().unwrap().fs.as_ref().unwrap();
+        let fs = get_fs().await;
 
         // file in root
         let test_file = SecretString::from_str("test-file").unwrap();
@@ -1194,7 +1187,7 @@ async fn test_create() {
             .unwrap()
             .map(Result::unwrap)
             .collect();
-        entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+        entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
         assert_eq!(attr, entries[1].attr);
         assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
         assert_eq!(
@@ -1244,7 +1237,7 @@ async fn test_create() {
             .unwrap()
             .map(Result::unwrap)
             .collect();
-        entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+        entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
         assert_eq!(attr, entries[1].attr);
         let mut entries: Vec<DirectoryEntryPlus> = fs
             .read_dir_plus(attr.ino)
@@ -1252,7 +1245,7 @@ async fn test_create() {
             .unwrap()
             .map(Result::unwrap)
             .collect();
-        entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+        entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
         assert_eq!(attr, entries[0].attr);
         assert_eq!(ROOT_INODE, entries[1].attr.ino);
         assert!(fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
@@ -1303,7 +1296,7 @@ async fn test_create() {
             .unwrap()
             .map(Result::unwrap)
             .collect();
-        entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+        entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
         assert_eq!(attr, entries[2].attr);
         let mut entries: Vec<DirectoryEntryPlus> = fs
             .read_dir_plus(attr.ino)
@@ -1311,7 +1304,7 @@ async fn test_create() {
             .unwrap()
             .map(Result::unwrap)
             .collect();
-        entries.sort_by(|a, b| a.name.expose_secret().cmp(&b.name.expose_secret()));
+        entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
         assert_eq!(attr, entries[0].attr);
         assert_eq!(parent, entries[1].attr.ino);
         assert!(fs.exists_by_name(parent, &test_dir_2).unwrap());
@@ -1346,11 +1339,12 @@ async fn test_create() {
             Err(FsError::AlreadyExists)
         ));
     })
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn test_rename() {
     run_test(TestSetup { key: "test_rename" }, async {
         let fs = get_fs().await;
@@ -1372,14 +1366,14 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &file_1, new_parent, &file_1_new)
             .await
             .unwrap();
-        assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &file_1_new).unwrap(), true);
+        assert!(!fs.exists_by_name(ROOT_INODE, &file_1).unwrap());
+        assert!(fs.exists_by_name(new_parent, &file_1_new).unwrap());
         let new_attr = fs
             .find_by_name(new_parent, &file_1_new)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fs.is_file(new_attr.ino), true);
+        assert!(fs.is_file(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -1419,14 +1413,14 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_1_new)
             .await
             .unwrap();
-        assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_1).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &dir_1_new).unwrap(), true);
+        assert!(!fs.exists_by_name(ROOT_INODE, &dir_1).unwrap());
+        assert!(fs.exists_by_name(new_parent, &dir_1_new).unwrap());
         let new_attr = fs
             .find_by_name(new_parent, &dir_1_new)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fs.is_dir(new_attr.ino), true);
+        assert!(fs.is_dir(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -1509,10 +1503,10 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &file_1, new_parent, &file_2)
             .await
             .unwrap();
-        assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &file_2).unwrap(), true);
+        assert!(!fs.exists_by_name(ROOT_INODE, &file_1).unwrap());
+        assert!(fs.exists_by_name(new_parent, &file_2).unwrap());
         let new_attr = fs.find_by_name(new_parent, &file_2).await.unwrap().unwrap();
-        assert_eq!(fs.is_file(new_attr.ino), true);
+        assert!(fs.is_file(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -1563,10 +1557,10 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_2)
             .await
             .unwrap();
-        assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_1).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &dir_2).unwrap(), true);
+        assert!(!fs.exists_by_name(ROOT_INODE, &dir_1).unwrap());
+        assert!(fs.exists_by_name(new_parent, &dir_2).unwrap());
         let new_attr = fs.find_by_name(new_parent, &dir_2).await.unwrap().unwrap();
-        assert_eq!(fs.is_dir(new_attr.ino), true);
+        assert!(fs.is_dir(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -1659,10 +1653,10 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &file_1, new_parent, &file_2)
             .await
             .unwrap();
-        assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &file_2).unwrap(), true);
+        assert!(!fs.exists_by_name(ROOT_INODE, &file_1).unwrap());
+        assert!(fs.exists_by_name(new_parent, &file_2).unwrap());
         let new_attr = fs.find_by_name(new_parent, &file_2).await.unwrap().unwrap();
-        assert_eq!(fs.is_file(new_attr.ino), true);
+        assert!(fs.is_file(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -1711,10 +1705,10 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_2)
             .await
             .unwrap();
-        assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_1).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &dir_2).unwrap(), true);
+        assert!(!fs.exists_by_name(ROOT_INODE, &dir_1).unwrap());
+        assert!(fs.exists_by_name(new_parent, &dir_2).unwrap());
         let new_attr = fs.find_by_name(new_parent, &dir_2).await.unwrap().unwrap();
-        assert_eq!(fs.is_dir(new_attr.ino), true);
+        assert!(fs.is_dir(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -1795,10 +1789,10 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &file_1, new_parent, &file_1)
             .await
             .unwrap();
-        assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &file_1).unwrap(), true);
+        assert!(!fs.exists_by_name(ROOT_INODE, &file_1).unwrap());
+        assert!(fs.exists_by_name(new_parent, &file_1).unwrap());
         let new_attr = fs.find_by_name(new_parent, &file_1).await.unwrap().unwrap();
-        assert_eq!(fs.is_file(new_attr.ino), true);
+        assert!(fs.is_file(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -1847,10 +1841,10 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_1)
             .await
             .unwrap();
-        assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_1).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &dir_1).unwrap(), true);
+        assert!(!fs.exists_by_name(ROOT_INODE, &dir_1).unwrap());
+        assert!(fs.exists_by_name(new_parent, &dir_1).unwrap());
         let new_attr = fs.find_by_name(new_parent, &dir_1).await.unwrap().unwrap();
-        assert_eq!(fs.is_dir(new_attr.ino), true);
+        assert!(fs.is_dir(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -1931,10 +1925,10 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &file_1, new_parent, &dir_1)
             .await
             .unwrap();
-        assert_ne!(fs.exists_by_name(ROOT_INODE, &file_1).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &dir_1).unwrap(), true);
+        assert!(!fs.exists_by_name(ROOT_INODE, &file_1).unwrap());
+        assert!(fs.exists_by_name(new_parent, &dir_1).unwrap());
         let new_attr = fs.find_by_name(new_parent, &dir_1).await.unwrap().unwrap();
-        assert_eq!(fs.is_file(new_attr.ino), true);
+        assert!(fs.is_file(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -1984,10 +1978,10 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &dir_3, new_parent, &file_1)
             .await
             .unwrap();
-        assert_ne!(fs.exists_by_name(ROOT_INODE, &dir_3).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &file_1).unwrap(), true);
+        assert!(!fs.exists_by_name(ROOT_INODE, &dir_3).unwrap());
+        assert!(fs.exists_by_name(new_parent, &file_1).unwrap());
         let new_attr = fs.find_by_name(new_parent, &file_1).await.unwrap().unwrap();
-        assert_eq!(fs.is_dir(new_attr.ino), true);
+        assert!(fs.is_dir(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -2055,18 +2049,18 @@ async fn test_rename() {
             )
             .await
             .unwrap();
-        let _attr_2 = new_parent_attr;
+        let _ = new_parent_attr;
         let name_2 = dir_new_parent;
         assert!(matches!(
             fs.rename(ROOT_INODE, &dir_3, new_parent, &name_2).await,
             Err(FsError::NotEmpty)
         ));
-        assert_eq!(fs.exists_by_name(ROOT_INODE, &dir_3).unwrap(), true);
-        assert_eq!(fs.exists_by_name(new_parent, &name_2).unwrap(), true);
+        assert!(fs.exists_by_name(ROOT_INODE, &dir_3).unwrap());
+        assert!(fs.exists_by_name(new_parent, &name_2).unwrap());
         let attr_3 = fs.find_by_name(ROOT_INODE, &dir_3).await.unwrap().unwrap();
-        assert_eq!(fs.is_dir(attr_3.ino), true);
+        assert!(fs.is_dir(attr_3.ino));
         let attr_2 = fs.find_by_name(new_parent, &name_2).await.unwrap().unwrap();
-        assert_eq!(fs.is_dir(attr_2.ino), true);
+        assert!(fs.is_dir(attr_2.ino));
         let new_attr = fs.find_by_name(new_parent, &dir_3).await.unwrap().unwrap();
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
@@ -2142,9 +2136,9 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &file_3, new_parent, &file_3)
             .await
             .unwrap();
-        assert_eq!(fs.exists_by_name(new_parent, &file_3).unwrap(), true);
+        assert!(fs.exists_by_name(new_parent, &file_3).unwrap());
         let new_attr = fs.find_by_name(new_parent, &file_3).await.unwrap().unwrap();
-        assert_eq!(fs.is_file(new_attr.ino), true);
+        assert!(fs.is_file(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -2174,9 +2168,9 @@ async fn test_rename() {
         fs.rename(ROOT_INODE, &dir_5, new_parent, &dir_5)
             .await
             .unwrap();
-        assert_eq!(fs.exists_by_name(new_parent, &dir_5).unwrap(), true);
+        assert!(fs.exists_by_name(new_parent, &dir_5).unwrap());
         let new_attr = fs.find_by_name(new_parent, &dir_5).await.unwrap().unwrap();
-        assert_eq!(fs.is_dir(new_attr.ino), true);
+        assert!(fs.is_dir(new_attr.ino));
         assert_eq!(new_attr.ino, attr.ino);
         assert_eq!(new_attr.kind, attr.kind);
         assert_eq!(
@@ -2257,7 +2251,7 @@ async fn test_rename() {
             Err(FsError::InvalidInodeType)
         ));
     })
-    .await
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2291,14 +2285,15 @@ async fn test_open() {
             Err(FsError::AlreadyOpenForWrite)
         ));
     })
-    .await
+    .await;
 }
 
 // #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 // #[traced_test]
+#[allow(clippy::too_many_lines)]
 async fn _test_sample() {
     run_test(TestSetup { key: "test_sample" }, async {
-        let fs = get_fs().await;
+        let _ = get_fs().await;
     })
-    .await
+    .await;
 }

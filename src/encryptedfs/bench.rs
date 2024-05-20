@@ -65,7 +65,7 @@ fn bench_exists_by_name(b: &mut Bencher) {
                         )
                         .unwrap();
                 });
-            })
+            });
         });
     });
 }
@@ -106,7 +106,7 @@ fn bench_find_by_name(b: &mut Bencher) {
                         .await
                         .unwrap();
                 });
-            })
+            });
         });
     });
 }
@@ -137,7 +137,7 @@ fn bench_read_dir(b: &mut Bencher) {
                     let vec: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
                     black_box(vec);
                 });
-            })
+            });
         });
     });
 }
@@ -168,7 +168,7 @@ fn bench_read_dir_plus(b: &mut Bencher) {
                     let vec: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
                     black_box(vec);
                 });
-            })
+            });
         });
     });
 }

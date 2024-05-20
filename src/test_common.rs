@@ -92,9 +92,10 @@ async fn teardown() -> Result<(), io::Error> {
 }
 
 #[allow(dead_code)]
+#[allow(clippy::future_not_send)]
 pub async fn run_test<T>(init: TestSetup, t: T)
 where
-    T: Future + Send + Sync,
+    T: Future,
 {
     {
         let s = SETUP_RESULT.get_or(|| Mutex::new(None));
