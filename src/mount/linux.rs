@@ -1136,9 +1136,7 @@ impl Filesystem for EncryptedFsFuse3 {
         Ok(ReplyDirectory {
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_sign_loss)]
-            // entries: stream::iter(iter.skip(offset as usize)),
-            // todo: see https://github.com/users/radumarias/projects/1/views/2?pane=issue&itemId=63083915
-            entries: stream::iter(iter.skip(0)),
+            entries: stream::iter(iter.skip(offset as usize)),
         })
     }
 
@@ -1229,9 +1227,7 @@ impl Filesystem for EncryptedFsFuse3 {
 
         Ok(ReplyDirectoryPlus {
             #[allow(clippy::cast_possible_truncation)]
-            // entries: stream::iter(iter.skip(offset as usize)),
-            // todo: see https://github.com/users/radumarias/projects/1/views/2?pane=issue&itemId=63083915
-            entries: stream::iter(iter.skip(0)),
+            entries: stream::iter(iter.skip(offset as usize)),
         })
     }
 

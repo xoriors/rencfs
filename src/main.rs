@@ -39,18 +39,13 @@ enum ExitStatusError {
 async fn main() -> Result<()> {
     let matches = get_cli_args();
 
-    let log_level = if is_debug() {
-        Level::DEBUG
-    } else {
-        let str = matches.get_one::<String>("log-level").unwrap().as_str();
-        let log_level = Level::from_str(str);
-        if log_level.is_err() {
-            error!("Invalid log level");
-            return Err(ExitStatusError::Failure(1).into());
-        }
-
-        log_level.unwrap()
-    };
+    let str = matches.get_one::<String>("log-level").unwrap().as_str();
+    let log_level = Level::from_str(str);
+    if log_level.is_err() {
+        error!("Invalid log level");
+        return Err(ExitStatusError::Failure(1).into());
+    }
+    let log_level = log_level.unwrap();
     let guard = log_init(log_level);
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]

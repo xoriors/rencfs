@@ -1013,7 +1013,7 @@ impl EncryptedFs {
         Ok(self.create_directory_entry_iterator(iter).await)
     }
 
-    /// Like [`read_dir`](EncryptedFs::ls) but with [`FileAttr`] so we don't need to query again for those.
+    /// Like [`EncryptedFs::ls`] but with [`FileAttr`] so we don't need to query again for those.
     pub async fn ls_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
         let ls_dir = self.contents_path(ino).join(LS_DIR);
         if !ls_dir.is_dir() {
