@@ -1324,7 +1324,7 @@ async fn test_create_nod() {
 
             // existing file
             assert!(matches!(
-                fs.mk(
+                fs.create(
                     ROOT_INODE,
                     &test_file,
                     create_attr(FileType::RegularFile),
@@ -1337,7 +1337,7 @@ async fn test_create_nod() {
 
             // existing directory
             assert!(matches!(
-                fs.mk(
+                fs.create(
                     ROOT_INODE,
                     &test_dir,
                     create_attr(FileType::Directory),
