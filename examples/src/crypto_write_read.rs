@@ -11,7 +11,7 @@ use secrecy::SecretVec;
 use tracing::info;
 
 use rencfs::crypto;
-use rencfs::crypto::writer::CryptoWriter;
+use rencfs::crypto::write::CryptoWriter;
 use rencfs::crypto::Cipher;
 
 fn main() -> Result<()> {
@@ -37,7 +37,6 @@ fn main() -> Result<()> {
     let mut writer = crypto::create_writer(File::create(out.clone())?, cipher, key.clone());
     info!("encrypt file");
     io::copy(&mut file, &mut writer).unwrap();
-    writer.flush()?;
     writer.finish()?;
 
     let mut reader = crypto::create_reader(File::open(out)?, cipher, key);

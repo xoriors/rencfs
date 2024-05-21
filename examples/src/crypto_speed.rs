@@ -1,7 +1,5 @@
-1use rand_core::RngCore;
 use std::env::args;
 use std::fs::File;
-use std::future::Future;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -9,10 +7,11 @@ use std::time::Instant;
 use std::{fs, io};
 
 use anyhow::Result;
+use rand_core::RngCore;
 use secrecy::SecretVec;
 
 use rencfs::crypto;
-use rencfs::crypto::writer::CryptoWriter;
+use rencfs::crypto::write::CryptoWriter;
 use rencfs::crypto::Cipher;
 
 #[tokio::main]
@@ -131,7 +130,6 @@ where
     speed(
         || {
             io::copy(&mut r, &mut w)?;
-            w.flush()?;
             w.into_inner()
                 .map_err(|err| {
                     let (err, _) = err.into_parts();

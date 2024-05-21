@@ -7,7 +7,7 @@ authors = ["Radu Marias <radumarias@gmail.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/radumarias/rencfs"
 keywords = ["filesystem", "fuse", "encryption", "system", "security"]
-readme = "../README.md"
+readme = ""
 categories = ["cryptography", "filesystem"]
 
 [[bin]]
@@ -55,7 +55,6 @@ rencfs = { path = "../" }
 tokio = { version = "1.36", features = ["full"] }
 tracing = { version = "0.1.40", features = ["max_level_trace", "release_max_level_info"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-test = "0.2.4"
 rpassword = "7.3.1"
 anyhow = "1.0.82"
 ring = "0.17.8"

@@ -384,14 +384,17 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             .unwrap();
         let _ = rt
             .block_on(async {
-                mount_handle_clone
+                let res = mount_handle_clone
                     .lock()
                     .await
                     .replace(None)
                     .unwrap()
                     .unwrap()
                     .umount()
-                    .await?;
+                    .await;
+                if res.is_err() {
+                    umount(mountpoint.as_str())?;
+                }
                 Ok::<(), io::Error>(())
             })
             .map_err(|err| {
@@ -432,7 +435,7 @@ fn remove_pass() {
     }
 }
 
-fn umount(mountpoint: &str) -> Result<()> {
+fn umount(mountpoint: &str) -> io::Result<()> {
     // try normal umount
     if process::Command::new("umount")
         .arg(mountpoint)

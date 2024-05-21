@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::fs::{DirEntry, File, OpenOptions, ReadDir};
 use std::io::ErrorKind::Other;
-use std::io::{SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::{NonZeroUsize, ParseIntError};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -29,8 +29,8 @@ use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::{ArcHashMap, Holder};
 use crate::async_util::call_async;
-use crate::crypto::reader::CryptoReader;
-use crate::crypto::writer::{
+use crate::crypto::read::{CryptoReader, CryptoReaderSeek};
+use crate::crypto::write::{
     CryptoWriter, CryptoWriterSeek, FileCryptoWriterCallback, FileCryptoWriterMetadataProvider,
 };
 use crate::crypto::Cipher;
@@ -472,7 +472,7 @@ impl Iterator for DirectoryEntryPlusIterator {
 struct ReadHandleContext {
     ino: u64,
     attr: TimeAndSizeFileAttr,
-    reader: Option<Box<dyn CryptoReader>>,
+    reader: Option<Box<dyn CryptoReaderSeek<File>>>,
 }
 
 enum ReadHandleContextOperation {
@@ -784,6 +784,11 @@ impl EncryptedFs {
                     Ok::<(), FsError>(())
                 });
 
+                // wait for all tasks to finish
+                while let Some(res) = join_set.join_next().await {
+                    res??;
+                }
+
                 let self_clone = fs.clone();
                 let handle = if attr.kind == FileType::RegularFile {
                     if read || write {
@@ -797,10 +802,6 @@ impl EncryptedFs {
                     0
                 };
 
-                // wait for all tasks to finish
-                while let Some(res) = join_set.join_next().await {
-                    res??;
-                }
                 Ok((handle, attr))
             })
             .await?
@@ -1405,7 +1406,6 @@ impl EncryptedFs {
             let mut ctx = ctx.lock().await;
 
             let mut writer = ctx.writer.take().unwrap();
-            writer.flush()?;
             writer.finish()?;
 
             self.opened_files_for_write.write().await.remove(&ctx.ino);
@@ -1617,9 +1617,10 @@ impl EncryptedFs {
         Ok(handle.unwrap())
     }
 
+    /// Truncates or extends the underlying file, updating the size of this file to become size.
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::too_many_lines)]
-    pub async fn truncate(&self, ino: u64, size: u64) -> FsResult<()> {
+    pub async fn set_len(&self, ino: u64, size: u64) -> FsResult<()> {
         let attr = self.get_attr(ino).await?;
         if matches!(attr.kind, FileType::Directory) {
             return Err(FsError::InvalidInodeType);
@@ -1668,7 +1669,6 @@ impl EncryptedFs {
                     // increase size, seek to new size will write zeros
                     stream_util::fill_zeros(&mut writer, size - attr.size)?;
                 }
-                writer.flush()?;
                 file = writer.finish()?;
             }
             file.commit()?;
@@ -1789,7 +1789,7 @@ impl EncryptedFs {
     }
 
     /// Create a crypto writer using internal encryption info.
-    pub async fn create_writer<W: Write + Send + Sync>(
+    pub async fn create_writer<W: Write + Seek + Send + Sync>(
         &self,
         file: W,
     ) -> FsResult<impl CryptoWriter<W>> {
@@ -1833,7 +1833,7 @@ impl EncryptedFs {
         &self,
         file: &Path,
         lock: Option<Holder<RwLock<bool>>>,
-    ) -> FsResult<Box<dyn CryptoReader>> {
+    ) -> FsResult<Box<dyn CryptoReaderSeek<File>>> {
         Ok(crypto::create_file_reader(
             file,
             self.cipher,
@@ -1843,9 +1843,12 @@ impl EncryptedFs {
     }
 
     /// Create a crypto reader using internal encryption info.
-    pub async fn create_reader(&self, file: File) -> FsResult<impl CryptoReader> {
+    pub async fn create_reader<R: Read + Seek + Send + Sync>(
+        &self,
+        reader: R,
+    ) -> FsResult<impl CryptoReader<R>> {
         Ok(crypto::create_reader(
-            file,
+            reader,
             self.cipher,
             self.key.get().await?,
         ))
@@ -2218,7 +2221,6 @@ fn read_or_create_key(
             Arc::new(derived_key),
         );
         bincode::serialize_into(&mut writer, &key)?;
-        writer.flush()?;
         writer.finish()?;
         Ok(SecretVec::new(key))
     }

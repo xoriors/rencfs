@@ -68,7 +68,7 @@ impl Future for MountHandleInnerImpl {
 
 #[async_trait]
 impl MountHandleInner for MountHandleInnerImpl {
-    async fn umount(mut self) -> io::Result<()> {
+    async fn unmount(mut self) -> io::Result<()> {
         Ok(())
     }
 }

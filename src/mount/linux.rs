@@ -489,7 +489,7 @@ impl Filesystem for EncryptedFsFuse3 {
         if let Some(size) = set_attr.size {
             debug!(size, "truncate");
 
-            self.get_fs().truncate(inode, size).await.map_err(|err| {
+            self.get_fs().set_len(inode, size).await.map_err(|err| {
                 error!(err = %err);
                 Errno::from(EIO)
             })?;
@@ -927,7 +927,7 @@ impl Filesystem for EncryptedFsFuse3 {
         //
         if check_access(attr.uid, attr.gid, attr.perm, req.uid, req.gid, access_mask) {
             if truncate {
-                self.get_fs().truncate(attr.ino, 0).await.map_err(|err| {
+                self.get_fs().set_len(attr.ino, 0).await.map_err(|err| {
                     error!(err = %err);
                     EIO
                 })?;
@@ -1443,7 +1443,7 @@ impl Future for MountHandleInnerImpl {
 
 #[async_trait]
 impl MountHandleInner for MountHandleInnerImpl {
-    async fn umount(mut self) -> io::Result<()> {
+    async fn unmount(mut self) -> io::Result<()> {
         self.inner.unmount().await
     }
 }

@@ -9,7 +9,7 @@ use anyhow::Result;
 use secrecy::{SecretString, SecretVec};
 
 use rencfs::crypto;
-use rencfs::crypto::writer::CryptoWriter;
+use rencfs::crypto::write::CryptoWriter;
 use rencfs::crypto::Cipher;
 
 #[tokio::main]
@@ -36,7 +36,6 @@ async fn main() -> Result<()> {
     let file_out = File::create(path_out.clone())?;
     let mut writer = crypto::create_writer(file_out, cipher, key.clone());
     io::copy(&mut file_in, &mut writer)?;
-    writer.flush()?;
     writer.finish()?;
 
     // check hash

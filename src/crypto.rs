@@ -23,8 +23,10 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{debug, error, instrument};
 
-use crate::crypto::reader::{CryptoReader, FileCryptoReader, RingCryptoReader};
-use crate::crypto::writer::{
+use crate::crypto::read::{
+    CryptoReader, CryptoReaderSeek, FileCryptoReader, RingCryptoReader, RingCryptoReaderSeek,
+};
+use crate::crypto::write::{
     CryptoWriter, CryptoWriterSeek, FileCryptoWriter, FileCryptoWriterCallback,
     FileCryptoWriterMetadataProvider, RingCryptoWriter,
 };
@@ -32,8 +34,8 @@ use crate::encryptedfs::FsResult;
 use crate::{fs_util, stream_util};
 
 pub mod buf_mut;
-pub mod reader;
-pub mod writer;
+pub mod read;
+pub mod write;
 
 pub static BASE64: GeneralPurpose = GeneralPurpose::new(&STANDARD, NO_PAD);
 
@@ -172,13 +174,34 @@ fn create_ring_reader<R: Read + Seek + Send + Sync>(
     RingCryptoReader::new(reader, algorithm, key)
 }
 
-/// Creates and encrypted reader, it is using [ring](https://crates.io/crates/ring) crate to handle encryption.
+fn create_ring_reader_seek<R: Read + Seek + Send + Sync>(
+    reader: R,
+    cipher: Cipher,
+    key: Arc<SecretVec<u8>>,
+) -> RingCryptoReaderSeek<R> {
+    let algorithm = match cipher {
+        Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
+        Cipher::Aes256Gcm => &AES_256_GCM,
+    };
+    RingCryptoReaderSeek::new(reader, algorithm, key)
+}
+
+/// Creates and encrypted reader
 pub fn create_reader<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-) -> impl CryptoReader {
+) -> impl CryptoReader<R> {
     create_ring_reader(reader, cipher, key)
+}
+
+/// Creates and encrypted reader with seek
+pub fn create_reader_seek<R: Read + Seek + Send + Sync>(
+    reader: R,
+    cipher: Cipher,
+    key: Arc<SecretVec<u8>>,
+) -> impl CryptoReaderSeek<R> {
+    create_ring_reader_seek(reader, cipher, key)
 }
 
 /// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read  
@@ -189,7 +212,7 @@ pub fn create_file_reader(
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     lock: Option<Holder<RwLock<bool>>>,
-) -> io::Result<Box<dyn CryptoReader>> {
+) -> io::Result<Box<dyn CryptoReaderSeek<File>>> {
     Ok(Box::new(FileCryptoReader::new(file, cipher, key, lock)?))
 }
 
@@ -198,7 +221,6 @@ pub fn encrypt(s: &SecretString, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Res
     let mut cursor = io::Cursor::new(vec![]);
     let mut writer = create_writer(cursor, cipher, key);
     writer.write_all(s.expose_secret().as_bytes())?;
-    writer.flush()?;
     cursor = writer.finish()?;
     let v = cursor.into_inner();
     Ok(BASE64.encode(v))
@@ -360,7 +382,6 @@ where
 {
     let mut writer = create_writer(writer, cipher, key);
     bincode::serialize_into(&mut writer, value)?;
-    writer.flush()?;
     writer.finish()?;
     Ok(())
 }

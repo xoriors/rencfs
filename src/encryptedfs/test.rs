@@ -1,5 +1,6 @@
 use std::str::FromStr;
 use std::string::ToString;
+use std::thread;
 
 use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::Mutex;
@@ -364,10 +365,10 @@ async fn test_read() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
-async fn test_truncate() {
+async fn test_set_len() {
     run_test(
         TestSetup {
-            key: "test_truncate",
+            key: "test_set_len",
         },
         async {
             let fs = get_fs().await;
@@ -396,7 +397,7 @@ async fn test_truncate() {
             write_all_bytes_to_fs(&fs, attr.ino, 5, data.as_bytes(), fh)
                 .await
                 .unwrap();
-            fs.truncate(attr.ino, 10).await.unwrap();
+            fs.set_len(attr.ino, 10).await.unwrap();
             assert_eq!(10, fs.get_attr(attr.ino).await.unwrap().size);
             assert_eq!(
                 format!("test-37{}", "\0".repeat(3)),
@@ -409,7 +410,7 @@ async fn test_truncate() {
             fs.release(fh).await.unwrap();
 
             // size doesn't change
-            fs.truncate(attr.ino, 10).await.unwrap();
+            fs.set_len(attr.ino, 10).await.unwrap();
             assert_eq!(10, fs.get_attr(attr.ino).await.unwrap().size);
             assert_eq!(
                 format!("test-37{}", "\0".repeat(3)),
@@ -426,7 +427,7 @@ async fn test_truncate() {
             write_all_bytes_to_fs(&fs, attr.ino, 0, data.as_bytes(), fh)
                 .await
                 .unwrap();
-            fs.truncate(attr.ino, 4).await.unwrap();
+            fs.set_len(attr.ino, 4).await.unwrap();
             assert_eq!(4, fs.get_attr(attr.ino).await.unwrap().size);
             assert_eq!(
                 "37st",
@@ -439,7 +440,7 @@ async fn test_truncate() {
             fs.release(fh).await.unwrap();
 
             // size decrease to 0
-            fs.truncate(attr.ino, 0).await.unwrap();
+            fs.set_len(attr.ino, 0).await.unwrap();
             assert_eq!(0, fs.get_attr(attr.ino).await.unwrap().size);
             assert_eq!(
                 String::new(),
@@ -454,9 +455,6 @@ async fn test_truncate() {
     .await;
 }
 
-// todo: see why it fails on github
-// called `Result::unwrap` on an `Err` value: Io { source: Os { code: 2, kind: NotFound, message: "No such file or directory" }, backtrace: <disabled> }
-#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
@@ -1140,7 +1138,6 @@ async fn test_create_structure_and_root() {
     .await;
 }
 
-#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
 #[allow(clippy::too_many_lines)]

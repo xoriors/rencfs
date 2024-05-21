@@ -55,7 +55,7 @@ pub struct MountHandle {
 }
 impl MountHandle {
     pub async fn umount(self) -> io::Result<()> {
-        self.inner.umount().await
+        self.inner.unmount().await
     }
 }
 
@@ -69,7 +69,7 @@ impl Future for MountHandle {
 
 #[async_trait]
 pub(crate) trait MountHandleInner: Future<Output = io::Result<()>> {
-    async fn umount(mut self) -> io::Result<()>;
+    async fn unmount(mut self) -> io::Result<()>;
 }
 
 /// **`mountpoint`** where it wil mount the filesystem
