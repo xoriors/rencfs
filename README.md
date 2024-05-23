@@ -6,7 +6,7 @@
 [![clippy](https://github.com/radumarias/rencfs/actions/workflows/clippy.yml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/check.yml)
 [![test](https://github.com/radumarias/rencfs/actions/workflows/test.yml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/test.yml)
 [![Discord](https://img.shields.io/discord/1236855443486277653)](https://discord.com/channels/1236855443486277653/1236855448515252306)
-![Matrix](https://img.shields.io/matrix/rencfs%3Amatrix.org)
+[![Matrix](https://img.shields.io/matrix/rencfs%3Amatrix.org)](https://matrix.to/#/#rencfs:matrix.org)
 [![](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg)](https://rencfs.zulipchat.com)
 
 > ⚠️ **Warning**
