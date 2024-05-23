@@ -7,7 +7,6 @@
 [![test](https://github.com/radumarias/rencfs/actions/workflows/test.yml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/test.yml)
 [![Discord](https://img.shields.io/discord/1236855443486277653)](https://discord.com/channels/1236855443486277653/1236855448515252306)
 [![](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg)](https://rencfs.zulipchat.com)
-[![Run on Google Cloud](https://deploy.cloud.run/button.svg)](https://deploy.cloud.run)
 
 > ⚠️ **Warning**
 > ***This is early in development. Please do not use it with sensitive data just yet. Please wait for a
@@ -46,6 +45,61 @@ password without re-encrypting all data, we just re-encrypt the master key.
 - [tracing](https://crates.io/crates/tracing) for logs
 
 # Usage
+
+## Give it a try with Run on Google Cloud
+
+[![Run on Google Cloud](https://deploy.cloud.run/button.svg)](https://deploy.cloud.run)
+
+
+## Give it a quick try in docker
+
+Get the image
+
+```bash
+docker pull xorio42/rencfs
+```
+
+Start a container to set up mount in it
+
+```bash
+docker run -it --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined xorio42/rencfs:latest /bin/sh
+```
+
+In the container create mount and data directories
+
+```bash
+mkdir fsmnt && mkdir fsdata
+```
+
+Start `rencfs`
+
+```bash
+rencfs --mount-point fsmnt --data-dir fsdata
+```
+
+Enter a password for encryption.
+
+Get the container ID
+
+```bash
+docker ps
+```
+
+In another terminal attach to running container with the above ID
+
+```bash
+docker exec -it <ID> /bin/sh
+```
+
+From here you can play with it by creating files in `fsmnt` directory
+
+```bash
+cd fsmnt
+mkdir 1
+ls
+echo "test" > 1/test
+cat 1/test
+```
 
 You can use it as a command line tool to mount an encrypted file system, or directly using the library to build your own
 binary (for library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/)).
@@ -132,56 +186,6 @@ values: `TRACE`, `DEBUG`, `INFO` (default), `WARN`, `ERROR`.
 
 ```bash
 rencfs --log-level LEVEL ...
-```
-
-## Start it in docker
-
-Get the image
-
-```bash
-docker pull xorio42/rencfs
-```
-
-Start a container to set up mount in it
-
-```bash
-docker run -it --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined xorio42/rencfs:latest /bin/sh
-```
-
-In the container create mount and data directories
-
-```bash
-mkdir fsmnt && mkdir fsdata
-```
-
-Start `rencfs`
-
-```bash
-rencfs --mount-point fsmnt --data-dir fsdata
-```
-
-Enter a password for encryption.
-
-Get the container ID
-
-```bash
-docker ps
-```
-
-In another terminal attach to running container with the above ID
-
-```bash
-docker exec -it <ID> /bin/sh
-```
-
-From here you can play with it by creating files in `fsmnt` directory
-
-```bash
-cd fsmnt
-mkdir 1
-ls
-echo "test" > 1/test
-cat 1/test
 ```
 
 # Building from source
