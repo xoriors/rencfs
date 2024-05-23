@@ -116,7 +116,7 @@ fn file_speed(
     Ok(())
 }
 
-fn test_speed<W: Write, R: Read, FR>(
+fn test_speed<W: Write + Send + Sync, R: Read + Send + Sync, FR>(
     r: &mut impl Read,
     w: &mut (impl CryptoWrite<W> + ?Sized),
     size: u64,

@@ -20,7 +20,7 @@ path = "src/change_password_cli.rs"
 
 [[bin]]
 name = "internal_crypto_debug"
-path = "internal_crypto_debug.rs"
+path = "src/internal_crypto_debug.rs"
 
 [[bin]]
 name = "crypto_write_read"
