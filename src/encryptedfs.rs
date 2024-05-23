@@ -1804,6 +1804,18 @@ impl EncryptedFs {
         ))
     }
 
+    /// Create a crypto writer with seek using internal encryption info.
+    pub async fn create_write_seek<W: Write + Seek + Read + Send + Sync>(
+        &self,
+        file: W,
+    ) -> FsResult<impl CryptoWriteSeek<W>> {
+        Ok(crypto::create_write_seek(
+            file,
+            self.cipher,
+            self.key.get().await?,
+        ))
+    }
+
     /// Create a crypto writer to file using internal encryption info.
     ///
     /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
@@ -1847,11 +1859,23 @@ impl EncryptedFs {
     }
 
     /// Create a crypto reader using internal encryption info.
-    pub async fn create_read<R: Read + Seek + Send + Sync>(
+    pub async fn create_read<R: Read + Send + Sync>(
         &self,
         reader: R,
     ) -> FsResult<impl CryptoRead<R>> {
         Ok(crypto::create_read(
+            reader,
+            self.cipher,
+            self.key.get().await?,
+        ))
+    }
+
+    /// Create a crypto reader with seek using internal encryption info.
+    pub async fn create_read_seek<R: Read + Seek + Send + Sync>(
+        &self,
+        reader: R,
+    ) -> FsResult<impl CryptoReadSeek<R>> {
+        Ok(crypto::create_read_seek(
             reader,
             self.cipher,
             self.key.get().await?,
@@ -1940,11 +1964,11 @@ impl EncryptedFs {
                 let lock = self
                     .read_write_locks
                     .get_or_insert_with(ino, || RwLock::new(false));
-                let reader = self.create_file_read(&path, Some(lock)).await?;
+                let reader = self.create_read_seek(File::open(&path)?).await?;
                 let ctx = ReadHandleContext {
                     ino,
                     attr,
-                    reader: Some(reader),
+                    reader: Some(Box::new(reader)),
                 };
                 self.read_handles
                     .write()
@@ -1984,17 +2008,12 @@ impl EncryptedFs {
                     .read_write_locks
                     .get_or_insert_with(ino, || RwLock::new(false));
                 let writer = self
-                    .create_file_write(
-                        &path,
-                        Some(Box::new(callback)),
-                        Some(lock),
-                        Some(metadata_provider),
-                    )
+                    .create_write_seek(OpenOptions::new().read(true).write(true).open(&path)?)
                     .await?;
                 let ctx = WriteHandleContext {
                     ino,
                     attr,
-                    writer: Some(writer),
+                    writer: Some(Box::new(writer)),
                 };
                 self.write_handles
                     .write()

@@ -314,3 +314,31 @@ fn test_ring_crypto_read_seek_skip_blocks_aes() {
     reader.read_exact(&mut buffer).unwrap();
     assert_eq!(&buffer, &data[2 * BLOCK_SIZE..]);
 }
+
+#[test]
+#[traced_test]
+fn test_ring_crypto_read_seek_in_second_block() {
+    // Create a buffer with some data larger than BUF_SIZE
+    let mut data = vec![0; 2 * BLOCK_SIZE];
+    let mut rng = rand::thread_rng();
+    rng.fill(&mut data[..]);
+    let mut cursor = Cursor::new(vec![]);
+
+    // Create a key for encryption
+    let algorithm = &AES_256_GCM;
+    let key = Arc::new(SecretVec::new(vec![0; algorithm.key_len()]));
+
+    // write the data
+    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, key.clone());
+    writer.write_all(&data).unwrap();
+    writer.finish().unwrap();
+
+    // Create a RingCryptoReaderSeek
+    cursor.seek(SeekFrom::Start(0)).unwrap();
+    let mut reader = RingCryptoReaderSeek::new(&mut cursor, algorithm, key);
+
+    assert_eq!(
+        reader.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap(),
+        BLOCK_SIZE as u64
+    );
+}

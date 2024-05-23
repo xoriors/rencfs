@@ -154,12 +154,6 @@ impl<R: Read + Send + Sync> CryptoRead<R> for RingCryptoRead<R> {
     }
 }
 
-impl<R: Read + Seek> Seek for RingCryptoRead<R> {
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        todo!()
-    }
-}
-
 /// Read with Seek
 
 pub trait CryptoReadSeek<R: Read + Seek + Send + Sync>: CryptoRead<R> + Seek {}
@@ -220,7 +214,7 @@ impl<R: Read + Seek> Seek for RingCryptoReaderSeek<R> {
             let at_full_block_end = self.pos() % self.inner.plaintext_block_size as u64 == 0
                 && self.inner.buf.available_read() == 0;
             if self.inner.buf.available() > 0
-                // this make sure we are not at the end of current block, which is the start boundary of next block
+                // this make sure we are not at the end of the current block, which is the start boundary of next block
                 // in that case we need to seek inside the next block
                 && !at_full_block_end
             {
@@ -244,6 +238,19 @@ impl<R: Read + Seek> Seek for RingCryptoReaderSeek<R> {
             ))?;
             self.inner.buf.clear();
             self.inner.block_index = new_block_index;
+            if new_pos % self.inner.plaintext_block_size as u64 == 0 {
+                // in case we need to seek at the start of the new block, we need to decrypt here, because we altered
+                // the block_index but the seek seek_forward from below will not decrypt anything
+                // as the offset in new block is 0. In that case the po()
+                // method is affected as it will use the wrong block_index value
+                decrypt_block!(
+                    self.inner.block_index,
+                    self.inner.buf,
+                    self.inner.input.as_mut().unwrap(),
+                    self.inner.last_nonce,
+                    self.inner.opening_key
+                );
+            }
             // seek inside new block
             let plaintext_block_size = self.inner.plaintext_block_size;
             stream_util::seek_forward(
@@ -251,6 +258,8 @@ impl<R: Read + Seek> Seek for RingCryptoReaderSeek<R> {
                 new_pos % plaintext_block_size as u64,
                 true,
             )?;
+            let pos = self.pos();
+            println!("pos: {pos}");
         }
         Ok(self.pos())
     }

@@ -352,12 +352,10 @@ impl<W: Write + Seek + Read> Seek for RingCryptoWriteSeek<W> {
                     .buf
                     .seek_write(SeekFrom::Start(self.inner.buf.available() as u64))?;
             }
-            println!("pos {} - new pos {new_pos}", self.pos());
         }
         // if we couldn't seek until new pos, write zeros until new position
         if self.pos() < new_pos {
             let len = new_pos - self.pos();
-            println!("writing zeros {len} {} - {new_pos}", self.pos());
             stream_util::fill_zeros(&mut self.inner, len)?;
         }
         Ok(self.pos())
@@ -455,7 +453,7 @@ impl FileCryptoWrite {
         })
     }
 
-    #[allow(clippy::unnecessary_wraps)] // remove this when we will seek the inner writer
+    #[allow(clippy::unnecessary_wraps)] // remove this when we seek the inner writer
     fn pos(&self) -> io::Result<u64> {
         if self.writer.is_some() {
             Ok(self.pos)

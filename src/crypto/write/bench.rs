@@ -69,7 +69,7 @@ impl Clone for RandomReader {
 }
 
 #[bench]
-fn bench_writer_10mb_cha_cha20poly1305_file(b: &mut Bencher) {
+fn bench_writer_1mb_cha_cha20poly1305_file(b: &mut Bencher) {
     let cipher = Cipher::ChaCha20Poly1305;
     let len = 10 * 1024 * 1024;
 
@@ -91,9 +91,9 @@ fn bench_writer_10mb_cha_cha20poly1305_file(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_writer_10mb_aes256gcm_file(b: &mut Bencher) {
+fn bench_writer_1mb_aes256gcm_file(b: &mut Bencher) {
     let cipher = Cipher::Aes256Gcm;
-    let len = 10 * 1024 * 1024;
+    let len = 1024 * 1024;
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -113,9 +113,9 @@ fn bench_writer_10mb_aes256gcm_file(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_writer_10mb_cha_cha20poly1305_mem(b: &mut Bencher) {
+fn bench_writer_1mb_cha_cha20poly1305_mem(b: &mut Bencher) {
     let cipher = Cipher::ChaCha20Poly1305;
-    let len = 10 * 1024 * 1024;
+    let len = 1024 * 1024;
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -135,9 +135,9 @@ fn bench_writer_10mb_cha_cha20poly1305_mem(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_writer_10mb_aes256gcm_mem(b: &mut Bencher) {
+fn bench_writer_1mb_aes256gcm_mem(b: &mut Bencher) {
     let cipher = Cipher::Aes256Gcm;
-    let len = 10 * 1024 * 1024;
+    let len = 1024 * 1024;
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);

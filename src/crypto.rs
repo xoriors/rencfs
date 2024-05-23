@@ -183,7 +183,7 @@ fn create_ring_write_seek<W: Write + Seek + Read + Send + Sync>(
     RingCryptoWriteSeek::new(writer, algorithm, key)
 }
 
-fn create_ring_read<R: Read + Seek + Send + Sync>(
+fn create_ring_read<R: Read + Send + Sync>(
     reader: R,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
@@ -208,7 +208,7 @@ fn create_ring_read_seek<R: Read + Seek + Send + Sync>(
 }
 
 /// Creates and encrypted reader
-pub fn create_read<R: Read + Seek + Send + Sync>(
+pub fn create_read<R: Read + Send + Sync>(
     reader: R,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,

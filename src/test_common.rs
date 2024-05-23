@@ -64,7 +64,6 @@ async fn setup(setup: TestSetup) -> SetupResult {
     let data_dir_str = path.to_str().unwrap();
     let _ = fs::remove_dir_all(data_dir_str);
     let _ = fs::create_dir_all(data_dir_str);
-    println!("data dir {data_dir_str}");
 
     let fs = EncryptedFs::new(
         Path::new(data_dir_str).to_path_buf(),

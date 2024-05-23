@@ -41,7 +41,6 @@ fn bench_create(b: &mut Bencher) {
                 i.clone()
             })
         });
-        println!("i: {}", i);
     });
 }
 

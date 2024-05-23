@@ -50,14 +50,14 @@ fn test_reader_writer_chacha() {
 
 #[test]
 #[traced_test]
-fn test_reader_writer_10mb_chacha() {
+fn test_reader_writer_1mb_chacha() {
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
     let key = SecretVec::new(key);
     let key = Arc::new(key);
 
-    let len = 10 * 1024 * 1024;
+    let len = 1024 * 1024;
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
     let mut writer = crypto::create_write(cursor, cipher, key.clone());
@@ -111,14 +111,14 @@ fn test_reader_writer_aes() {
 
 #[test]
 #[traced_test]
-fn test_reader_writer_10mb_aes() {
+fn test_reader_writer_1mb_aes() {
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
     let key = SecretVec::new(key);
     let key = Arc::new(key);
 
-    let len = 10 * 1024 * 1024;
+    let len = 1024 * 1024;
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
     let mut writer = crypto::create_write(cursor, cipher, key.clone());

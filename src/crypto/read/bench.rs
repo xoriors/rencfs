@@ -11,9 +11,9 @@ use crate::crypto::write::CryptoWrite;
 use crate::crypto::Cipher;
 
 #[bench]
-fn bench_read_10mb_chacha_file(b: &mut Bencher) {
+fn bench_read_1mb_chacha_file(b: &mut Bencher) {
     let cipher = Cipher::ChaCha20Poly1305;
-    let len = 10 * 1024 * 1024;
+    let len = 1024 * 1024;
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -39,9 +39,9 @@ fn bench_read_10mb_chacha_file(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_read_10mb_aes_file(b: &mut Bencher) {
+fn bench_read_1mb_aes_file(b: &mut Bencher) {
     let cipher = Cipher::Aes256Gcm;
-    let len = 10 * 1024 * 1024;
+    let len = 1024 * 1024;
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -67,9 +67,9 @@ fn bench_read_10mb_aes_file(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_read_10mb_chacha_ram(b: &mut Bencher) {
+fn bench_read_1mb_chacha_ram(b: &mut Bencher) {
     let cipher = Cipher::ChaCha20Poly1305;
-    let len = 10 * 1024 * 1024;
+    let len = 1024 * 1024;
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -95,9 +95,9 @@ fn bench_read_10mb_chacha_ram(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_read_10mb_aes_ram(b: &mut Bencher) {
+fn bench_read_1mb_aes_ram(b: &mut Bencher) {
     let cipher = Cipher::Aes256Gcm;
-    let len = 10 * 1024 * 1024;
+    let len = 1024 * 1024;
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
