@@ -7,7 +7,7 @@
 [![test](https://github.com/radumarias/rencfs/actions/workflows/test.yml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/test.yml)
 [![Discord](https://img.shields.io/discord/1236855443486277653?label=Discord)](https://discord.com/channels/1236855443486277653/1236855448515252306)
 [![Matrix](https://img.shields.io/matrix/rencfs%3Amatrix.org?label=Matrix%20Chat)](https://matrix.to/#/#rencfs:matrix.org)
-[![](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg)](https://rencfs.zulipchat.com)
+[![Zulip](https://img.shields.io/badge/zulip-join_chat-brightgreen.svglabel=Zulip)](https://rencfs.zulipchat.com)
 
 > ⚠️ **Warning**
 > ***This is early in development. Please do not use it with sensitive data just yet. Please wait for a
