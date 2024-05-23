@@ -23,9 +23,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{debug, error, instrument};
 
-use crate::crypto::read::{
-    CryptoRead, CryptoReadSeek, FileCryptoRead, RingCryptoRead, RingCryptoReaderSeek,
-};
+use crate::crypto::read::{CryptoRead, CryptoReadSeek, FileCryptoRead, RingCryptoRead};
 use crate::crypto::write::{
     CryptoWrite, CryptoWriteSeek, FileCryptoWrite, FileCryptoWriteCallback,
     FileCryptoWriteMetadataProvider, RingCryptoWrite, RingCryptoWriteSeek,
@@ -199,12 +197,12 @@ fn create_ring_read_seek<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-) -> RingCryptoReaderSeek<R> {
+) -> RingCryptoRead<R> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoReaderSeek::new(reader, algorithm, key)
+    RingCryptoRead::new(reader, algorithm, key)
 }
 
 /// Creates and encrypted reader
@@ -233,7 +231,7 @@ pub fn create_file_read(
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
     lock: Option<Holder<RwLock<bool>>>,
-) -> io::Result<Box<dyn CryptoReadSeek<File>>> {
+) -> io::Result<Box<dyn CryptoRead<File>>> {
     Ok(Box::new(FileCryptoRead::new(file, cipher, key, lock)?))
 }
 

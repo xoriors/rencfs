@@ -1849,7 +1849,7 @@ impl EncryptedFs {
         &self,
         file: &Path,
         lock: Option<Holder<RwLock<bool>>>,
-    ) -> FsResult<Box<dyn CryptoReadSeek<File>>> {
+    ) -> FsResult<Box<dyn CryptoRead<File>>> {
         Ok(crypto::create_file_read(
             file,
             self.cipher,
