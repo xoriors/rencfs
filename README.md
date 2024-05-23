@@ -188,6 +188,10 @@ values: `TRACE`, `DEBUG`, `INFO` (default), `WARN`, `ERROR`.
 rencfs --log-level LEVEL ...
 ```
 
+## Use it in Rust
+
+You can see more (here)[https://crates.io/crates/rencfs]
+
 # Building from source
 
 ## Getting the sources
