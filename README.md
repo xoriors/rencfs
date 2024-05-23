@@ -7,6 +7,7 @@
 [![test](https://github.com/radumarias/rencfs/actions/workflows/test.yml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/test.yml)
 [![Discord](https://img.shields.io/discord/1236855443486277653)](https://discord.com/channels/1236855443486277653/1236855448515252306)
 [![](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg)](https://rencfs.zulipchat.com)
+[![Run on Google Cloud](https://deploy.cloud.run/button.svg)](https://deploy.cloud.run)
 
 > ⚠️ **Warning**
 > ***This is early in development. Please do not use it with sensitive data just yet. Please wait for a
