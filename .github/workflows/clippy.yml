@@ -19,7 +19,7 @@ jobs:
     - name: Add clippy
       run: rustup component add clippy
     - name: Build
-      run: cargo build --verbose
+      run: cargo build -all --verbose
     - name: Check
       run: cargo check --verbose
     - name: Clippy
