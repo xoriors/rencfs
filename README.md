@@ -51,7 +51,7 @@ password without re-encrypting all data, we just re-encrypt the master key.
 [![Run on Google Cloud](https://deploy.cloud.run/button.svg)](https://deploy.cloud.run)
 
 
-## Give it a quick try in docker
+## Give it a quick try with Docker
 
 Get the image
 
