@@ -190,7 +190,7 @@ rencfs --log-level LEVEL ...
 
 ## Use it in Rust
 
-You can see more (here)[https://crates.io/crates/rencfs]
+You can see more [here](https://crates.io/crates/rencfs)
 
 # Building from source
 
