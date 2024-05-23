@@ -1,6 +1,6 @@
 use std::cmp::min;
 use std::io;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, SeekFrom, Write};
 
 use secrecy::Zeroize;
 
@@ -9,6 +9,7 @@ pub struct BufMut {
     pos_write: usize,
     pos_read: usize,
     available: usize,
+    dirty: bool,
 }
 
 impl BufMut {
@@ -19,14 +20,17 @@ impl BufMut {
             pos_write: 0,
             pos_read: 0,
             available: 0,
+            dirty: false,
         }
     }
 
+    /// Remaining for write from the write position to the end of the buffer
     #[must_use]
     pub fn remaining(&self) -> usize {
-        self.buf.len() - self.available
+        self.buf.len() - self.pos_write
     }
 
+    /// Returns a slice of the buffer with space available for writing, that is from the write position to the end of the buffer
     pub fn as_mut_remaining(&mut self) -> &mut [u8] {
         &mut self.buf[self.available..]
     }
@@ -35,6 +39,7 @@ impl BufMut {
         self.pos_write = 0;
         self.pos_read = 0;
         self.available = 0;
+        self.dirty = false;
     }
 
     #[must_use]
@@ -60,7 +65,7 @@ impl BufMut {
         if new_pos < 0 || new_pos > self.available() as i64 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "position is out of bounds",
+                format!("position is out of bounds {new_pos}/{}", self.available()),
             ));
         }
         self.pos_read = new_pos as usize;
@@ -79,7 +84,7 @@ impl BufMut {
         if new_pos < 0 || new_pos > self.buf.len() as i64 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "position is out of bounds",
+                format!("position is out of bounds {new_pos}/{}", self.buf.len()),
             ));
         }
         self.pos_write = new_pos as usize;
@@ -99,18 +104,14 @@ impl BufMut {
         if new_pos < 0 || new_pos > self.buf.len() as i64 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "position is out of bounds",
+                format!("position is out of bounds {new_pos}/{}", self.buf.len()),
             ));
         }
-        // keep write in the bound
+        // keep write in bounds
         self.available = new_pos as usize;
-        if self.pos_write > self.available {
-            self.pos_write = self.available;
-        }
-        // keep read in the bound
-        if self.pos_read > self.available {
-            self.pos_read = self.available;
-        }
+        self.pos_write = self.pos_write.min(self.available);
+        // keep read in bounds
+        self.pos_read = self.pos_read.min(self.available);
         Ok(self.available as u64)
     }
 
@@ -128,26 +129,42 @@ impl BufMut {
     pub fn capacity(&self) -> usize {
         self.buf.len()
     }
+
+    /// Returns a slice of the buffer with content available for reading
+    #[must_use]
+    pub fn as_ref_read_available(&self) -> &[u8] {
+        &self.buf[self.pos_read..self.available]
+    }
+
+    /// If we wrote something to the buffer since it was created or cleared
+    #[must_use]
+    pub const fn is_dirty(&self) -> bool {
+        self.dirty
+    }
 }
 
 impl AsMut<[u8]> for BufMut {
     fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.buf[..self.pos_write]
+        &mut self.buf[..self.available]
     }
 }
 
 impl AsRef<[u8]> for BufMut {
     fn as_ref(&self) -> &[u8] {
-        &self.buf[..self.pos_write]
+        &self.buf[..self.available]
     }
 }
 
 impl Write for BufMut {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let len = min(self.remaining(), buf.len());
+        if len == 0 {
+            return Ok(0);
+        }
         self.buf[self.pos_write..self.pos_write + len].copy_from_slice(&buf[..len]);
         self.pos_write += len;
         self.available = self.pos_write.max(self.available);
+        self.dirty = true;
         Ok(len)
     }
 
@@ -182,19 +199,19 @@ mod tests {
 
     #[test]
     fn test_available() {
-        let mut buf = BufMut::new(vec![0; 10]);
+        let buf = BufMut::new(vec![0; 10]);
         assert_eq!(buf.available(), 0);
     }
 
     #[test]
     fn test_available_read() {
-        let mut buf = BufMut::new(vec![0; 10]);
+        let buf = BufMut::new(vec![0; 10]);
         assert_eq!(buf.available_read(), 0);
     }
 
     #[test]
     fn test_remaining() {
-        let mut buf = BufMut::new(vec![0; 10]);
+        let buf = BufMut::new(vec![0; 10]);
         assert_eq!(buf.remaining(), 10);
     }
 
@@ -230,6 +247,7 @@ mod tests {
         let written = buf.write(&[1, 2, 3, 4, 5]).unwrap();
         assert_eq!(written, 5);
         assert_eq!(buf.pos_write(), 5);
+        assert!(buf.is_dirty());
     }
 
     #[test]

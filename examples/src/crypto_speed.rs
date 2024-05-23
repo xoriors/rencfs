@@ -11,7 +11,7 @@ use rand_core::RngCore;
 use secrecy::SecretVec;
 
 use rencfs::crypto;
-use rencfs::crypto::write::CryptoWriter;
+use rencfs::crypto::write::CryptoWrite;
 use rencfs::crypto::Cipher;
 
 #[tokio::main]
@@ -72,9 +72,9 @@ fn stream_speed(
     let _ = fs::remove_file(path_out);
     let mut file_in = File::open(path_in)?;
     let file_out = File::create(path_out)?;
-    let mut writer = crypto::create_writer(file_out, cipher, key.clone());
+    let mut writer = crypto::create_write(file_out, cipher, key.clone());
     let size = file_in.metadata()?.len();
-    let f = || crypto::create_reader(File::open(path_out).unwrap(), cipher, key.clone());
+    let f = || crypto::create_read(File::open(path_out).unwrap(), cipher, key.clone());
     test_speed(&mut file_in, &mut writer, size, f)?;
     file_in.seek(io::SeekFrom::Start(0))?;
     check_hash(&mut file_in, &mut f())?;
@@ -91,7 +91,7 @@ fn file_speed(
     println!("file speed");
     let _ = fs::remove_file(path_out);
     let mut file_in = File::open(path_in)?;
-    let mut writer = crypto::create_file_writer(
+    let mut writer = crypto::create_file_write(
         &Path::new(&path_out).to_path_buf(),
         cipher,
         key.clone(),
@@ -101,7 +101,7 @@ fn file_speed(
     )?;
     let size = file_in.metadata()?.len();
     let f = || {
-        crypto::create_file_reader(
+        crypto::create_file_read(
             &Path::new(&path_out).to_path_buf(),
             cipher,
             key.clone(),
@@ -118,7 +118,7 @@ fn file_speed(
 
 fn test_speed<W: Write, R: Read, FR>(
     r: &mut impl Read,
-    w: &mut (impl CryptoWriter<W> + ?Sized),
+    w: &mut (impl CryptoWrite<W> + ?Sized),
     size: u64,
     r2: FR,
 ) -> io::Result<()>

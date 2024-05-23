@@ -1,3 +1,6 @@
+mod bench;
+mod test;
+
 use std::fs::File;
 use std::io;
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
@@ -5,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use atomic_write_file::AtomicWriteFile;
+use bytes::Buf;
 use num_format::{Locale, ToFormattedString};
 use rand_chacha::rand_core::RngCore;
 use ring::aead::{
@@ -17,19 +21,18 @@ use tracing::{debug, error};
 
 use crate::arc_hashmap::Holder;
 use crate::crypto::buf_mut::BufMut;
-use crate::crypto::read::{ExistingNonceSequence, RingCryptoReader};
+use crate::crypto::read::ExistingNonceSequence;
 use crate::crypto::Cipher;
 use crate::{crypto, decrypt_block, fs_util, stream_util};
 
 #[cfg(test)]
-pub(crate) const BUF_SIZE: usize = 4096;
-// 256 KB buffer, smaller for tests because they all run in parallel
+pub(crate) const BLOCK_SIZE: usize = 100; // round value easier for debugging
 #[cfg(not(test))]
-pub(crate) const BUF_SIZE: usize = 1024 * 1024; // 1 MB buffer
+pub(crate) const BLOCK_SIZE: usize = 16 * 1024; // 16 KB block size
 
 /// Writes encrypted content to the wrapped Writer.
 #[allow(clippy::module_name_repetitions)]
-pub trait CryptoWriter<W: Write + Send + Sync>: Write + Send + Sync {
+pub trait CryptoWrite<W: Write + Send + Sync>: Write + Send + Sync {
     /// You must call this after the last write to make sure we write the last block. This handles the flush also.
     #[allow(clippy::missing_errors_doc)]
     fn finish(&mut self) -> io::Result<W>;
@@ -38,7 +41,7 @@ pub trait CryptoWriter<W: Write + Send + Sync>: Write + Send + Sync {
 /// ring
 
 #[allow(clippy::module_name_repetitions)]
-pub struct RingCryptoWriter<W: Write> {
+pub struct RingCryptoWrite<W: Write> {
     out: Option<W>,
     sealing_key: SealingKey<RandomNonceSequenceWrapper>,
     buf: BufMut,
@@ -48,7 +51,7 @@ pub struct RingCryptoWriter<W: Write> {
     block_index: u64,
 }
 
-impl<W: Write> RingCryptoWriter<W> {
+impl<W: Write> RingCryptoWrite<W> {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(writer: W, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>) -> Self {
@@ -56,14 +59,14 @@ impl<W: Write> RingCryptoWriter<W> {
         let nonce_sequence = Arc::new(Mutex::new(RandomNonceSequence::default()));
         let wrapping_nonce_sequence = RandomNonceSequenceWrapper::new(nonce_sequence.clone());
         let sealing_key = SealingKey::new(unbound_key, wrapping_nonce_sequence);
-        let buf = BufMut::new(vec![0; BUF_SIZE]);
+        let buf = BufMut::new(vec![0; BLOCK_SIZE]);
         Self {
             out: Some(writer),
             sealing_key,
             buf,
             nonce_sequence,
-            ciphertext_block_size: NONCE_LEN + BUF_SIZE + algorithm.tag_len(),
-            plaintext_block_size: BUF_SIZE,
+            ciphertext_block_size: NONCE_LEN + BLOCK_SIZE + algorithm.tag_len(),
+            plaintext_block_size: BLOCK_SIZE,
             block_index: 0,
         }
     }
@@ -76,7 +79,10 @@ impl<W: Write> RingCryptoWriter<W> {
             .seal_in_place_separate_tag(aad, data)
             .map_err(|err| {
                 error!("error sealing in place: {}", err);
-                io::Error::from(io::ErrorKind::Other)
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("error sealing in place: {err}"),
+                )
             })?;
         let nonce_sequence = self.nonce_sequence.lock().unwrap();
         let nonce = nonce_sequence.last_nonce.as_ref().unwrap();
@@ -84,12 +90,13 @@ impl<W: Write> RingCryptoWriter<W> {
         self.out.as_mut().unwrap().write_all(data)?;
         self.buf.clear();
         self.out.as_mut().unwrap().write_all(tag.as_ref())?;
+        self.out.as_mut().unwrap().flush()?;
         self.block_index += 1;
         Ok(())
     }
 }
 
-impl<W: Write> Write for RingCryptoWriter<W> {
+impl<W: Write> Write for RingCryptoWrite<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.out.is_none() {
             return Err(io::Error::new(
@@ -97,7 +104,7 @@ impl<W: Write> Write for RingCryptoWriter<W> {
                 "write called on already finished writer",
             ));
         }
-        if self.buf.remaining() == 0 {
+        if self.buf.is_dirty() && self.buf.remaining() == 0 {
             self.flush()?;
         }
         let len = self.buf.write(buf)?;
@@ -111,11 +118,11 @@ impl<W: Write> Write for RingCryptoWriter<W> {
                 "flush called on already finished writer",
             ));
         }
-        if self.buf.available() == 0 {
+        if !self.buf.is_dirty() {
             return Ok(());
         }
+        // encrypt and write when we have a full buffer
         if self.buf.remaining() == 0 {
-            // encrypt and write when we have a full buffer
             self.encrypt_and_write()?;
         }
 
@@ -123,7 +130,7 @@ impl<W: Write> Write for RingCryptoWriter<W> {
     }
 }
 
-impl<W: Write + Send + Sync> CryptoWriter<W> for RingCryptoWriter<W> {
+impl<W: Write + Send + Sync> CryptoWrite<W> for RingCryptoWrite<W> {
     fn finish(&mut self) -> io::Result<W> {
         if self.out.is_none() {
             return Err(io::Error::new(
@@ -131,8 +138,7 @@ impl<W: Write + Send + Sync> CryptoWriter<W> for RingCryptoWriter<W> {
                 "finish called on already finished writer",
             ));
         }
-        self.flush()?;
-        if self.buf.available() > 0 {
+        if self.buf.is_dirty() {
             // encrypt and write last block, use as many bytes as we have
             self.encrypt_and_write()?;
         }
@@ -184,96 +190,197 @@ impl NonceSequence for RandomNonceSequenceWrapper {
     }
 }
 
-/// Writer with Seek
+/// Write with Seek
 
-pub trait CryptoWriterSeek<W: Write + Seek + Send + Sync>: CryptoWriter<W> + Seek {}
+pub trait CryptoWriteSeek<W: Write + Seek + Send + Sync>: CryptoWrite<W> + Seek {}
 
-struct RingCryptoWriterSeek<W: Write + Seek + Read> {
-    inner: RingCryptoWriter<W>,
+pub struct RingCryptoWriteSeek<W: Write + Seek + Read> {
+    inner: RingCryptoWrite<W>,
     opening_key: OpeningKey<ExistingNonceSequence>,
     last_nonce: Arc<Mutex<Option<Vec<u8>>>>,
+    decrypt_buf: BufMut,
 }
 
-impl<W: Write + Seek + Read> RingCryptoWriterSeek<W> {
-    fn new(writer: W, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>) -> Self {
+impl<W: Write + Seek + Read> RingCryptoWriteSeek<W> {
+    pub(crate) fn new(writer: W, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>) -> Self {
         let last_nonce = Arc::new(Mutex::new(None));
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).unwrap();
         let nonce_sequence = ExistingNonceSequence::new(last_nonce.clone());
         let opening_key = OpeningKey::new(unbound_key, nonce_sequence);
+        let ciphertext_block_size = NONCE_LEN + BLOCK_SIZE + algorithm.tag_len();
+        let decrypt_buf = BufMut::new(vec![0; ciphertext_block_size]);
         Self {
-            inner: RingCryptoWriter::new(writer, algorithm, key),
+            inner: RingCryptoWrite::new(writer, algorithm, key),
             opening_key,
             last_nonce,
+            decrypt_buf,
         }
     }
 
     const fn pos(&self) -> u64 {
-        self.inner.block_index.saturating_sub(1) * self.inner.plaintext_block_size as u64
+        self.inner.block_index * self.inner.plaintext_block_size as u64
             + self.inner.buf.pos_write() as u64
+    }
+
+    fn decrypt_block(&mut self) -> io::Result<bool> {
+        let old_block_index = self.inner.block_index;
+        decrypt_block!(
+            self.inner.block_index,
+            self.decrypt_buf,
+            self.inner.out.as_mut().unwrap(),
+            self.last_nonce,
+            self.opening_key
+        );
+        if old_block_index == self.inner.block_index {
+            // no decryption happened
+            Ok(false)
+        } else {
+            // a decryption happened
+            self.inner.buf.clear();
+            // bring back block index to current block, it's incremented by decrypt_block if it can decrypt something
+            self.inner.block_index -= 1;
+            // bring back file pos also so the next writing will write to the same block
+            self.inner.out.as_mut().unwrap().seek(SeekFrom::Start(
+                self.inner.block_index * self.inner.ciphertext_block_size as u64,
+            ))?;
+            // copy plaintext
+            self.inner
+                .buf
+                .seek_available(SeekFrom::Start(self.decrypt_buf.available_read() as u64))?;
+            self.decrypt_buf
+                .as_ref_read_available()
+                .copy_to_slice(&mut self.inner.buf.as_mut()[..self.decrypt_buf.available_read()]);
+            Ok(true)
+        }
+    }
+
+    fn get_plaintext_len(&mut self) -> io::Result<u64> {
+        let ciphertext_len = self.inner.out.as_mut().unwrap().stream_len()?;
+        if ciphertext_len == 0 && self.inner.buf.available() == 0 {
+            return Ok(0);
+        }
+        let stream_last_block_index = self.inner.out.as_mut().unwrap().stream_len()?
+            / self.inner.ciphertext_block_size as u64;
+        let plaintext_len = if self.inner.block_index == stream_last_block_index
+            && self.inner.buf.is_dirty()
+        {
+            // we are at the last block, we consider what we have in buffer,
+            // as we might have additional content that is not written yet
+            self.inner.block_index * self.inner.plaintext_block_size as u64
+                + self.inner.buf.available() as u64
+        } else {
+            ciphertext_len
+                - ((ciphertext_len / self.inner.ciphertext_block_size as u64) + 1)
+                    * (self.inner.ciphertext_block_size - self.inner.plaintext_block_size) as u64
+        };
+        Ok(plaintext_len)
     }
 }
 
-impl<W: Write + Seek + Read> Seek for RingCryptoWriterSeek<W> {
+impl<W: Write + Seek + Read> Seek for RingCryptoWriteSeek<W> {
     #[allow(clippy::cast_possible_wrap)]
     #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let new_pos = match pos {
             SeekFrom::Start(pos) => pos as i64,
-            SeekFrom::End(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "can't seek from end",
-                ))
-            }
+            SeekFrom::End(pos) => self.get_plaintext_len()? as i64 + pos,
             SeekFrom::Current(pos) => self.pos() as i64 + pos,
         };
-        let ciphertext_len = self.inner.out.as_mut().unwrap().stream_len()?;
-        let plaintext_len = ciphertext_len / self.inner.ciphertext_block_size as u64
-            + ciphertext_len % self.inner.ciphertext_block_size as u64;
-        if new_pos < 0 || new_pos > plaintext_len as i64 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "outside of bounds",
-            ));
+        if new_pos < 0 {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "position < 0"));
         }
         let new_pos = new_pos as u64;
         if new_pos == self.pos() {
             return Ok(new_pos);
         }
-        let current_block_index = self.pos() / self.inner.ciphertext_block_size as u64;
-        let mut new_block_index = new_pos / self.inner.ciphertext_block_size as u64;
+        let current_block_index = self.pos() / self.inner.plaintext_block_size as u64;
+        let new_block_index = new_pos / self.inner.plaintext_block_size as u64;
         if current_block_index == new_block_index {
-            // seek inside the block
+            if self.pos() == 0 && self.inner.buf.available() == 0 {
+                // first write since we opened the writer, try to load the first block
+                self.inner.out.as_mut().unwrap().seek(SeekFrom::Start(0))?;
+                self.inner.block_index = 0;
+                self.decrypt_block()?;
+            }
+            let at_full_block_end = self.pos() % self.inner.plaintext_block_size as u64 == 0
+                && self.inner.buf.pos_write() == self.inner.buf.available();
+            if self.inner.buf.available() == 0
+                // this checks if we are at the end of the current block,
+                // which is the start boundary of next block
+                // in that case we need to seek inside the next block
+                || at_full_block_end
+            {
+                // write current block
+                if self.inner.buf.is_dirty() {
+                    self.inner.encrypt_and_write()?;
+                }
+                // decrypt the next block
+                self.decrypt_block()?;
+            }
+            // seek inside the block as much as we can
+            let desired_offset = new_pos % self.inner.plaintext_block_size as u64;
             self.inner.buf.seek_write(SeekFrom::Start(
-                new_pos % self.inner.ciphertext_block_size as u64,
+                desired_offset.min(self.inner.buf.available() as u64),
             ))?;
         } else {
-            // todo: write zeros if we need to seek outside of the file
-            // seek to new block
-            let ciphertext_block_size = self.inner.ciphertext_block_size;
+            // we need to seek to a new block
+
+            // write current block
+            if self.inner.buf.is_dirty() {
+                self.inner.encrypt_and_write()?;
+            }
+
+            // seek to new block, or until the last block in stream
+            let last_block_index = self.inner.out.as_mut().unwrap().stream_len()?
+                / self.inner.ciphertext_block_size as u64;
+            let target_block_index = new_block_index.min(last_block_index);
             self.inner.out.as_mut().unwrap().seek(SeekFrom::Start(
-                new_block_index * ciphertext_block_size as u64,
+                target_block_index * self.inner.ciphertext_block_size as u64,
             ))?;
-            // decrypt new block
-            decrypt_block!(
-                new_block_index,
-                self.inner.buf,
-                self.inner.out.as_mut().unwrap(),
-                self.last_nonce,
-                self.opening_key
-            )?;
-            // seek inside new block
-            self.inner
-                .buf
-                .seek_write(SeekFrom::Start(new_pos % ciphertext_block_size as u64))?;
-            self.inner.block_index = new_block_index;
+            // try to decrypt target block
+            self.inner.block_index = target_block_index;
+            self.decrypt_block()?;
+            if self.inner.block_index == new_block_index {
+                // seek inside new block as much as we can
+                let desired_offset = new_pos % self.inner.plaintext_block_size as u64;
+                self.inner.buf.seek_write(SeekFrom::Start(
+                    desired_offset.min(self.inner.buf.available() as u64),
+                ))?;
+            } else {
+                // we don't have this block, seek as much in target block
+                self.inner
+                    .buf
+                    .seek_write(SeekFrom::Start(self.inner.buf.available() as u64))?;
+            }
+            println!("pos {} - new pos {new_pos}", self.pos());
+        }
+        // if we couldn't seek until new pos, write zeros until new position
+        if self.pos() < new_pos {
+            let len = new_pos - self.pos();
+            println!("writing zeros {len} {} - {new_pos}", self.pos());
+            stream_util::fill_zeros(&mut self.inner, len)?;
         }
         Ok(self.pos())
     }
 }
 
-impl<W: Write + Seek + Read + Send + Sync> Write for RingCryptoWriterSeek<W> {
+impl<W: Write + Seek + Read + Send + Sync> Write for RingCryptoWriteSeek<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.pos() == 0 && self.inner.buf.available() == 0 {
+            // first write since we opened the writer, try to load the first block
+            self.inner.out.as_mut().unwrap().seek(SeekFrom::Start(0))?;
+            self.inner.block_index = 0;
+            self.decrypt_block()?;
+        } else if self.inner.buf.is_dirty() && self.inner.buf.remaining() == 0 {
+            self.flush()?;
+            // try to decrypt the next block if we have any
+            let block_index = self.pos() / self.inner.plaintext_block_size as u64;
+            if self.inner.out.as_mut().unwrap().stream_len()?
+                > block_index * self.inner.ciphertext_block_size as u64
+            {
+                self.decrypt_block()?;
+            }
+        }
         self.inner.write(buf)
     }
 
@@ -282,40 +389,41 @@ impl<W: Write + Seek + Read + Send + Sync> Write for RingCryptoWriterSeek<W> {
     }
 }
 
-impl<W: Write + Seek + Read + Send + Sync> CryptoWriter<W> for RingCryptoWriterSeek<W> {
+impl<W: Write + Seek + Read + Send + Sync> CryptoWrite<W> for RingCryptoWriteSeek<W> {
     fn finish(&mut self) -> io::Result<W> {
         self.inner.finish()
     }
 }
-impl<W: Write + Seek + Read + Send + Sync> CryptoWriterSeek<W> for RingCryptoWriterSeek<W> {}
 
-/// File writer
+impl<W: Write + Seek + Read + Send + Sync> CryptoWriteSeek<W> for RingCryptoWriteSeek<W> {}
+
+/// File Writer
 
 #[allow(clippy::module_name_repetitions)]
-pub trait FileCryptoWriterCallback: Send + Sync {
+pub trait FileCryptoWriteCallback: Send + Sync {
     #[allow(clippy::missing_errors_doc)]
     fn on_file_content_changed(&self, changed_from_pos: i64, last_write_pos: u64)
         -> io::Result<()>;
 }
 
 #[allow(clippy::module_name_repetitions)]
-pub trait FileCryptoWriterMetadataProvider: Send + Sync {
+pub trait FileCryptoWriteMetadataProvider: Send + Sync {
     fn size(&self) -> io::Result<u64>;
 }
 
 #[allow(clippy::module_name_repetitions)]
-pub struct FileCryptoWriter {
+pub struct FileCryptoWrite {
     file_path: PathBuf,
-    writer: Option<Box<dyn CryptoWriter<BufWriter<AtomicWriteFile>>>>,
+    writer: Option<Box<dyn CryptoWrite<BufWriter<AtomicWriteFile>>>>,
     cipher: Cipher,
     key: Arc<SecretVec<u8>>,
-    callback: Option<Box<dyn FileCryptoWriterCallback>>,
+    callback: Option<Box<dyn FileCryptoWriteCallback>>,
     lock: Option<Holder<RwLock<bool>>>,
-    metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
+    metadata_provider: Option<Box<dyn FileCryptoWriteMetadataProvider>>,
     pos: u64,
 }
 
-impl FileCryptoWriter {
+impl FileCryptoWrite {
     /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
     ///
     /// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do  
@@ -328,9 +436,9 @@ impl FileCryptoWriter {
         file_path: &Path,
         cipher: Cipher,
         key: Arc<SecretVec<u8>>,
-        callback: Option<Box<dyn FileCryptoWriterCallback>>,
+        callback: Option<Box<dyn FileCryptoWriteCallback>>,
         lock: Option<Holder<RwLock<bool>>>,
-        metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
+        metadata_provider: Option<Box<dyn FileCryptoWriteMetadataProvider>>,
     ) -> io::Result<Self> {
         if !file_path.exists() {
             File::create(file_path)?;
@@ -358,7 +466,7 @@ impl FileCryptoWriter {
 
     fn ensure_writer_created(&mut self) -> io::Result<()> {
         if self.writer.is_none() {
-            self.writer = Some(Box::new(crypto::create_writer(
+            self.writer = Some(Box::new(crypto::create_write(
                 BufWriter::new(fs_util::open_atomic_write(&self.file_path)?),
                 self.cipher,
                 self.key.clone(),
@@ -472,7 +580,7 @@ impl FileCryptoWriter {
     }
 }
 
-impl Write for FileCryptoWriter {
+impl Write for FileCryptoWrite {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.ensure_writer_created()?;
         let len = self.writer.as_mut().unwrap().write(buf)?;
@@ -489,7 +597,7 @@ impl Write for FileCryptoWriter {
     }
 }
 
-impl CryptoWriter<File> for FileCryptoWriter {
+impl CryptoWrite<File> for FileCryptoWrite {
     fn finish(&mut self) -> io::Result<File> {
         self.flush()?;
         self.seek(SeekFrom::Start(0))?; // this will handle moving the tmp file to the original file
@@ -500,7 +608,7 @@ impl CryptoWriter<File> for FileCryptoWriter {
     }
 }
 
-impl Seek for FileCryptoWriter {
+impl Seek for FileCryptoWrite {
     #[allow(clippy::cast_possible_wrap)]
     #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
@@ -524,308 +632,4 @@ impl Seek for FileCryptoWriter {
     }
 }
 
-impl CryptoWriterSeek<File> for FileCryptoWriter {}
-
-#[cfg(test)]
-mod test {
-    use std::io;
-    use std::io::Write;
-    use std::io::{Read, Seek};
-    use std::sync::Arc;
-
-    use rand::RngCore;
-    use secrecy::SecretVec;
-    use tracing_test::traced_test;
-
-    use crate::crypto;
-    use crate::crypto::write::{CryptoWriter, BUF_SIZE};
-    use crate::crypto::Cipher;
-
-    #[test]
-    #[traced_test]
-    fn test_reader_writer_chacha() {
-        let cipher = Cipher::ChaCha20Poly1305;
-
-        let mut key: Vec<u8> = vec![0; cipher.key_len()];
-        crypto::create_rng().fill_bytes(&mut key);
-        let key = SecretVec::new(key);
-        let key = Arc::new(key);
-
-        // simple text
-        let mut cursor = io::Cursor::new(vec![0; 0]);
-        let mut writer = crypto::create_writer(cursor, cipher, key.clone());
-        let data = "hello, this is my secret message";
-        writer.write_all(data.as_bytes()).unwrap();
-        cursor = writer.finish().unwrap();
-        cursor.seek(io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, cipher, key.clone());
-        let mut s = String::new();
-        reader.read_to_string(&mut s).unwrap();
-        assert_eq!(data, s);
-
-        // larger data
-        let mut cursor = io::Cursor::new(vec![]);
-        let mut writer = crypto::create_writer(cursor, cipher, key.clone());
-        let mut data: [u8; BUF_SIZE + 42] = [0; BUF_SIZE + 42];
-        crypto::create_rng().fill_bytes(&mut data);
-        writer.write_all(&data).unwrap();
-        cursor = writer.finish().unwrap();
-        cursor.seek(io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, cipher, key);
-        let mut data2 = vec![];
-        reader.read_to_end(&mut data2).unwrap();
-        assert_eq!(data.len(), data2.len());
-        assert_eq!(crypto::hash(&data), crypto::hash(&data2));
-    }
-
-    #[test]
-    #[traced_test]
-    fn test_reader_writer_10mb_chacha() {
-        let cipher = Cipher::ChaCha20Poly1305;
-        let len = 10 * 1024 * 1024;
-
-        let mut key: Vec<u8> = vec![0; cipher.key_len()];
-        crypto::create_rng().fill_bytes(&mut key);
-        let key = SecretVec::new(key);
-        let key = Arc::new(key);
-
-        let mut cursor = io::Cursor::new(vec![0; 0]);
-        let mut writer = crypto::create_writer(cursor, cipher, key.clone());
-        let mut cursor_random = io::Cursor::new(vec![0; len]);
-        crypto::create_rng().fill_bytes(cursor_random.get_mut());
-        cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
-        io::copy(&mut cursor_random, &mut writer).unwrap();
-        cursor = writer.finish().unwrap();
-        cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
-        cursor.seek(io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, cipher, key);
-        let hash1 = crypto::hash_reader(&mut cursor_random).unwrap();
-        let hash2 = crypto::hash_reader(&mut reader).unwrap();
-        assert_eq!(hash1, hash2);
-    }
-
-    #[test]
-    #[traced_test]
-    fn test_reader_writer_aes() {
-        let cipher = Cipher::Aes256Gcm;
-
-        let mut key: Vec<u8> = vec![0; cipher.key_len()];
-        crypto::create_rng().fill_bytes(&mut key);
-        let key = SecretVec::new(key);
-        let key = Arc::new(key);
-
-        // simple text
-        let mut cursor = io::Cursor::new(vec![0; 0]);
-        let mut writer = crypto::create_writer(cursor, cipher, key.clone());
-        let data = "hello, this is my secret message";
-        writer.write_all(data.as_bytes()).unwrap();
-        cursor = writer.finish().unwrap();
-        cursor.seek(io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, cipher, key.clone());
-        let mut s = String::new();
-        reader.read_to_string(&mut s).unwrap();
-        assert_eq!(data, s);
-
-        // larger data
-        let mut cursor = io::Cursor::new(vec![]);
-        let mut writer = crypto::create_writer(cursor, cipher, key.clone());
-        let mut data: [u8; BUF_SIZE + 42] = [0; BUF_SIZE + 42];
-        crypto::create_rng().fill_bytes(&mut data);
-        writer.write_all(&data).unwrap();
-        cursor = writer.finish().unwrap();
-        cursor.seek(io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, cipher, key);
-        let mut data2 = vec![];
-        reader.read_to_end(&mut data2).unwrap();
-        assert_eq!(data.len(), data2.len());
-        assert_eq!(crypto::hash(&data), crypto::hash(&data2));
-    }
-
-    #[test]
-    #[traced_test]
-    fn test_reader_writer_10mb_aes() {
-        let cipher = Cipher::Aes256Gcm;
-        let len = 10 * 1024 * 1024;
-
-        let mut key: Vec<u8> = vec![0; cipher.key_len()];
-        crypto::create_rng().fill_bytes(&mut key);
-        let key = SecretVec::new(key);
-        let key = Arc::new(key);
-
-        let mut cursor = io::Cursor::new(vec![0; 0]);
-        let mut writer = crypto::create_writer(cursor, cipher, key.clone());
-        let mut cursor_random = io::Cursor::new(vec![0; len]);
-        crypto::create_rng().fill_bytes(cursor_random.get_mut());
-        cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
-        io::copy(&mut cursor_random, &mut writer).unwrap();
-        cursor = writer.finish().unwrap();
-        cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
-        cursor.seek(io::SeekFrom::Start(0)).unwrap();
-        let mut reader = crypto::create_reader(cursor, cipher, key);
-        let hash1 = crypto::hash_reader(&mut cursor_random).unwrap();
-        let hash2 = crypto::hash_reader(&mut reader).unwrap();
-        assert_eq!(hash1, hash2);
-    }
-}
-
-#[allow(unused_imports)]
-mod bench {
-    use ::test::{black_box, Bencher};
-    use std::io;
-    use std::io::Write;
-    use std::io::{Error, SeekFrom};
-    use std::io::{Read, Seek};
-    use std::sync::Arc;
-
-    use rand::RngCore;
-    use secrecy::SecretVec;
-
-    use crate::crypto;
-    use crate::crypto::write::CryptoWriter;
-    use crate::crypto::Cipher;
-
-    #[allow(dead_code)]
-    struct RandomReader {
-        buf: Arc<Vec<u8>>,
-        pos: usize,
-    }
-
-    impl RandomReader {
-        #[allow(dead_code)]
-        pub fn new(len: usize) -> Self {
-            let mut buf = vec![0; len];
-            crypto::create_rng().fill_bytes(&mut buf);
-            Self {
-                buf: Arc::new(buf),
-                pos: 0,
-            }
-        }
-    }
-
-    impl Read for RandomReader {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            if self.pos > self.buf.len() {
-                return Ok(0);
-            }
-            let len = buf.len().min(self.buf.len() - self.pos);
-            buf[0..len].copy_from_slice(&self.buf[self.pos..self.pos + len]);
-            self.pos += len;
-            Ok(len)
-        }
-    }
-
-    impl Seek for RandomReader {
-        #[allow(clippy::cast_possible_wrap)]
-        #[allow(clippy::cast_possible_truncation)]
-        #[allow(clippy::cast_sign_loss)]
-        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-            let new_pos = match pos {
-                SeekFrom::Start(pos) => pos as i64,
-                SeekFrom::End(pos) => self.buf.len() as i64 + pos,
-                SeekFrom::Current(pos) => self.pos as i64 + pos,
-            };
-            if new_pos < 0 || new_pos > self.buf.len() as i64 {
-                return Err(Error::new(io::ErrorKind::InvalidInput, "outside of bounds"));
-            }
-            self.pos = new_pos as usize;
-            Ok(new_pos as u64)
-        }
-    }
-
-    impl Clone for RandomReader {
-        fn clone(&self) -> Self {
-            Self {
-                buf: self.buf.clone(),
-                pos: 0,
-            }
-        }
-    }
-
-    #[bench]
-    fn bench_writer_10mb_cha_cha20poly1305_file(b: &mut Bencher) {
-        let cipher = Cipher::ChaCha20Poly1305;
-        let len = 10 * 1024 * 1024;
-
-        let mut key: Vec<u8> = vec![0; cipher.key_len()];
-        crypto::create_rng().fill_bytes(&mut key);
-        let key = SecretVec::new(key);
-        let key = Arc::new(key);
-
-        let rnd_reader = RandomReader::new(len);
-        b.iter(|| {
-            black_box({
-                let mut reader = rnd_reader.clone();
-                let mut writer =
-                    crypto::create_writer(tempfile::tempfile().unwrap(), cipher, key.clone());
-                io::copy(&mut reader, &mut writer).unwrap();
-                writer.finish().unwrap()
-            })
-        });
-    }
-
-    #[bench]
-    fn bench_writer_10mb_aes256gcm_file(b: &mut Bencher) {
-        let cipher = Cipher::Aes256Gcm;
-        let len = 10 * 1024 * 1024;
-
-        let mut key: Vec<u8> = vec![0; cipher.key_len()];
-        crypto::create_rng().fill_bytes(&mut key);
-        let key = SecretVec::new(key);
-        let key = Arc::new(key);
-
-        let rnd_reader = RandomReader::new(len);
-        b.iter(|| {
-            black_box({
-                let mut reader = rnd_reader.clone();
-                let mut writer =
-                    crypto::create_writer(tempfile::tempfile().unwrap(), cipher, key.clone());
-                io::copy(&mut reader, &mut writer).unwrap();
-                writer.finish().unwrap()
-            })
-        });
-    }
-
-    #[bench]
-    fn bench_writer_10mb_cha_cha20poly1305_mem(b: &mut Bencher) {
-        let cipher = Cipher::ChaCha20Poly1305;
-        let len = 10 * 1024 * 1024;
-
-        let mut key: Vec<u8> = vec![0; cipher.key_len()];
-        crypto::create_rng().fill_bytes(&mut key);
-        let key = SecretVec::new(key);
-        let key = Arc::new(key);
-
-        let rnd_reader = RandomReader::new(len);
-        b.iter(|| {
-            black_box({
-                let mut reader = rnd_reader.clone();
-                let cursor_write = io::Cursor::new(vec![0; len]);
-                let mut writer = crypto::create_writer(cursor_write, cipher, key.clone());
-                io::copy(&mut reader, &mut writer).unwrap();
-                writer.finish().unwrap()
-            })
-        });
-    }
-
-    #[bench]
-    fn bench_writer_10mb_aes256gcm_mem(b: &mut Bencher) {
-        let cipher = Cipher::Aes256Gcm;
-        let len = 10 * 1024 * 1024;
-
-        let mut key: Vec<u8> = vec![0; cipher.key_len()];
-        crypto::create_rng().fill_bytes(&mut key);
-        let key = SecretVec::new(key);
-        let key = Arc::new(key);
-
-        let rnd_reader = RandomReader::new(len);
-        b.iter(|| {
-            black_box({
-                let mut reader = rnd_reader.clone();
-                let cursor_write = io::Cursor::new(vec![0; len]);
-                let mut writer = crypto::create_writer(cursor_write, cipher, key.clone());
-                io::copy(&mut reader, &mut writer).unwrap();
-                writer.finish().unwrap()
-            })
-        });
-    }
-}
+impl CryptoWriteSeek<File> for FileCryptoWrite {}

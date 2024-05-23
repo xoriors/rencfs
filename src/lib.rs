@@ -257,7 +257,7 @@
 //! use tracing::info;
 //!
 //! use rencfs::crypto;
-//! use rencfs::crypto::write::CryptoWriter;
+//! use rencfs::crypto::write::CryptoWrite;
 //! use rencfs::crypto::Cipher;
 //!
 //! fn main() -> Result<()> {
@@ -280,12 +280,12 @@
 //!     }
 //!
 //!     let mut file = File::open(path_in.clone())?;
-//!     let mut writer = crypto::create_writer(File::create(out.clone())?, cipher, key.clone());
+//!     let mut writer = crypto::create_write(File::create(out.clone())?, cipher, key.clone());
 //!     info!("encrypt file");
 //!     io::copy(&mut file, &mut writer).unwrap();
 //!     writer.finish()?;
 //!
-//!     let mut reader = crypto::create_reader(File::open(out)?, cipher, key);
+//!     let mut reader = crypto::create_read(File::open(out)?, cipher, key);
 //!     info!("read file and compare hash to original one");
 //!     let hash1 = crypto::hash_reader(&mut File::open(path_in)?)?;
 //!     let hash2 = crypto::hash_reader(&mut reader)?;

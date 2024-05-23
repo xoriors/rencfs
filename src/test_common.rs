@@ -109,7 +109,7 @@ where
 #[allow(dead_code)]
 pub async fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
     let mut buf: Vec<u8> = vec![];
-    fs.create_reader(File::open(path).unwrap())
+    fs.create_read(File::open(path).unwrap())
         .await
         .unwrap()
         .read_to_end(&mut buf)

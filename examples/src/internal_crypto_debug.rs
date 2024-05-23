@@ -9,7 +9,7 @@ use anyhow::Result;
 use secrecy::{SecretString, SecretVec};
 
 use rencfs::crypto;
-use rencfs::crypto::write::CryptoWriter;
+use rencfs::crypto::write::CryptoWrite;
 use rencfs::crypto::Cipher;
 
 #[tokio::main]
@@ -34,12 +34,12 @@ async fn main() -> Result<()> {
     // copy
     let mut file_in = File::open(path_in)?;
     let file_out = File::create(path_out.clone())?;
-    let mut writer = crypto::create_writer(file_out, cipher, key.clone());
+    let mut writer = crypto::create_write(file_out, cipher, key.clone());
     io::copy(&mut file_in, &mut writer)?;
     writer.finish()?;
 
     // check hash
-    let mut reader = crypto::create_reader(File::open(path_out).unwrap(), cipher, key.clone());
+    let mut reader = crypto::create_read(File::open(path_out).unwrap(), cipher, key.clone());
     file_in.seek(io::SeekFrom::Start(0))?;
     let hash1 = crypto::hash_reader(&mut file_in)?;
     let hash2 = crypto::hash_reader(&mut reader)?;
@@ -56,7 +56,7 @@ fn get_key(cipher: Cipher) -> io::Result<SecretVec<u8>> {
 
     // get key from location, useful to debug in existing data dir
     let derived_key = crypto::derive_key(&password, cipher, &salt).unwrap();
-    let reader = crypto::create_reader(
+    let reader = crypto::create_read(
         File::open("/home/gnome/rencfs_data/security/key.enc").unwrap(),
         cipher,
         Arc::new(derived_key),

@@ -1,9 +1,7 @@
 use std::str::FromStr;
 use std::string::ToString;
-use std::thread;
 
 use secrecy::{ExposeSecret, SecretString};
-use tokio::sync::Mutex;
 use tracing_test::traced_test;
 
 use crate::encryptedfs::write_all_bytes_to_fs;

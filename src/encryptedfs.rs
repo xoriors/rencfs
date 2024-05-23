@@ -29,9 +29,9 @@ use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::{ArcHashMap, Holder};
 use crate::async_util::call_async;
-use crate::crypto::read::{CryptoReader, CryptoReaderSeek};
+use crate::crypto::read::{CryptoRead, CryptoReadSeek};
 use crate::crypto::write::{
-    CryptoWriter, CryptoWriterSeek, FileCryptoWriterCallback, FileCryptoWriterMetadataProvider,
+    CryptoWrite, CryptoWriteSeek, FileCryptoWriteCallback, FileCryptoWriteMetadataProvider,
 };
 use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
@@ -100,7 +100,7 @@ async fn get_metadata(fs: Arc<EncryptedFs>, ino: u64) -> FsResult<FileAttr> {
 }
 
 struct LocalFileCryptoWriterMetadataProvider(Weak<EncryptedFs>, u64);
-impl FileCryptoWriterMetadataProvider for LocalFileCryptoWriterMetadataProvider {
+impl FileCryptoWriteMetadataProvider for LocalFileCryptoWriterMetadataProvider {
     fn size(&self) -> io::Result<u64> {
         debug!("requesting size info");
         call_async(async {
@@ -472,7 +472,7 @@ impl Iterator for DirectoryEntryPlusIterator {
 struct ReadHandleContext {
     ino: u64,
     attr: TimeAndSizeFileAttr,
-    reader: Option<Box<dyn CryptoReaderSeek<File>>>,
+    reader: Option<Box<dyn CryptoReadSeek<File>>>,
 }
 
 enum ReadHandleContextOperation {
@@ -502,7 +502,7 @@ impl WriteHandleContextOperation {
 struct WriteHandleContext {
     ino: u64,
     attr: TimeAndSizeFileAttr,
-    writer: Option<Box<dyn CryptoWriterSeek<File>>>,
+    writer: Option<Box<dyn CryptoWriteSeek<File>>>,
 }
 
 struct KeyProvider {
@@ -831,9 +831,11 @@ impl EncryptedFs {
                 RwLock::new(false)
             });
         let guard = lock.read().await;
-        let (ino, _, _): (u64, FileType, String) = bincode::deserialize_from(
-            crypto::create_reader(File::open(hash_path)?, self.cipher, self.key.get().await?),
-        )?;
+        let (ino, _, _): (u64, FileType, String) = bincode::deserialize_from(crypto::create_read(
+            File::open(hash_path)?,
+            self.cipher,
+            self.key.get().await?,
+        ))?;
         drop(guard);
         self.get_inode_from_cache_or_storage(ino).await.map(Some)
     }
@@ -1136,9 +1138,11 @@ impl EncryptedFs {
             .get_or_insert_with(file_path.clone(), || RwLock::new(false));
         let guard = lock.read().await;
         let file = File::open(entry.path())?;
-        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(
-            crypto::create_reader(file, self.cipher, self.key.get().await?),
-        );
+        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto::create_read(
+            file,
+            self.cipher,
+            self.key.get().await?,
+        ));
         drop(guard);
         if let Err(e) = res {
             error!(err = %e, "deserializing directory entry");
@@ -1202,7 +1206,7 @@ impl EncryptedFs {
             error!(err = %err, "opening file");
             FsError::InodeNotFound
         })?;
-        Ok(bincode::deserialize_from(crypto::create_reader(
+        Ok(bincode::deserialize_from(crypto::create_read(
             file,
             self.cipher,
             key,
@@ -1653,9 +1657,9 @@ impl EncryptedFs {
             let mut file = fs_util::open_atomic_write(&self.contents_path(ino))?;
             {
                 // have a new scope, so we drop the reader before moving new content files
-                let mut reader = self.create_file_reader(&in_path, None).await?;
+                let mut reader = self.create_file_read(&in_path, None).await?;
 
-                let mut writer = self.create_writer(file).await?;
+                let mut writer = self.create_write(file).await?;
 
                 let len = if size > attr.size {
                     // increase size, copy existing data until existing size
@@ -1789,11 +1793,11 @@ impl EncryptedFs {
     }
 
     /// Create a crypto writer using internal encryption info.
-    pub async fn create_writer<W: Write + Seek + Send + Sync>(
+    pub async fn create_write<W: Write + Seek + Send + Sync>(
         &self,
         file: W,
-    ) -> FsResult<impl CryptoWriter<W>> {
-        Ok(crypto::create_writer(
+    ) -> FsResult<impl CryptoWrite<W>> {
+        Ok(crypto::create_write(
             file,
             self.cipher,
             self.key.get().await?,
@@ -1809,14 +1813,14 @@ impl EncryptedFs {
     ///
     /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file  
     ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
-    async fn create_file_writer(
+    async fn create_file_write(
         &self,
         file: &Path,
-        callback: Option<Box<dyn FileCryptoWriterCallback>>,
+        callback: Option<Box<dyn FileCryptoWriteCallback>>,
         lock: Option<Holder<RwLock<bool>>>,
-        metadata_provider: Option<Box<dyn FileCryptoWriterMetadataProvider>>,
-    ) -> FsResult<Box<dyn CryptoWriterSeek<File>>> {
-        Ok(crypto::create_file_writer(
+        metadata_provider: Option<Box<dyn FileCryptoWriteMetadataProvider>>,
+    ) -> FsResult<Box<dyn CryptoWriteSeek<File>>> {
+        Ok(crypto::create_file_write(
             file,
             self.cipher,
             self.key.get().await?,
@@ -1829,12 +1833,12 @@ impl EncryptedFs {
     /// Create a crypto reader from file using internal encryption info.
     /// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read\
     ///     You need to provide the same lock to any writers to this file, you should obtain a new [`Holder`] that wraps the same lock,
-    async fn create_file_reader(
+    async fn create_file_read(
         &self,
         file: &Path,
         lock: Option<Holder<RwLock<bool>>>,
-    ) -> FsResult<Box<dyn CryptoReaderSeek<File>>> {
-        Ok(crypto::create_file_reader(
+    ) -> FsResult<Box<dyn CryptoReadSeek<File>>> {
+        Ok(crypto::create_file_read(
             file,
             self.cipher,
             self.key.get().await?,
@@ -1843,11 +1847,11 @@ impl EncryptedFs {
     }
 
     /// Create a crypto reader using internal encryption info.
-    pub async fn create_reader<R: Read + Seek + Send + Sync>(
+    pub async fn create_read<R: Read + Seek + Send + Sync>(
         &self,
         reader: R,
-    ) -> FsResult<impl CryptoReader<R>> {
-        Ok(crypto::create_reader(
+    ) -> FsResult<impl CryptoRead<R>> {
+        Ok(crypto::create_read(
             reader,
             self.cipher,
             self.key.get().await?,
@@ -1868,7 +1872,7 @@ impl EncryptedFs {
         )?)?;
         let initial_key = crypto::derive_key(&old_password, cipher, &salt)?;
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
-        let reader = crypto::create_reader(File::open(enc_file)?, cipher, Arc::new(initial_key));
+        let reader = crypto::create_read(File::open(enc_file)?, cipher, Arc::new(initial_key));
         let key: Vec<u8> =
             bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
         let key = SecretVec::new(key);
@@ -1936,7 +1940,7 @@ impl EncryptedFs {
                 let lock = self
                     .read_write_locks
                     .get_or_insert_with(ino, || RwLock::new(false));
-                let reader = self.create_file_reader(&path, Some(lock)).await?;
+                let reader = self.create_file_read(&path, Some(lock)).await?;
                 let ctx = ReadHandleContext {
                     ino,
                     attr,
@@ -1980,7 +1984,7 @@ impl EncryptedFs {
                     .read_write_locks
                     .get_or_insert_with(ino, || RwLock::new(false));
                 let writer = self
-                    .create_file_writer(
+                    .create_file_write(
                         &path,
                         Some(Box::new(callback)),
                         Some(lock),
@@ -2140,7 +2144,7 @@ impl EncryptedFs {
             .get_or_insert_with(path.to_str().unwrap().to_string(), || RwLock::new(false));
         let guard = lock.write().await;
         let (_, _, name): (u64, FileType, String) =
-            bincode::deserialize_from(crypto::create_reader(
+            bincode::deserialize_from(crypto::create_read(
                 File::open(path.clone())?,
                 self.cipher,
                 self.key.get().await?,
@@ -2200,7 +2204,7 @@ fn read_or_create_key(
     let derived_key = crypto::derive_key(password, cipher, &salt)?;
     if key_path.exists() {
         // read key
-        let reader = crypto::create_reader(File::open(key_path)?, cipher, Arc::new(derived_key));
+        let reader = crypto::create_read(File::open(key_path)?, cipher, Arc::new(derived_key));
         let key: Vec<u8> =
             bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
         Ok(SecretVec::new(key))
@@ -2210,7 +2214,7 @@ fn read_or_create_key(
         let key_len = cipher.key_len();
         key.resize(key_len, 0);
         crypto::create_rng().fill_bytes(&mut key);
-        let mut writer = crypto::create_writer(
+        let mut writer = crypto::create_write(
             OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -2310,7 +2314,7 @@ fn merge_attr(attr: &mut FileAttr, set_attr: &SetFileAttr) {
 
 struct LocalFileCryptoWriterCallback(Weak<EncryptedFs>, u64, u64);
 
-impl FileCryptoWriterCallback for LocalFileCryptoWriterCallback {
+impl FileCryptoWriteCallback for LocalFileCryptoWriterCallback {
     #[instrument(skip(self))]
     fn on_file_content_changed(
         &self,

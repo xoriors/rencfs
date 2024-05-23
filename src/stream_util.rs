@@ -19,7 +19,7 @@ pub fn seek_forward_exact(r: &mut impl Read, len: u64) -> io::Result<()> {
 }
 
 #[instrument(skip(r, len), fields(len = len.to_formatted_string( & Locale::en)))]
-pub fn seek_forward(r: &mut impl Read, len: u64, stop_on_eof: bool) -> io::Result<u64> {
+pub fn seek_forward<R: Read>(r: &mut R, len: u64, stop_on_eof: bool) -> io::Result<u64> {
     debug!("");
     if len == 0 {
         return Ok(0);
