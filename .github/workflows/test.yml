@@ -22,3 +22,7 @@ jobs:
       run: cargo test --tests --lib --verbose -- --show-output --nocapture
     - name: Run doctests
       run: cargo test --package rencfs --doc --verbose -- --show-output --nocapture
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v4.0.1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
