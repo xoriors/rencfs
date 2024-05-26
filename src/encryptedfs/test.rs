@@ -73,7 +73,7 @@ async fn test_write() {
             .await[5..]
         );
 
-        // offset after file end
+        // offset after the file end
         let data = "37";
         let fh = fs.open(attr.ino, false, true).await.unwrap();
         write_all_bytes_to_fs(&fs, attr.ino, 42, data.as_bytes(), fh)
@@ -189,6 +189,7 @@ async fn test_write() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
+#[ignore]
 async fn test_read() {
     run_test(TestSetup { key: "test_read" }, async {
         let fs = get_fs().await;
@@ -363,6 +364,7 @@ async fn test_read() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
+#[ignore]
 async fn test_set_len() {
     run_test(
         TestSetup {

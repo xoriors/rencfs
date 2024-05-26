@@ -18,8 +18,10 @@ use rencfs::crypto::Cipher;
 async fn main() -> Result<()> {
     tracing_subscriber::fmt().init();
 
-    let cipher = Cipher::Aes256Gcm;
+    let cipher = Cipher::ChaCha20Poly1305;
     let key = Arc::new(get_key(cipher)?);
+
+    println!("chacha\n");
 
     let mut args = args();
     let _ = args.next(); // skip the program name
@@ -32,6 +34,15 @@ async fn main() -> Result<()> {
     if out.exists() {
         fs::remove_file(&out)?;
     }
+
+    stream_speed(&path_in, &path_out, cipher, &key)?;
+    println!();
+    file_speed(&path_in, &path_out, cipher, key.clone())?;
+
+    let cipher = Cipher::Aes256Gcm;
+    let key = Arc::new(get_key(cipher)?);
+
+    println!("\naesgcm\n");
 
     stream_speed(&path_in, &path_out, cipher, &key)?;
     println!();
@@ -72,13 +83,17 @@ fn stream_speed(
     let _ = fs::remove_file(path_out);
     let mut file_in = File::open(path_in)?;
     let file_out = File::create(path_out)?;
+    let path_out2 = Path::new(&path_out).to_path_buf().with_extension("dec");
+    let _ = fs::remove_file(path_out2.clone());
+    let mut file_out2 = File::create(path_out2.clone())?;
     let mut writer = crypto::create_write(file_out, cipher, key.clone());
     let size = file_in.metadata()?.len();
     let f = || crypto::create_read(File::open(path_out).unwrap(), cipher, key.clone());
-    test_speed(&mut file_in, &mut writer, size, f)?;
+    test_speed(&mut file_in, &mut writer, &mut file_out2, size, f)?;
     file_in.seek(io::SeekFrom::Start(0))?;
     check_hash(&mut file_in, &mut f())?;
     fs::remove_file(path_out)?;
+    fs::remove_file(path_out2)?;
     Ok(())
 }
 
@@ -99,6 +114,9 @@ fn file_speed(
         None,
         None,
     )?;
+    let path_out2 = Path::new(&path_out).to_path_buf().with_extension("dec");
+    let _ = fs::remove_file(path_out2.clone());
+    let mut file_out2 = File::create(path_out2.clone())?;
     let size = file_in.metadata()?.len();
     let f = || {
         crypto::create_file_read(
@@ -109,16 +127,18 @@ fn file_speed(
         )
         .unwrap()
     };
-    test_speed(&mut file_in, &mut *writer, size, f)?;
+    test_speed(&mut file_in, &mut *writer, &mut file_out2, size, f)?;
     file_in.seek(io::SeekFrom::Start(0)).unwrap();
     check_hash(&mut file_in, &mut *f())?;
     fs::remove_file(path_out)?;
+    fs::remove_file(path_out2)?;
     Ok(())
 }
 
 fn test_speed<W: Write + Send + Sync, R: Read + Send + Sync, FR>(
     r: &mut impl Read,
     w: &mut (impl CryptoWrite<W> + ?Sized),
+    w2: &mut impl Write,
     size: u64,
     r2: FR,
 ) -> io::Result<()>
@@ -143,7 +163,8 @@ where
     )?;
     speed(
         || {
-            io::copy(&mut r2(), &mut io::sink())?;
+            io::copy(&mut r2(), w2)?;
+            w2.flush()?;
             Ok(())
         },
         "read",
