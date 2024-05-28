@@ -199,7 +199,7 @@ You can see more [here](https://crates.io/crates/rencfs)
 
 ## Browser
 
-[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#[https://radumarias.github.io/rencfs](https://radumarias.github.io/rencfs))
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/radumarias/rencfs)
 
 [![Open Rustlings On Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new/?repo=radumarias%2Frencfs&ref=main)
 
