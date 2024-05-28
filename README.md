@@ -279,15 +279,6 @@ and run the app.
 Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like
 sharing pull requests are always appreciated.
 
-# Limitations
-
-- `Aes256Gcm` cipher can save files up to `64GB`. This is because of the `32-bit` counter used in the
-  GCM mode. For more details
-  see [here](https://en.wikipedia.org/wiki/Galois/Counter_Mode#:~:text=For%20any%20given%20key%2C%20GCM,plain%20text%20(64%20GiB).)
-  and [here](https://crypto.stackexchange.com/questions/31793/plain-text-size-limits-for-aes-gcm-mode-just-64gb)
-- `ChaCha20Poly1305` cipher can save files up to `256GB`, it uses a `64-bit` counter. See
-  more details [here](https://datatracker.ietf.org/doc/html/rfc7539)
-
 # Performance
 
 - `Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of `1.66` on average. This is because of the
@@ -311,11 +302,11 @@ sharing pull requests are always appreciated.
     - ChaCha20-Poly1305: The standardized version uses 96-bit nonces (12 bytes), but the original used 64-bit
       nonces (8 bytes).
 - Wearout of a single (key, nonce) pair:
-    - AES-GCM: Messages must be less than 2^32 – 2 blocks (a.k.a. 2^36 – 32 bytes, a.k.a. 2^39 – 256 bits). This
+    - AES-GCM: Messages must be less than 2^32 – 2 blocks (a.k.a. `2^36 – 32 bytes`, a.k.a. `2^39 – 256 bits`), that's raughly `64GB`. This
       also makes the security analysis of AES-GCM with long nonces complicated, since the hashed nonce doesn’t start
       with the lower 4 bytes set to 00 00 00 02.
     - ChaCha20-Poly1305: ChaCha has an internal counter (32 bits in the standardized IETF variant, 64 bits in the
-      original design).
+      original design). Max message lebgth is `2^39 - 256 bits`, about `256 GB`
 - Neither algorithm is nonce misuse resistant.
 
 Conclusion: Both are good options. AES-GCM can be faster with hardware support, but pure-software implementations of
