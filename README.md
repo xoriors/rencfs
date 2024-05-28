@@ -195,13 +195,13 @@ rencfs --log-level LEVEL ...
 
 You can see more [here](https://crates.io/crates/rencfs)
 
+# Building from source
+
 ## Browser
 
 [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#[https://github.com/rust-lang/rustlings](https://radumarias.github.io/rencfs/))
 
 [![Open Rustlings On Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new/?repo=radumarias%2Frencfs&ref=main)
-
-# Building from source
 
 ## Getting the sources
 
