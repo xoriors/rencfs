@@ -203,6 +203,21 @@ You can see more [here](https://crates.io/crates/rencfs)
 
 [![Open Rustlings On Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new/?repo=radumarias%2Frencfs&ref=main)
 
+You can compile it, run it, and give it a quick try in browser. After you start it from above
+```bash
+sudo apt-get update && sudo apt-get install fuse3
+cargo build --release
+mkdir mnt && mkdir data
+cargo run --release -- mount -m mnt -d data
+```
+Open another terminal
+```bash
+cd mnt
+mkdir a && cd a
+echo "test" > test.txt
+cat test.txt
+```
+
 ## Getting the sources
 
 ```bash
