@@ -222,7 +222,7 @@ cat test.txt
 ### Getting the sources
 
 ```bash
-git clone git@github.com:radumarias/rencfs.git
+git clone git@github.com:radumarias/rencfs.git && cd rencfs
 ````
 
 ### Dependencies
