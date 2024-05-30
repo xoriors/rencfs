@@ -217,15 +217,17 @@ echo "test" > test.txt
 cat test.txt
 ```
 
-## Getting the sources
+## Locally
+
+### Getting the sources
 
 ```bash
 git clone git@github.com:radumarias/rencfs.git
 ````
 
-## Dependencies
+### Dependencies
 
-### Rust
+#### Rust
 
 To build from source, you need to have Rust installed, you can see more details on how to install
 it [here](https://www.rust-lang.org/tools/install).
@@ -261,19 +263,19 @@ Ubuntu
 sudo apt-get update && sudo apt-get install fuse3 build-essential
 ```
 
-## Build for debug
+### Build for debug
 
 ```bash
 cargo build
 ```
 
-## Build release
+### Build release
 
 ```bash
 cargo build --release
 ```
 
-## Run
+### Run
 
 ```bash
 cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
@@ -284,8 +286,7 @@ cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
 See here how to configure for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers)  
 And here for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html)
 
-You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build
-and run the app.
+You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build and run the app.
 
 # Future
 
