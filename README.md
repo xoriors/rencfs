@@ -11,7 +11,7 @@
 [![Zulip](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg?label=Zulip)](https://rencfs.zulipchat.com)
 
 > ⚠️ **Warning**
-> ***This is early in development. Please do not use it with sensitive data just yet. Please wait for a
+> ***This is still under development. Please do not use it with sensitive data just yet. Please wait for a
 stable release.
 > It's mostly ideal for experimental and learning projects.***
 
