@@ -12,7 +12,7 @@
 
 > ⚠️ **Warning**
 > ***This is still under development. Please do not use it with sensitive data just yet. Please wait for a
-stable release.
+stable release.  
 > It's mostly ideal for experimental and learning projects.***
 
 An encrypted file system that mounts with FUSE on Linux. It can be used to create encrypted directories.
