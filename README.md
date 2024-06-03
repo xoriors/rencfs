@@ -10,7 +10,7 @@
 [![Matrix](https://img.shields.io/matrix/rencfs%3Amatrix.org?label=Matrix)](https://matrix.to/#/#rencfs:matrix.org)
 [![Zulip](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg?label=Zulip)](https://rencfs.zulipchat.com)
 
-> ⚠️ **Warning**  
+> [!WARNING]
 > **This lib hasn't been audited, it's using `ring` crate which is a well known library, so in principle at least the primitives should offer as similar level of security.  
 > This is still under development. Please do not use it with sensitive data just yet. Please wait for a
 stable release and maybe an audit.  
