@@ -264,6 +264,12 @@ Ubuntu
 sudo apt-get update && sudo apt-get install fuse3 build-essential
 ```
 
+Fedora
+
+```bash
+sudo dnf update && sudo dnf install fuse3
+```
+
 ### Build for debug
 
 ```bash
@@ -280,6 +286,25 @@ cargo build --release
 
 ```bash
 cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
+```
+
+### Build local RPM for Fedora
+
+This is using [cargo-generate-rpm](https://crates.io/crates/cargo-generate-rpm)
+
+```bash
+cargo install cargo-generate-rpm
+cargo build --release
+cargo generate-rpm
+```
+
+The generated RPM will be located here: `target/generate-rpm`.
+
+#### Install and run local RPM
+
+```bash
+cd target/generate-rpm/
+sudo dnf localinstall rencfs-xxx.x86_64.rpm
 ```
 
 ## Developing inside a Container
