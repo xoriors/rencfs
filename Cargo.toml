@@ -63,3 +63,8 @@ fuse3 = { version = "0.7.1", features = ["tokio-runtime", "unprivileged"] }
 
 [package.metadata.aur]
 depends = ["fuse3"]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/rencfs", dest = "/usr/bin/rencfs", mode = "755" }
+]
