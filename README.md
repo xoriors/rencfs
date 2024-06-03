@@ -147,7 +147,6 @@ A basic example of how to use the encrypted file system is shown below
 
 ```
 rencfs mount --mount-point MOUNT_POINT --data-dir DATA_DIR
-
 ```
 
 - `MOUNT_POINT` act as a client, and mount FUSE at given path
