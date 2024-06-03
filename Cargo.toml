@@ -68,3 +68,5 @@ depends = ["fuse3"]
 assets = [
     { source = "target/release/rencfs", dest = "/usr/bin/rencfs", mode = "755" }
 ]
+[package.metadata.generate-rpm.requires]
+fuse3 = "*"
