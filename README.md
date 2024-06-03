@@ -252,22 +252,22 @@ Project is setup to use `nighlty` toolchain in `rust-toolchain.toml`, on first b
 
 Also, these deps are required (or based on your distribution):
 
-Arch
+#### Arch
 
 ```bash
 sudo pacman -Syu && sudo pacman -S fuse3 base-devel
 ```
 
-Ubuntu
+#### Ubuntu
 
 ```bash
 sudo apt-get update && sudo apt-get install fuse3 build-essential
 ```
 
-Fedora
+#### Fedora
 
 ```bash
-sudo dnf update && sudo dnf install fuse3
+sudo dnf update && sudo dnf install fuse3 && dnf install @development-tools
 ```
 
 ### Build for debug
