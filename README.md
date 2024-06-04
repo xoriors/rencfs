@@ -195,7 +195,7 @@ rencfs --log-level LEVEL ...
 
 You can see more [here](https://crates.io/crates/rencfs)
 
-# Building from source
+# Build from source
 
 ## Browser
 
