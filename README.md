@@ -16,7 +16,7 @@
 stable release and maybe an audit.  
 > It's mostly ideal for experimental and learning projects.**
 
-An encrypted file system that mounts with FUSE on Linux. It can be used to create encrypted directories.
+An encrypted file system that is mounted with FUSE on Linux. It can be used to create encrypted directories.
 
 You can then safely backup the encrypted folder on an untrusted server without worrying about the data being exposed.\
 You can also store it in any cloud storage like Google Drive, Dropbox, etc. and have it synced across multiple devices.
