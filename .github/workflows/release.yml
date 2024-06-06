@@ -85,15 +85,30 @@ jobs:
           version: "lab:latest"
           driver: cloud
           endpoint: "xorio42/rencfs"
-      - name: Build and push
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+
+      - name: Build and push image
         uses: docker/build-push-action@v5
         with:
           context: .
-          tags: xorio42/rencfs:latest
-          attests: type=[sbom,provenance]
-          # For pull requests, export results to the build cache.
-          # Otherwise, push to a registry.
-          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry,push=true' }}
+          sbom: true
+          provenance: true
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          
+      # - name: Build and push
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     context: .
+      #     tags: xorio42/rencfs:latest
+      #     attests: type=sbom,generator=image
+      #     # For pull requests, export results to the build cache.
+      #     # Otherwise, push to a registry.
+      #     outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry,push=true' }}
       # - name: Attest
       #   uses: actions/attest-build-provenance@v1
       #   id: attest
