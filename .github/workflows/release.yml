@@ -16,6 +16,7 @@ permissions:
     
 jobs:
   gh_push_to_registry:
+    name: Push Docker image to GitHub Container registry
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
