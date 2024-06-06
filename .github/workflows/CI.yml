@@ -7,12 +7,9 @@ on:
     branches: [ main ]    
   
 jobs:
-  rust:
-    name: Rust project
+  check_version:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - name: Get Cargo.toml version
         id: cargo_version
         run: |
@@ -25,7 +22,7 @@ jobs:
           OLD_VERSION=$(git show origin/main:Cargo.toml | grep '^version =' | sed 's/version = "\(.*\)"/\1/')
           echo "Old Version: $OLD_VERSION"
           echo "New Version: ${{ steps.cargo_version.outputs.new_version }}"
-
+  
           if [ "$OLD_VERSION" != "${{ steps.cargo_version.outputs.new_version }}" ]; then
             echo "Version has changed from $OLD_VERSION to ${{ steps.cargo_version.outputs.new_version }}"
             echo "::set-output name=version_changed::true"
@@ -33,17 +30,21 @@ jobs:
             echo "Version has not changed"
             echo "::set-output name=version_changed::false"
           fi
+          echo "::set-output name=version::$NEW_VERSION"
+
+  build_and_test:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       
       - name: Install latest Rust
         uses: actions-rs/toolchain@v1
         with:
             toolchain: nightly
             override: true
-      - name: Add cargo-aur
-        uses: actions-rs/cargo@v1
-        with:
-          command: add cargo-aur
-      
+
       - name: Build
         uses: actions-rs/cargo@v1
         with:
@@ -63,6 +64,23 @@ jobs:
         with:
           command: test --package rencfs --doc --verbose -- --show-output --nocapture
       
+  aur:
+    name: Pulish to AUR
+    runs-on: ubuntu-latest
+    needs: [build_and_test]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install latest Rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: nightly
+            override: true
+            components: clippy, add
+      - name: Add cargo-aur
+        uses: actions-rs/cargo@v1
+        with:
+          command: add cargo-aur
+
       - name: cargo-aur
         uses: actions-rs/cargo@v1
         with:
@@ -77,15 +95,16 @@ jobs:
       #     ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
       #     commit_message: Update AUR package
       #     ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
-
+  
   docker:
+    name: Pulish to Docker Hub
     permissions:
       id-token: write
       packages: write
       contents: read
       attestations: write
     runs-on: ubuntu-latest
-    needs: rust
+    needs: [check_version, build_and_test]
     env:
       # Hostname of your registry
       REGISTRY: docker.io
@@ -94,7 +113,7 @@ jobs:
       IMAGE_NAME: ${{ github.repository }}
       IMAGE_TAG: latest
       SHA: ${{ github.event.pull_request.head.sha || github.event.after }}
-      PUSH_TYPE: ${{ (github.event_name == 'pull_request' || needs.rust.outputs.version_changed == 'false') && 'type=cacheonly' || 'type=registry,push=true' }}
+      PUSH_TYPE: ${{ (github.event_name == 'pull_request' || needs.check_version.outputs.version_changed == 'false') && 'type=cacheonly' || 'type=registry,push=true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
