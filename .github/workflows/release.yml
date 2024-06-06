@@ -87,7 +87,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          tags: latest
+          tags: main
           # For pull requests, export results to the build cache.
           # Otherwise, push to a registry.
           outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry,push=true' }}
@@ -119,7 +119,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: xorio42/rencfs:latest
+          tags: xorio42/rencfs:main
       - name: Attest
         uses: actions/attest-build-provenance@v1
         id: attest
@@ -163,10 +163,9 @@ jobs:
           # tags: latest
           labels: ${{ steps.meta.outputs.labels }}
 
-
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
         with:
-          subjects-name: xorio42/rencfs
+          subjects-name: xorio42/rencfs:main
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true  
