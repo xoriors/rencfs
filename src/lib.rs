@@ -22,7 +22,7 @@
 //! It can be used a library to create an encrypted file system or mount it with FUSE.
 //!
 //! This crate also contains **main.rs** file that can be used as an example on how to run the encrypted file system from the command line.
-//! Documentation for that can be found [here](https://crates.io/crates/rencfs).
+//! Documentation for that can be found [here](https://github.com/radumarias/rencfs#command-line-tool).
 //!
 //! In the following example, we will see how we can use the library.
 //!
