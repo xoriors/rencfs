@@ -66,6 +66,11 @@ jobs:
   #         cache-to: type=gha,mode=max
 
   docker:
+    permissions:
+      id-token: write
+      packages: write
+      contents: read
+      attestations: write  
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
