@@ -17,7 +17,8 @@ jobs:
         id: cargo_version
         run: |
           NEW_VERSION=$(grep '^version =' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-          echo "::set-output name=new_version::$NEW_VERSION"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
       - name: Check for version change
         id: version_check
         run: |
@@ -75,7 +76,6 @@ jobs:
         with:
             toolchain: nightly
             override: true
-            components: add
       
       - name: List commands
         uses: actions-rs/cargo@v1
