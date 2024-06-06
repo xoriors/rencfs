@@ -86,7 +86,7 @@ jobs:
         if: needs.check_version.outputs.version_changed != 'true'
         run: |
           echo "Version has not changed, no new release is needed, stopping job."
-          exit 0
+          exit 1
       
       - name: Generate Changelog
         id: generate_changelog
