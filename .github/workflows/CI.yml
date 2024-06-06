@@ -75,9 +75,7 @@ jobs:
         run: rustup default nightly && rustup update
       
       - name: Add cargo-aur
-        uses: actions-rs/cargo@v1
-        with:
-          command: add cargo-aur
+        run: cargo add cargo-aur
 
       - name: Run cargo aur
         run: cargo aur
