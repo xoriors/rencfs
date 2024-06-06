@@ -28,14 +28,14 @@ jobs:
           push: true
           outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=My multi-arch image
   
-  dh_push_to_registry:
+  push_to_registry:
     name: Push Docker image to Docker Hub
+    runs-on: ubuntu-latest
     permissions:
       packages: write
       contents: read
       attestations: write
-      id-token: write        
-    runs-on: ubuntu-latest
+      id-token: write
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -59,11 +59,10 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          # tags: ${{ steps.meta.outputs.tags }}
-          tags: latest
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-      
-      
+
+
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
         with:
