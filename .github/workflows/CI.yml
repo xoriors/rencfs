@@ -65,32 +65,23 @@ jobs:
           command: test
       
   aur:
-    name: Pulish to AUR
+    name: AUR
     runs-on: ubuntu-latest
     needs: [check_version, build_and_test]
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install latest Rust
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: nightly
-            override: true
+      - name: Install latest Rust nightly
+        run: rustup default nightly && rustup update
       
-      - name: List commands
-        uses: actions-rs/cargo@v1
-        with:
-          command: --list
-
       - name: Add cargo-aur
         uses: actions-rs/cargo@v1
         with:
           command: add cargo-aur
 
-      - name: cargo-aur
-        uses: actions-rs/cargo@v1
-        with:
-          command: aur
+      - name: Run cargo aur
+        run: cargo aur
+
       # - name: Publish AUR package
       #   uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
       #   with:
@@ -103,7 +94,7 @@ jobs:
       #     ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
   
   docker:
-    name: Pulish to Docker Hub
+    name: Docker
     permissions:
       id-token: write
       packages: write
