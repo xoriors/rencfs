@@ -27,12 +27,12 @@ jobs:
   
           if [ "$OLD_VERSION" != "${{ steps.cargo_version.outputs.new_version }}" ]; then
             echo "Version has changed from $OLD_VERSION to ${{ steps.cargo_version.outputs.new_version }}"
-            echo "::set-output name=version_changed::true"
+            echo "version_changed=true" >> $GITHUB_OUTPUT
           else
             echo "Version has not changed"
-            echo "::set-output name=version_changed::false"
+            echo "version_changed=false" >> $GITHUB_OUTPUT
           fi
-          echo "::set-output name=version::$NEW_VERSION"
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
   build_and_test:
     name: Rust
@@ -72,12 +72,14 @@ jobs:
     needs: [check_version, build_and_test]
     steps:
       - uses: actions/checkout@v4
+      
       - name: Install latest Rust
         uses: actions-rs/toolchain@v1
         with:
             toolchain: nightly
             override: true
-            components: clippy, add
+            components: add
+      
       - name: Add cargo-aur
         uses: actions-rs/cargo@v1
         with:
