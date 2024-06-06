@@ -39,7 +39,7 @@ password without re-encrypting all data, we just re-encrypt the master key.
 
 In progress:
 - ensure file integrity by saving each change to WAL, so on crash or power loss on next start we apply the pending changes. This makes the write operations atomic.
-- multiple writes in parallel to the same file, ideal for torrent like applications or databases
+- multiple writes in parallel to the same file, ideal for torrent like applications
 
 # Stack
 
