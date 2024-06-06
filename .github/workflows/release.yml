@@ -136,6 +136,7 @@ jobs:
       contents: read
       attestations: write
       id-token: write
+
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
@@ -163,9 +164,10 @@ jobs:
           # tags: latest
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Generate artifact attestation
+      - name: Attest
         uses: actions/attest-build-provenance@v1
+        id: attest
         with:
-          subject-name: xorio42
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true  
+          push-to-registry: true
