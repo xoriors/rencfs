@@ -25,17 +25,21 @@ You can use it as CLI or build your custom FUSE implementation with it.
 
 # Functionality
 
-It keeps all encrypted data and master encryption key in a dedicated directory with files structured on inodes (with
+- It keeps all encrypted data and master encryption key in a dedicated directory with files structured on inodes (with
 meta
 info), files for binary content and directories with files/directories entries. All data, metadata and also filenames
 are encrypted. For new files it generates inode number randomly in `u64` space so it reduces the chance of conflicts
 when used offline and synced later.
-
-Password is collected from CLI and it's saved in OS keyring while app is running. This is because of safety reasons we
+- Password is collected from CLI and it's saved in OS keyring while app is running. This is because of safety reasons we
 clear the password from memory on inactivity and we reload it again from keyring just when needed.
-
-Master encryption key is also encrypted with another key derived from the password. This gives the ability to change the
+- Master encryption key is also encrypted with another key derived from the password. This gives the ability to change the
 password without re-encrypting all data, we just re-encrypt the master key.
+- Files are encrypted in chunks of 256KB, so when making a change we just re-encrypt those chunks.
+- Fast seek on read and write, so if you're watching a movie you you can seek to any position and that would be very fast. This is because we can seek to particular chunk.
+
+In progress:
+- keep file integrity by saving to WAL, so on crash of power loss on next start we apply the pending changes. This makes the write operations atomic.
+- multiple writes in parallel to the same file, ideal for torrent like applications or databases
 
 # Stack
 
