@@ -35,7 +35,7 @@ jobs:
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
   build_and_test:
-    name: Rust
+    name: Build and test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,21 +50,21 @@ jobs:
       - name: Build
         uses: actions-rs/cargo@v1
         with:
-          command: build --all --verbose
+          command: build
       
       - name: Check
         uses: actions-rs/cargo@v1
         with:
-          command: check --verbose
+          command: check
       
       - name: Tests
         uses: actions-rs/cargo@v1
         with:
-          command: test --tests --lib --verbose -- --show-output --nocapture
+          command: test --tests --lib -- --show-output --nocapture
       - name: Doctests
         uses: actions-rs/cargo@v1
         with:
-          command: test --package rencfs --doc --verbose -- --show-output --nocapture
+          command: test --package rencfs --doc -- --show-output --nocapture
       
   aur:
     name: Pulish to AUR
