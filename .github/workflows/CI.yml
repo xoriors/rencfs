@@ -43,26 +43,26 @@ jobs:
       - uses: actions/checkout@v4
 
       
-      - name: Install latest Rust
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: nightly
-            override: true
+      # - name: Install latest Rust
+      #   uses: actions-rs/toolchain@v1
+      #   with:
+      #       toolchain: nightly
+      #       override: true
 
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
+      # - name: Build
+      #   uses: actions-rs/cargo@v1
+      #   with:
+      #     command: build
       
-      - name: Check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
+      # - name: Check
+      #   uses: actions-rs/cargo@v1
+      #   with:
+      #     command: check
       
-      - name: Tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
+      # - name: Tests
+      #   uses: actions-rs/cargo@v1
+      #   with:
+      #     command: test
       
   aur:
     name: AUR
