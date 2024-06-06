@@ -74,8 +74,8 @@ jobs:
       - name: Install latest Rust nightly
         run: rustup default nightly && rustup update
       
-      - name: Add cargo-aur
-        run: cargo add cargo-aur
+      - name: Install cargo-aur
+        run: cargo install cargo-aur
 
       - name: Run cargo aur
         run: cargo aur
