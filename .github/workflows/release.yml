@@ -1,0 +1,20 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+    
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push Docker image
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ubuntu-latest
+          push: true
+          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=My multi-arch image
+            
