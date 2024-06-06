@@ -8,6 +8,7 @@ on:
   
 jobs:
   check_version:
+    name: Check version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,11 +61,7 @@ jobs:
       - name: Tests
         uses: actions-rs/cargo@v1
         with:
-          command: test --tests --lib -- --show-output --nocapture
-      - name: Doctests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test --package rencfs --doc -- --show-output --nocapture
+          command: test -- --show-output --nocapture
       
   aur:
     name: Pulish to AUR
