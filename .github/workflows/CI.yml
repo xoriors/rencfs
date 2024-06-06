@@ -61,7 +61,7 @@ jobs:
       - name: Tests
         uses: actions-rs/cargo@v1
         with:
-          command: test -- --show-output --nocapture
+          command: test
       
   aur:
     name: Pulish to AUR
@@ -77,6 +77,11 @@ jobs:
             override: true
             components: add
       
+      - name: List commands
+        uses: actions-rs/cargo@v1
+        with:
+          command: --list
+
       - name: Add cargo-aur
         uses: actions-rs/cargo@v1
         with:
