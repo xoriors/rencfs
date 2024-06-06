@@ -10,6 +10,8 @@ jobs:
   check_version:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      
       - name: Get Cargo.toml version
         id: cargo_version
         run: |
@@ -67,7 +69,7 @@ jobs:
   aur:
     name: Pulish to AUR
     runs-on: ubuntu-latest
-    needs: [build_and_test]
+    needs: [check_version, build_and_test]
     steps:
       - uses: actions/checkout@v4
       - name: Install latest Rust
