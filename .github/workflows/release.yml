@@ -1,8 +1,12 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  # release:
+  #   types: [published]
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
     
 jobs:
   gh_push_to_registry:
