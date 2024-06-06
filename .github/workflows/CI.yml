@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]    
+  
+jobs:
+  check_and_tests:
+    name: Rust project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install latest
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: nightly
+            override: true
+            # components: rustfmt, clippy
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build --all --verbose
+      - name: Check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check --verbose
+      - name: Tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test --tests --lib --verbose -- --show-output --nocapture
+      - name: Doctests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test --package rencfs --doc --verbose -- --show-output --nocapture
+
+  docker:
+    permissions:
+      id-token: write
+      packages: write
+      contents: read
+      attestations: write
+    runs-on: ubuntu-latest
+    env:
+      # Hostname of your registry
+      REGISTRY: docker.io
+      REGISTRY_REPO: xorio42
+      # Image repository, without hostname and tag
+      IMAGE_NAME: ${{ github.repository }}
+      IMAGE_TAG: latest
+      SHA: ${{ github.event.pull_request.head.sha || github.event.after }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: "lab:latest"
+          driver: cloud
+          endpoint: ${{ env.REGISTRY_REPO }}/${{ env.IMAGE_NAME }}
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          tags: ${{ env.REGISTRY_REPO }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          sbom: true
+          provenance: true
+          # push: true          
+          # attests: type=sbom,generator=image
+          # For pull requests, export results to the build cache.
+          # Otherwise, push to a registry.
+          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry,push=true' }}
