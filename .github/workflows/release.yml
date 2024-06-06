@@ -166,6 +166,6 @@ jobs:
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
         with:
-          subject-name: xorio42/rencfs:main
+          subject-name: xorio42
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true  
