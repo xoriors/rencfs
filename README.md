@@ -36,6 +36,7 @@ clear the password from memory on inactivity and we reload it again from keyring
 password without re-encrypting all data, we just re-encrypt the master key.
 - Files are encrypted in chunks of 256KB, so when making a change we just re-encrypt those chunks.
 - Fast seek on read and write, so if you're watching a movie you you can seek to any position and that would be very fast. This is because we can seek to particular chunk.
+- Encryption key is zeroized in mem on idle. Also it's `mlock`ed while used to prevent being moved to swap. It's also `mprotect`ed while not read.
 
 In progress:
 - ensure file integrity by saving each change to WAL, so on crash or power loss on next start we apply the pending changes. This makes the write operations atomic.
