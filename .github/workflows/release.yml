@@ -7,6 +7,12 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+
+permissions:
+  packages: write
+  contents: read
+  attestations: write
+  id-token: write    
     
 jobs:
   gh_push_to_registry:
@@ -25,11 +31,6 @@ jobs:
   dh_push_to_registry:
     name: Push Docker image to Docker Hub
     runs-on: ubuntu-latest
-    permissions:
-      packages: write
-      contents: read
-      attestations: write
-      id-token: write
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
