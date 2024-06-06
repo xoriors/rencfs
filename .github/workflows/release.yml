@@ -5,11 +5,11 @@ on:
     types: [published]
     
 jobs:
-  release:
+  gh_push_to_registry:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build and push Docker image
+      - name: Build and push GitHub Docker image
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
         with:
           context: .
@@ -18,7 +18,7 @@ jobs:
           push: true
           outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=My multi-arch image
   
-  push_to_registry:
+  dh_push_to_registry:
     name: Push Docker image to Docker Hub
     runs-on: ubuntu-latest
     permissions:
