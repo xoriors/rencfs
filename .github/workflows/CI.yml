@@ -186,9 +186,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
 
-      - run: echo "Push ${{ github.event_name == 'push' && needs.check_version.outputs.version_changed == 'true' }}"
-
-      - name: Build and push
+      - name: Build push = ${{ github.event_name == 'push' && needs.check_version.outputs.version_changed == 'true' }}"
         uses: docker/build-push-action@v5
         with:
           context: .
