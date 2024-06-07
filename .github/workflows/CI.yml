@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4      
         with:
-          fetch-depth: 1
+          fetch-depth: 2
       
       - name: Get Cargo.toml version
         id: cargo_version
