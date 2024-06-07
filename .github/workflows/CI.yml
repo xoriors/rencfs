@@ -76,6 +76,8 @@ jobs:
       VERSION: ${{ needs.check_version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+
+      - run: echo ${{ needs.check_version.outputs.version }}
       
       - name: Install latest Rust nightly
         run: rustup default nightly && rustup update
@@ -100,7 +102,7 @@ jobs:
           
   create_release:
     name: Create a new release
-    if: needs.check_version.outputs.version_changed == 'true'
+    if: needs.check_version.outputs.version_changed == 'true' && github.event_name == 'push'
     needs: [check_version, aur_build]
     runs-on: ubuntu-latest
     steps:
