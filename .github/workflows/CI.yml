@@ -64,10 +64,10 @@ jobs:
       #   with:
       #     command: test
       
-  aur:
+  aur_build:
     name: AUR
-    runs-on: ubuntu-latest
     needs: [check_version, build_and_test]
+    runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.check_version.outputs.version }}
     steps:
@@ -82,12 +82,24 @@ jobs:
       - name: Run cargo aur
         run: cargo aur
       
-      - name: Stop job if version has not changed
-        if: needs.check_version.outputs.version_changed != 'true'
-        run: |
-          echo "Version has not changed, no new release is needed, stopping job."
-          exit 1
-      
+      - name: Upload PKGBUILD artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: PKGBUILD
+          path: ./target/cargo-aur/PKGBUILD
+
+      - name: Upload ${{ github.repository }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: PKGBUILD
+          path: ./target/cargo-aur/${{ github.repository }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz artifact
+          
+  create_release:
+    name: Create a new release
+    if: needs.check_version.outputs.version_changed == 'true'
+    needs: [check_version, build_and_test, aur_build]
+    runs-on: ubuntu-latest
+    steps:
       - name: Generate Changelog
         id: generate_changelog
         run: |
@@ -114,6 +126,11 @@ jobs:
           draft: false
           prerelease: false
 
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ github.repository }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
+
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
         env:
@@ -122,13 +139,22 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./target/cargo-aur/${{ github.repository }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
           asset_name: ${{ github.repository }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
-          asset_content_type: application/gzip
+          asset_content_type: application/gzip    
+
+  aur_publish:
+    needs: [check_version, build_and_test, aur_build, create_release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: PKGBUILD
 
       - name: Publish AUR package
         uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
         with:
           pkgname: ${{ github.repository }}-bin
-          pkgbuild: ./target/cargo-aur/PKGBUILD
+          pkgbuild: PKGBUILD
           commit_username: ${{ secrets.AUR_USERNAME }}
           commit_email: ${{ secrets.AUR_EMAIL }}
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
@@ -137,13 +163,13 @@ jobs:
 
   docker:
     name: Docker
+    needs: [check_version, build_and_test]
     permissions:
       id-token: write
       packages: write
       contents: read
       attestations: write
     runs-on: ubuntu-latest
-    needs: [check_version, build_and_test]
     env:
       # Hostname of your registry
       REGISTRY: docker.io
