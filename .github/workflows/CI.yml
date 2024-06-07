@@ -53,27 +53,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      
-      # - name: Install latest Rust
-      #   uses: actions-rs/toolchain@v1
-      #   with:
-      #       toolchain: nightly
-      #       override: true
+      - name: Install latest Rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: nightly
+            override: true
 
-      # - name: Build
-      #   uses: actions-rs/cargo@v1
-      #   with:
-      #     command: build
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
       
-      # - name: Check
-      #   uses: actions-rs/cargo@v1
-      #   with:
-      #     command: check
+      - name: Check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
       
-      # - name: Tests
-      #   uses: actions-rs/cargo@v1
-      #   with:
-      #     command: test
+      - name: Tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
       
   aur_build:
     name: Build AUR
@@ -151,7 +150,7 @@ jobs:
           ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
 
   cargo_publish:
-    name: Publish to cargo
+    name: Publish to crates
     needs: [create_release]
     runs-on: ubuntu-latest
     steps:
