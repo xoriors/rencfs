@@ -92,7 +92,7 @@ jobs:
         run: cargo aur
       
       - name: Check for publish
-        run: cargo publish --dry-run
+        run: cargo publish --dry-run --allow-dirty
 
       - name: Upload PKGBUILD artifact
         uses: actions/upload-artifact@v4
