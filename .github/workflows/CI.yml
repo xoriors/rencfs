@@ -109,26 +109,9 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-           fetch-tags: true
-
-      - name: Generate Changelog
-        id: generate_changelog
-        run: |
-          # Get the previous tag
-          PREVIOUS_TAG=$(git tag --sort=-creatordate | sed -n 2p)
-          CURRENT_TAG=v$VERSION
-          REPO_URL=https://github.com/${{ github.repository }}
-          COMPARE_URL="$REPO_URL/compare/$PREVIOUS_TAG...$CURRENT_TAG"
-
-          # Generate the changelog content
-          CHANGELOG="Full Changelog: [$PREVIOUS_TAG...$CURRENT_TAG]($COMPARE_URL)"
-          echo "changelog=$CHANGELOG" >> "$GITHUB_OUTPUT"
 
       - name: Download artifact
         uses: actions/download-artifact@v4
-      - run: ls -la PKGBUILD
-      - run: ls -la ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
 
       - uses: ncipollo/release-action@v1
         with:
@@ -136,7 +119,6 @@ jobs:
           tag: v${{ needs.check_version.outputs.version }}
           artifacts: "${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz/${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz"
           generateReleaseNotes: true
-          # body: ${{ steps.generate_changelog.outputs.changelog }}
 
   aur_publish:
     name: Publish to AUR
@@ -150,16 +132,16 @@ jobs:
 
       - run: ls -la
 
-      # - name: Publish AUR package
-      #   uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
-      #   with:
-      #     pkgname: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz-bin
-      #     pkgbuild: PKGBUILD/PKGBUILD
-      #     commit_username: ${{ secrets.AUR_USERNAME }}
-      #     commit_email: ${{ secrets.AUR_EMAIL }}
-      #     ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-      #     commit_message: Update AUR package
-      #     ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
+      - name: Publish AUR package
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
+        with:
+          pkgname: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz-bin
+          pkgbuild: PKGBUILD/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update AUR package
+          ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
 
   cargo_publish:
     name: Publish to cargo
