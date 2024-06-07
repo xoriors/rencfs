@@ -161,7 +161,7 @@ jobs:
                   
   docker:
     name: Docker
-    needs: [check_version, build_and_test]
+    needs: [check_version, tests]
     permissions:
       id-token: write
       packages: write
