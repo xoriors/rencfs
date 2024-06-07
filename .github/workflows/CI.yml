@@ -128,10 +128,9 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
           path: .
+      - run: ls -la
 
-      - uses: actions/checkout@v4
       - uses: ncipollo/release-action@v1
         with:
           name: Release v${{ needs.check_version.outputs.version }}
