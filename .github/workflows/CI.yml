@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - id: check_version
-        uses: radumarias/actions/check-version@v1
+        uses: radumarias/action-check-version-changed-rust@v1
   
   tests:
     name: Tests
