@@ -47,8 +47,8 @@ jobs:
           fi
           echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
-  build_and_test:
-    name: Build and test
+  tests:
+    name: Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,11 +58,6 @@ jobs:
         with:
             toolchain: nightly
             override: true
-
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
       
       - name: Check
         uses: actions-rs/cargo@v1
@@ -76,7 +71,7 @@ jobs:
       
   aur_build:
     name: Build AUR
-    needs: [check_version, build_and_test]
+    needs: [check_version, tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
