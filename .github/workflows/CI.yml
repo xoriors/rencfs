@@ -162,9 +162,9 @@ jobs:
     env:
       # Hostname of your registry
       REGISTRY: docker.io
-      REGISTRY_REPO: xorio42
+      REGISTRY_USER: xorio42
       # Image repository, without hostname and tag
-      IMAGE_NAME: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
+      IMAGE_NAME: ${{ github.event.repository.name }}
       IMAGE_TAG: latest
       SHA: ${{ github.event.pull_request.head.sha || github.event.after }}
     steps:
@@ -189,8 +189,7 @@ jobs:
       - name: Build push = ${{ github.event_name == 'push' && needs.check_version.outputs.version_changed == 'true' }}"
         uses: docker/build-push-action@v5
         with:
-          context: .
-          tags: ${{ env.REGISTRY_REPO }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          push: ${{ github.event_name == 'push' && needs.check_version.outputs.version_changed == 'true' }}
+          tags: ${{ env.REGISTRY_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           sbom: true
           provenance: true
-          push: ${{ github.event_name == 'push' && needs.check_version.outputs.version_changed == 'true' }}
