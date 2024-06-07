@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4      
         with:
-          fetch-depth: 3
+          fetch-depth: 1
       
       - name: Get Cargo.toml version
         id: cargo_version
@@ -32,7 +32,7 @@ jobs:
         id: version_check
         run: |
           git fetch origin main
-          OLD_VERSION=$(git diff HEAD~2 HEAD -- Cargo.toml | grep '^-version =' | sed 's/version = "\(.*\)"/\1/' | tr -d '-')
+          OLD_VERSION=$(git diff HEAD~1 HEAD -- Cargo.toml | grep '^-version =' | sed 's/version = "\(.*\)"/\1/' | tr -d '-')
           OLD_VERSION=${OLD_VERSION:-${{ steps.cargo_version.outputs.new_version }}}
 
           echo "Old Version: $OLD_VERSION"
