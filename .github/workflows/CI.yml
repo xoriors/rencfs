@@ -76,12 +76,8 @@ jobs:
     name: AUR
     needs: [check_version, build_and_test]
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.check_version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-
-      - run: echo ${{ needs.check_version.outputs.version }}
       
       - name: Install latest Rust nightly
         run: rustup default nightly && rustup update
@@ -98,11 +94,11 @@ jobs:
           name: PKGBUILD
           path: ./target/cargo-aur/PKGBUILD
 
-      - name: Upload ${{ github.repository }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz artifact
+      - name: Upload ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz artifact
         uses: actions/upload-artifact@v3
         with:
-          name: PKGBUILD
-          path: ./target/cargo-aur/${{ github.repository }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz artifact
+          name: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
+          path: ./target/cargo-aur/${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
           
   create_release:
     name: Create a new release
@@ -132,14 +128,14 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v3
         with:
-          name: ${{ github.repository }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
+          name: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
 
       - uses: actions/checkout@v4
       - uses: ncipollo/release-action@v1
         with:
           name: Release v${{ needs.check_version.outputs.version }}
           tag: v${{ needs.check_version.outputs.version }}
-          artifacts: "release.tar.gz,foo/*.txt"
+          artifacts: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
           body: ${{ steps.generate_changelog.outputs.changelog }}
 
   aur_publish:
@@ -155,7 +151,7 @@ jobs:
       - name: Publish AUR package
         uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
         with:
-          pkgname: ${{ github.repository }}-bin
+          pkgname: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz-bin
           pkgbuild: PKGBUILD
           commit_username: ${{ secrets.AUR_USERNAME }}
           commit_email: ${{ secrets.AUR_EMAIL }}
@@ -191,7 +187,7 @@ jobs:
       REGISTRY: docker.io
       REGISTRY_REPO: xorio42
       # Image repository, without hostname and tag
-      IMAGE_NAME: ${{ github.repository }}
+      IMAGE_NAME: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
       IMAGE_TAG: latest
       SHA: ${{ github.event.pull_request.head.sha || github.event.after }}
       PUSH_TYPE: ${{ (github.event_name == 'pull_request' || needs.check_version.outputs.version_changed == 'false') && 'type=cacheonly' || 'type=registry,push=true' }}
