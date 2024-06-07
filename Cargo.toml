@@ -70,3 +70,4 @@ assets = [
 ]
 [package.metadata.generate-rpm.requires]
 fuse3 = "*"
+
