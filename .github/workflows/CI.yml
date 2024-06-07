@@ -23,7 +23,7 @@ jobs:
         id: cargo_version
         run: |
           NEW_VERSION=$(grep '^version =' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Check for version change
         id: version_check
@@ -37,12 +37,12 @@ jobs:
   
           if [ "$OLD_VERSION" != "${{ steps.cargo_version.outputs.new_version }}" ]; then
             echo "Version has changed from $OLD_VERSION to ${{ steps.cargo_version.outputs.new_version }}"
-            echo "version_changed=true" >> $GITHUB_OUTPUT
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "Version has not changed"
-            echo "version_changed=false" >> $GITHUB_OUTPUT
+            echo "version_changed=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
   build_and_test:
     name: Build and test
