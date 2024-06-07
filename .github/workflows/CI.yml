@@ -163,7 +163,7 @@ jobs:
           run: rustup default nightly && rustup update
 
         - name: Publish
-          run: cargo --token ${{ secrets.CARGO_REGISTRY_TOKEN }} publish
+          run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} publish
                   
   docker:
     name: Docker
