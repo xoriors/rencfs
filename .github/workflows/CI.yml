@@ -91,13 +91,13 @@ jobs:
       - name: Upload PKGBUILD artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PKGBUILD
+          # name: PKGBUILD
           path: ./target/cargo-aur/PKGBUILD
 
       - name: Upload ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
+          # name: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
           path: ./target/cargo-aur/${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
           
   create_release:
