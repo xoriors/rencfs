@@ -127,14 +127,15 @@ jobs:
 
       - name: Download artifact
         uses: actions/download-artifact@v4
-      - run: ls -la $GITHUB_WORKSPACE
+      - run: ls -la
 
       - uses: ncipollo/release-action@v1
         with:
           name: Release v${{ needs.check_version.outputs.version }}
           tag: v${{ needs.check_version.outputs.version }}
-          artifacts: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
-          body: ${{ steps.generate_changelog.outputs.changelog }}
+          artifacts: "./${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz"
+          generateReleaseNotes: true
+          # body: ${{ steps.generate_changelog.outputs.changelog }}
 
   aur_publish:
     name: Publish to AUR
@@ -145,18 +146,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: PKGBUILD
-          download-path: .
 
-      - name: Publish AUR package
-        uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
-        with:
-          pkgname: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz-bin
-          pkgbuild: PKGBUILD
-          commit_username: ${{ secrets.AUR_USERNAME }}
-          commit_email: ${{ secrets.AUR_EMAIL }}
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: Update AUR package
-          ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
+      - run: ls -la
+
+      # - name: Publish AUR package
+      #   uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
+      #   with:
+      #     pkgname: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz-bin
+      #     pkgbuild: PKGBUILD
+      #     commit_username: ${{ secrets.AUR_USERNAME }}
+      #     commit_email: ${{ secrets.AUR_EMAIL }}
+      #     ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      #     commit_message: Update AUR package
+      #     ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
 
   cargo_publish:
     name: Publish to cargo
