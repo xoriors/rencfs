@@ -11,7 +11,7 @@ env:
   
 jobs:
   check_version:
-    name: Check version
+    name: Check version change
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.cargo_version.outputs.new_version }}
