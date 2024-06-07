@@ -10,6 +10,20 @@ env:
   CARGO_TERM_COLOR: always
   
 jobs:
+  check_version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check_version.outputs.changed }}
+      version: ${{ steps.check_version.outputs.version }}
+      prev_version: ${{ steps.check_version.outputs.prev_version }}
+      
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check_version
+        uses: radumarias/actions/check-version@v1
+  
   tests:
     name: Tests
     runs-on: ubuntu-latest
@@ -27,13 +41,10 @@ jobs:
       
   aur_build:
     name: Build AUR
-    needs: [tests]
+    needs: [check_version, tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - id: check_version
-        uses: radumarias/actions/check-version@v1      
 
       - name: Install latest Rust nightly
         run: rustup default nightly && rustup update
@@ -53,36 +64,33 @@ jobs:
           name: PKGBUILD
           path: ./target/cargo-aur/PKGBUILD
 
-      - name: Upload ${{ github.event.repository.name }}-${{ steps.check_version.outputs.current_version }}-x86_64.tar.gz artifact
+      - name: Upload ${{ github.event.repository.name }}-${{ jobs.check_version.outputs.current_version }}-x86_64.tar.gz artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.repository.name }}-${{ steps.check_version.outputs.version }}-x86_64.tar.gz
-          path: ./target/cargo-aur/${{ github.event.repository.name }}-${{ steps.check_version.outputs.version }}-x86_64.tar.gz
+          name: ${{ github.event.repository.name }}-${{ jobs.check_version.outputs.version }}-x86_64.tar.gz
+          path: ./target/cargo-aur/${{ github.event.repository.name }}-${{ jobs.check_version.outputs.version }}-x86_64.tar.gz
           
   create_release:
     name: Create release
-    if: steps.check_version.outputs.version_changed == 'true' && github.event_name == 'push'
-    needs: [aur_build]
+    if: jobs.check_version.outputs.version_changed == 'true' && github.event_name == 'push'
+    needs: [check_version, aur_build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - id: check_version
-        uses: radumarias/actions/check-version@v1
-
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ github.event.repository.name }}-${{ steps.check_version.outputs.version }}-x86_64.tar.gz
+          name: ${{ github.event.repository.name }}-${{ jobs.check_version.outputs.version }}-x86_64.tar.gz
 
       - uses: ncipollo/release-action@v1
         name: Create release
         with:
-          name: Release v${{ steps.check_version.outputs.version }}
-          tag: v${{ steps.check_version.outputs.version }}
-          artifacts: "${{ github.event.repository.name }}-${{ steps.check_version.outputs.version }}-x86_64.tar.gz"
+          name: Release v${{ jobs.check_version.outputs.version }}
+          tag: v${{ jobs.check_version.outputs.version }}
+          artifacts: "${{ github.event.repository.name }}-${{ jobs.check_version.outputs.version }}-x86_64.tar.gz"
           generateReleaseNotes: true
 
   aur_publish:
@@ -121,7 +129,7 @@ jobs:
                   
   docker:
     name: Docker
-    needs: [tests]
+    needs: [check_version, tests]
     permissions:
       id-token: write
       packages: write
@@ -140,11 +148,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - id: check_version
-        uses: radumarias/actions/check-version@v1
-
       - name: Log in to Docker Hub
-        if: ${{ github.event_name == 'push' && steps.check_version.outputs.version_changed == 'true' }}"
+        if: ${{ github.event_name == 'push' && jobs.check_version.outputs.version_changed == 'true' }}"
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -153,10 +158,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         
-      - name: Build push = ${{ github.event_name == 'push' && steps.check_version.outputs.version_changed == 'true' }}"
+      - name: Build push = ${{ github.event_name == 'push' && jobs.check_version.outputs.version_changed == 'true' }}"
         uses: docker/build-push-action@v5
         with:
-          push: ${{ github.event_name == 'push' && steps.check_version.outputs.version_changed == 'true' }}
+          push: ${{ github.event_name == 'push' && jobs.check_version.outputs.version_changed == 'true' }}
           tags: ${{ env.REGISTRY_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           sbom: true
           provenance: true
