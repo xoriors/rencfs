@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 3
           
       - name: Get Cargo.toml version
         id: cargo_version
@@ -104,6 +104,10 @@ jobs:
     needs: [check_version, aur_build]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+           fetch-tags: true
+    
       - name: Generate Changelog
         id: generate_changelog
         run: |
