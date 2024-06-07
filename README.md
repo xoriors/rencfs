@@ -213,6 +213,7 @@ You can see more [here](https://crates.io/crates/rencfs)
 You can compile it, run it, and give it a quick try in browser. After you start it from above
 ```bash
 sudo apt-get update && sudo apt-get install fuse3
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 mkdir mnt && mkdir data
 cargo run --release -- mount -m mnt -d data
 ```
