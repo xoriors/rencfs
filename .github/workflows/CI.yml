@@ -76,7 +76,7 @@ jobs:
       #     command: test
       
   aur_build:
-    name: AUR
+    name: Build AUR
     needs: [check_version, build_and_test]
     runs-on: ubuntu-latest
     steps:
@@ -91,6 +91,9 @@ jobs:
       - name: Run cargo aur
         run: cargo aur
       
+      - name: Check for publish
+        run: cargo publish --dry-run
+
       - name: Upload PKGBUILD artifact
         uses: actions/upload-artifact@v4
         with:
@@ -136,8 +139,6 @@ jobs:
         with:
           name: PKGBUILD
 
-      - run: ls -la
-
       - name: Publish AUR package
         uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
         with:
@@ -155,14 +156,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
         - uses: actions/checkout@v4
-        - uses: actions-rs/toolchain@v1
-          with:
-              toolchain: nightly
-              override: true
-        - uses: katyo/publish-crates@v2
-          with:
-              registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          
+
+        - run: cat Cargo.toml
+
+        - name: Install latest Rust nightly
+          run: rustup default nightly && rustup update
+
+        - name: Publish
+          run: cargo --token ${{ secrets.CARGO_REGISTRY_TOKEN }} publish
+                  
   docker:
     name: Docker
     needs: [check_version, build_and_test]
