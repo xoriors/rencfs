@@ -53,21 +53,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install latest Rust
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: nightly
-            override: true
+      - name: Install latest Rust nightly
+        run: rustup default nightly && rustup update
       
       - name: Check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
+        run: cargo check
       
       - name: Tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
+        run: cargo test
       
   aur_build:
     name: Build AUR
@@ -150,8 +143,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
         - uses: actions/checkout@v4
-
-        - run: cat Cargo.toml
 
         - name: Install latest Rust nightly
           run: rustup default nightly && rustup update
