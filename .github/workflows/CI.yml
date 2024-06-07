@@ -187,7 +187,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
 
-      - run: echo "Build type $BUILD_TYPE"
+      - run: echo "Build type ${{ env.BUILD_TYPE }}"
 
       - name: Build and push
         uses: docker/build-push-action@v5
