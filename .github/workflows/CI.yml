@@ -23,7 +23,9 @@ jobs:
         id: version_check
         run: |
           git fetch origin main
-          OLD_VERSION=$(git show origin/main:Cargo.toml | grep '^version =' | sed 's/version = "\(.*\)"/\1/')
+          OLD_VERSION=$(git diff HEAD~2 HEAD -- Cargo.toml | grep '^\-version =' | sed 's/version = "\(.*\)"/\1/' | tr -d '-')
+          OLD_VERSION=${OLD_VERSION:-${{ steps.cargo_version.outputs.new_version }}}
+
           echo "Old Version: $OLD_VERSION"
           echo "New Version: ${{ steps.cargo_version.outputs.new_version }}"
   
@@ -97,14 +99,14 @@ jobs:
   create_release:
     name: Create a new release
     if: needs.check_version.outputs.version_changed == 'true'
-    needs: [check_version, build_and_test, aur_build]
+    needs: [check_version, aur_build]
     runs-on: ubuntu-latest
     steps:
       - name: Generate Changelog
         id: generate_changelog
         run: |
           # Get the previous tag
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^)
+          PREVIOUS_TAG=$(git tag --sort=-creatordate | sed -n 2p)
           CURRENT_TAG=v$VERSION
           REPO_URL=https://github.com/${{ github.repository }}
           COMPARE_URL="$REPO_URL/compare/$PREVIOUS_TAG...$CURRENT_TAG"
@@ -142,7 +144,8 @@ jobs:
           asset_content_type: application/gzip    
 
   aur_publish:
-    needs: [check_version, build_and_test, aur_build, create_release]
+    name: Publish to AUR
+    needs: [create_release]
     runs-on: ubuntu-latest
     steps:
       - name: Download artifact
@@ -161,6 +164,20 @@ jobs:
           commit_message: Update AUR package
           ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
 
+  cargo_publish:
+    name: Publish to cargo
+    needs: [create_release]
+    runs-on: ubuntu-latest
+    steps:
+        - uses: actions/checkout@v4
+        - uses: actions-rs/toolchain@v1
+          with:
+              toolchain: stable
+              override: true
+        - uses: katyo/publish-crates@v2
+          with:
+              registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          
   docker:
     name: Docker
     needs: [check_version, build_and_test]
