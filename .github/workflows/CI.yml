@@ -11,7 +11,7 @@ env:
   
 jobs:
   check_version:
-    uses: radumarias/actions/.github/workflows/check_version@main
+    uses: radumarias/actions/.github/workflows/check_version.yml@main
     with:
       type: rust
 
