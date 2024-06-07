@@ -91,13 +91,13 @@ jobs:
       - name: Upload PKGBUILD artifact
         uses: actions/upload-artifact@v4
         with:
-          # name: PKGBUILD
+          name: PKGBUILD
           path: ./target/cargo-aur/PKGBUILD
 
       - name: Upload ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz artifact
         uses: actions/upload-artifact@v4
         with:
-          # name: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
+          name: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
           path: ./target/cargo-aur/${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
           
   create_release:
@@ -127,13 +127,14 @@ jobs:
 
       - name: Download artifact
         uses: actions/download-artifact@v4
-      - run: ls -la
+      - run: ls -la PKGBUILD
+      - run: ls -la ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
 
       - uses: ncipollo/release-action@v1
         with:
           name: Release v${{ needs.check_version.outputs.version }}
           tag: v${{ needs.check_version.outputs.version }}
-          artifacts: "./${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz"
+          artifacts: "${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz/${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz"
           generateReleaseNotes: true
           # body: ${{ steps.generate_changelog.outputs.changelog }}
 
@@ -153,7 +154,7 @@ jobs:
       #   uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
       #   with:
       #     pkgname: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz-bin
-      #     pkgbuild: PKGBUILD
+      #     pkgbuild: PKGBUILD/PKGBUILD
       #     commit_username: ${{ secrets.AUR_USERNAME }}
       #     commit_email: ${{ secrets.AUR_EMAIL }}
       #     ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
@@ -202,13 +203,6 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       
-      # - name: Set up Docker Buildx
-      #   uses: docker/setup-buildx-action@v3
-      #   with:
-      #     version: "lab:latest"
-      #     driver: cloud
-      #     endpoint: ${{ env.REGISTRY_REPO }}/${{ env.IMAGE_NAME }}
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         
@@ -227,8 +221,6 @@ jobs:
           tags: ${{ env.REGISTRY_REPO }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           sbom: true
           provenance: true
-          # push: true
-          # attests: type=sbom,generator=image
           # For pull requests, export results to the build cache.
           # Otherwise, push to a registry.
           outputs: ${{ (github.event_name == 'pull_request' || needs.rust.outputs.version_changed == 'false') && 'type=cacheonly' || 'type=registry,push=true' }}
