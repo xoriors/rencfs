@@ -182,7 +182,7 @@ jobs:
       IMAGE_NAME: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
       IMAGE_TAG: latest
       SHA: ${{ github.event.pull_request.head.sha || github.event.after }}
-      PUSH_TYPE: ${{ (github.event_name == 'pull_request' || needs.check_version.outputs.version_changed == 'false') && 'type=cacheonly' || 'type=registry,push=true' }}
+      BUILD_TYPE: ${{ (github.event_name == 'pull_request' || needs.check_version.outputs.version_changed == 'false') && 'type=cacheonly' || 'type=registry,push=true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -202,7 +202,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
 
-      - run: echo $PUSH_TYPE
+      - run: echo "build type $BUILD_TYPE"
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -213,4 +213,4 @@ jobs:
           provenance: true
           # For pull requests, export results to the build cache.
           # Otherwise, push to a registry.
-          outputs: ${{ (github.event_name == 'pull_request' || needs.rust.outputs.version_changed == 'false') && 'type=cacheonly' || 'type=registry,push=true' }}
+          outputs: ${{ env.BUILD_TYPE }}
