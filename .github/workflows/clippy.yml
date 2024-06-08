@@ -18,9 +18,12 @@ jobs:
       run: rustup default nightly && rustup update
     - name: Add clippy
       run: rustup component add clippy
-    - name: Build
-      run: cargo build -all --verbose
+    
+    - name: Fmt check
+      run: cargo fmt --check
+
     - name: Check
       run: cargo check --verbose
+
     - name: Clippy
       run: cargo clippy --all-features --verbose
