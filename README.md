@@ -328,10 +328,6 @@ You can use the `.devcontainer` directory from the project to start a container 
 - A GUI is on the way [rencfs_desktop](https://github.com/radumarias/rencfs_desktop)
 - Mobile apps for Android and iOS are on the way
 
-# Contribute
-
-Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing pull requests are always appreciated.
-
 # Performance
 
 - `Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of `1.66` on average. This is because of the
@@ -411,3 +407,7 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
   ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight"
   other well known implementations but it can be a project from which others can learn or build upon or why not for some
   to actually use it keeping in mind all the above
+
+# Contribute
+
+Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing pull requests are always appreciated.
