@@ -416,12 +416,15 @@ Feel free to fork it, change and use it in any way that you want. If you build s
 
 1. Fork the repo
 2. Make the changes in your fork
-4. `cargo fmt`, you can cnofigure your IDE to do this on save [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html) and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
-5. `cargo check` and fix any errors and warnings
-6. Ideally also `cargo clippy` and fix any errors and warnings
-7. Add tests for you changes, if applicable
-8. `cargo test` and fix any issues
-9. Create a PR
-10. Monitor the checks (GitHub actions runned)
-11. Respond to any comments
-12. In the end idelaly it will be merged to `main`
+3. If you add new `.rs` files in `examples` member add `#![deny(warnings)]` as first line.
+4. If you add new members to the workspace add `#![deny(warnings)]` to it's `lib.rs` and to any `bin` file (like `main.rs` or other files declared as `[[bin]]`).
+5. Add tests for you changes, if applicable
+6. `cargo build --all` and fix any issues
+7. `cargo fmt --all`, you can cnofigure your IDE to do this on save [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html) and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
+8. `cargo check --all` and fix any errors and warnings
+9. `cargo clippy --all --all-features -- -D warnings` and fix any errors
+10. `cargo test --all` and fix any issues
+11. Create a PR
+12. Monitor the checks (GitHub actions runned)
+13. Respond to any comments
+14. In the end idelaly it will be merged to `main`
