@@ -76,3 +76,8 @@ jobs:
       push: ${{ inputs.upload_artifacts }}
       version: ${{ inputs.version }}
     secrets: inherit
+    permissions:
+      id-token: write
+      packages: write
+      contents: read
+      attestations: write
