@@ -1,3 +1,4 @@
+#![deny(warnings)]
 use std::env::args;
 use std::io;
 use std::path::Path;

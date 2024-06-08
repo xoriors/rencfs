@@ -1,3 +1,4 @@
+#![deny(warnings)]
 use std::env::args;
 use std::fs::File;
 use std::io::{Read, Seek, Write};

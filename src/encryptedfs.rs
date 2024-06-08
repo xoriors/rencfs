@@ -1,9 +1,7 @@
-use std::backtrace::Backtrace;
 use std::cmp::max;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::fs::{DirEntry, File, OpenOptions, ReadDir};
-use std::io::ErrorKind::Other;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::{NonZeroUsize, ParseIntError};
 use std::path::{Path, PathBuf};
@@ -28,7 +26,6 @@ use tokio_stream::wrappers::ReadDirStream;
 use tracing::{debug, error, instrument, warn};
 
 use crate::arc_hashmap::{ArcHashMap, Holder};
-use crate::async_util::call_async;
 use crate::crypto::read::{CryptoRead, CryptoReadSeek};
 use crate::crypto::write::{
     CryptoWrite, CryptoWriteSeek, FileCryptoWriteCallback, FileCryptoWriteMetadataProvider,
@@ -63,6 +60,7 @@ fn spawn_runtime() -> Runtime {
 static DIR_ENTRIES_RT: LazyLock<Runtime> = LazyLock::new(|| spawn_runtime());
 static NOD_RT: LazyLock<Runtime> = LazyLock::new(|| spawn_runtime());
 
+#[allow(dead_code)]
 async fn reset_handles(
     fs: Arc<EncryptedFs>,
     ino: u64,
@@ -86,6 +84,7 @@ async fn reset_handles(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn get_metadata(fs: Arc<EncryptedFs>, ino: u64) -> FsResult<FileAttr> {
     let lock = fs.attr_cache.get().await?;
     let mut guard = lock.lock().await;
@@ -99,22 +98,23 @@ async fn get_metadata(fs: Arc<EncryptedFs>, ino: u64) -> FsResult<FileAttr> {
     }
 }
 
-struct LocalFileCryptoWriterMetadataProvider(Weak<EncryptedFs>, u64);
-impl FileCryptoWriteMetadataProvider for LocalFileCryptoWriterMetadataProvider {
-    fn size(&self) -> io::Result<u64> {
-        debug!("requesting size info");
-        call_async(async {
-            if let Some(fs) = self.0.upgrade() {
-                get_metadata(fs, self.1)
-                    .await
-                    .map_err(|e| io::Error::new(Other, e))
-                    .map(|attr| attr.size)
-            } else {
-                Err(io::Error::new(Other, "fs dropped"))
-            }
-        })
-    }
-}
+// todo: remove
+// struct LocalFileCryptoWriterMetadataProvider(Weak<EncryptedFs>, u64);
+// impl FileCryptoWriteMetadataProvider for LocalFileCryptoWriterMetadataProvider {
+//     fn size(&self) -> io::Result<u64> {
+//         debug!("requesting size info");
+//         call_async(async {
+//             if let Some(fs) = self.0.upgrade() {
+//                 get_metadata(fs, self.1)
+//                     .await
+//                     .map_err(|e| io::Error::new(Other, e))
+//                     .map(|attr| attr.size)
+//             } else {
+//                 Err(io::Error::new(Other, "fs dropped"))
+//             }
+//         })
+//     }
+// }
 
 /// File attributes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -304,13 +304,13 @@ pub enum FsError {
     Io {
         #[from]
         source: io::Error,
-        backtrace: Backtrace,
+        // backtrace: Backtrace,
     },
     #[error("serialize error: {source}")]
     SerializeError {
         #[from]
         source: bincode::Error,
-        backtrace: Backtrace,
+        // backtrace: Backtrace,
     },
     #[error("item not found: {0}")]
     NotFound(&'static str),
@@ -338,25 +338,25 @@ pub enum FsError {
     Crypto {
         #[from]
         source: crypto::Error,
-        backtrace: Backtrace,
+        // backtrace: Backtrace,
     },
     #[error("keyring error: {source}")]
     Keyring {
         #[from]
         source: keyring::Error,
-        backtrace: Backtrace,
+        // backtrace: Backtrace,
     },
     #[error("parse int error: {source}")]
     ParseIntError {
         #[from]
         source: ParseIntError,
-        backtrace: Backtrace,
+        // backtrace: Backtrace,
     },
     #[error("tokio join error: {source}")]
     JoinError {
         #[from]
         source: JoinError,
-        backtrace: Backtrace,
+        // backtrace: Backtrace,
     },
     #[error("max filesize exceeded, max allowed {0}")]
     MaxFilesizeExceeded(usize),
@@ -1825,6 +1825,7 @@ impl EncryptedFs {
     ///
     /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file  
     ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
+    #[allow(dead_code)]
     async fn create_file_write(
         &self,
         file: &Path,
@@ -1961,9 +1962,9 @@ impl EncryptedFs {
         match op {
             ReadHandleContextOperation::Create { ino } => {
                 let attr: TimeAndSizeFileAttr = attr.into();
-                let lock = self
-                    .read_write_locks
-                    .get_or_insert_with(ino, || RwLock::new(false));
+                // let lock = self
+                //     .read_write_locks
+                //     .get_or_insert_with(ino, || RwLock::new(false));
                 let reader = self.create_read_seek(File::open(&path)?).await?;
                 let ctx = ReadHandleContext {
                     ino,
@@ -1992,21 +1993,21 @@ impl EncryptedFs {
     ) -> FsResult<()> {
         let ino = op.get_ino();
         let path = self.contents_path(ino);
-        let callback = LocalFileCryptoWriterCallback(
-            (*self.self_weak.lock().unwrap().as_ref().unwrap()).clone(),
-            ino,
-            handle,
-        );
+        // let callback = LocalFileCryptoWriterCallback(
+        //     (*self.self_weak.lock().unwrap().as_ref().unwrap()).clone(),
+        //     ino,
+        //     handle,
+        // );
         match op {
             WriteHandleContextOperation::Create { ino } => {
                 let attr = self.get_attr(ino).await?.into();
-                let metadata_provider = Box::new(LocalFileCryptoWriterMetadataProvider(
-                    (*self.self_weak.lock().unwrap().as_ref().unwrap()).clone(),
-                    ino,
-                ));
-                let lock = self
-                    .read_write_locks
-                    .get_or_insert_with(ino, || RwLock::new(false));
+                // let metadata_provider = Box::new(LocalFileCryptoWriterMetadataProvider(
+                //     (*self.self_weak.lock().unwrap().as_ref().unwrap()).clone(),
+                //     ino,
+                // ));
+                // let lock = self
+                //     .read_write_locks
+                //     .get_or_insert_with(ino, || RwLock::new(false));
                 let writer = self
                     .create_write_seek(OpenOptions::new().read(true).write(true).open(&path)?)
                     .await?;
@@ -2331,28 +2332,28 @@ fn merge_attr(attr: &mut FileAttr, set_attr: &SetFileAttr) {
     }
 }
 
-struct LocalFileCryptoWriterCallback(Weak<EncryptedFs>, u64, u64);
-
-impl FileCryptoWriteCallback for LocalFileCryptoWriterCallback {
-    #[instrument(skip(self))]
-    fn on_file_content_changed(
-        &self,
-        changed_from_pos: i64,
-        last_write_pos: u64,
-    ) -> io::Result<()> {
-        debug!("on file content changed");
-        call_async(async {
-            if let Some(fs) = self.0.upgrade() {
-                reset_handles(fs, self.1, changed_from_pos, last_write_pos, self.2)
-                    .await
-                    .map_err(|e| io::Error::new(Other, e))?;
-                Ok(())
-            } else {
-                Err(io::Error::new(Other, "fs dropped"))
-            }
-        })
-    }
-}
+// todo: remove
+// struct LocalFileCryptoWriterCallback(Weak<EncryptedFs>, u64, u64);
+// impl FileCryptoWriteCallback for LocalFileCryptoWriterCallback {
+//     #[instrument(skip(self))]
+//     fn on_file_content_changed(
+//         &self,
+//         changed_from_pos: i64,
+//         last_write_pos: u64,
+//     ) -> io::Result<()> {
+//         debug!("on file content changed");
+//         call_async(async {
+//             if let Some(fs) = self.0.upgrade() {
+//                 reset_handles(fs, self.1, changed_from_pos, last_write_pos, self.2)
+//                     .await
+//                     .map_err(|e| io::Error::new(Other, e))?;
+//                 Ok(())
+//             } else {
+//                 Err(io::Error::new(Other, "fs dropped"))
+//             }
+//         })
+//     }
+// }
 
 pub async fn write_all_string_to_fs(
     fs: &EncryptedFs,

@@ -1,3 +1,4 @@
+#![deny(warnings)]
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
@@ -27,8 +28,7 @@ async fn main() -> Result<()> {
     let data_dir = Path::new("/tmp/rencfs_data_test").to_path_buf();
     let _ = fs::remove_dir_all(data_dir.to_str().unwrap());
     let cipher = Cipher::ChaCha20Poly1305;
-    let mut fs =
-        EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl {}), cipher).await?;
+    let fs = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl {}), cipher).await?;
 
     let file1 = SecretString::from_str("file1").unwrap();
     let (fh, attr) = fs

@@ -1,15 +1,10 @@
-use ::test::{black_box, Bencher};
+#[allow(unused_imports)]
+use ::test::Bencher;
 use std::io;
-use std::io::{Error, SeekFrom};
-use std::io::{Read, Seek};
+use std::io::{Error, Read, Seek, SeekFrom};
 use std::sync::Arc;
 
-use rand::RngCore;
-use secrecy::SecretVec;
-
-use crate::crypto;
-use crate::crypto::write::CryptoWrite;
-use crate::crypto::Cipher;
+use rand_core::RngCore;
 
 #[allow(dead_code)]
 struct RandomReader {
@@ -70,6 +65,17 @@ impl Clone for RandomReader {
 
 #[bench]
 fn bench_writer_1mb_cha_cha20poly1305_file(b: &mut Bencher) {
+    use ::test::black_box;
+    use std::io;
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::ChaCha20Poly1305;
     let len = 10 * 1024 * 1024;
 
@@ -92,6 +98,17 @@ fn bench_writer_1mb_cha_cha20poly1305_file(b: &mut Bencher) {
 
 #[bench]
 fn bench_writer_1mb_aes256gcm_file(b: &mut Bencher) {
+    use ::test::black_box;
+    use std::io;
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::Aes256Gcm;
     let len = 1024 * 1024;
 
@@ -114,6 +131,17 @@ fn bench_writer_1mb_aes256gcm_file(b: &mut Bencher) {
 
 #[bench]
 fn bench_writer_1mb_cha_cha20poly1305_mem(b: &mut Bencher) {
+    use ::test::black_box;
+    use std::io;
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::ChaCha20Poly1305;
     let len = 1024 * 1024;
 
@@ -136,6 +164,17 @@ fn bench_writer_1mb_cha_cha20poly1305_mem(b: &mut Bencher) {
 
 #[bench]
 fn bench_writer_1mb_aes256gcm_mem(b: &mut Bencher) {
+    use ::test::black_box;
+    use std::io;
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::Aes256Gcm;
     let len = 1024 * 1024;
 

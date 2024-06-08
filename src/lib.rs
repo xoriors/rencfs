@@ -1,6 +1,7 @@
+#![deny(warnings)]
 #![feature(test)]
 #![feature(lazy_cell)]
-#![feature(error_generic_member_access)]
+// #![feature(error_generic_member_access)]
 #![feature(seek_stream_len)]
 #![feature(seek_seek_relative)]
 #![deny(clippy::all)]

@@ -1,20 +1,30 @@
 use std::io;
-use std::io::{Read, Seek};
-use std::io::{SeekFrom, Write};
+use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
-use rand::RngCore;
 use secrecy::SecretVec;
+#[allow(unused_imports)]
 use tracing_test::traced_test;
 
 use crate::crypto;
 use crate::crypto::read::CryptoRead;
-use crate::crypto::write::{CryptoWrite, BLOCK_SIZE};
 use crate::crypto::Cipher;
 
 #[test]
 #[traced_test]
 fn test_reader_writer_chacha() {
+    use std::io;
+    use std::io::{Read, Seek};
+    use std::io::{SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::{CryptoWrite, BLOCK_SIZE};
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -51,6 +61,18 @@ fn test_reader_writer_chacha() {
 #[test]
 #[traced_test]
 fn test_reader_writer_1mb_chacha() {
+    use std::io;
+    use std::io::Seek;
+    use std::io::SeekFrom;
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -76,6 +98,18 @@ fn test_reader_writer_1mb_chacha() {
 #[test]
 #[traced_test]
 fn test_reader_writer_aes() {
+    use std::io;
+    use std::io::{Read, Seek};
+    use std::io::{SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::{CryptoWrite, BLOCK_SIZE};
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -112,6 +146,18 @@ fn test_reader_writer_aes() {
 #[test]
 #[traced_test]
 fn test_reader_writer_1mb_aes() {
+    use std::io;
+    use std::io::Seek;
+    use std::io::SeekFrom;
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -138,6 +184,19 @@ fn test_reader_writer_1mb_aes() {
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 fn test_writer_seek_text_chacha() {
+    use std::io;
+    use std::io::{Read, Seek};
+    use std::io::{SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::read::CryptoRead;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -260,6 +319,19 @@ fn test_writer_seek_text_chacha() {
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 fn test_writer_seek_text_aes() {
+    use std::io;
+    use std::io::{Read, Seek};
+    use std::io::{SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::read::CryptoRead;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -382,6 +454,18 @@ fn test_writer_seek_text_aes() {
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 fn test_writer_seek_blocks_chacha() {
+    use std::io;
+    use std::io::Seek;
+    use std::io::{SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::{CryptoWrite, BLOCK_SIZE};
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -540,13 +624,25 @@ fn test_writer_seek_blocks_chacha() {
     cursor_random.seek(SeekFrom::End(0)).unwrap();
     cursor_random.write_all(vec![0; 42].as_slice()).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key);
+    compare(&mut cursor_random, cursor, cipher, key);
 }
 
 #[test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 fn test_writer_seek_blocks_aes() {
+    use std::io;
+    use std::io::Seek;
+    use std::io::{SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::{CryptoWrite, BLOCK_SIZE};
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -705,7 +801,7 @@ fn test_writer_seek_blocks_aes() {
     cursor_random.seek(SeekFrom::End(0)).unwrap();
     cursor_random.write_all(vec![0; 42].as_slice()).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key);
+    compare(&mut cursor_random, cursor, cipher, key);
 }
 
 /// Do all operations and compare only at the end. Harder to debug to see which operation failed but helps test more real world scenarios.
@@ -713,6 +809,18 @@ fn test_writer_seek_blocks_aes() {
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 fn test_writer_seek_blocks_one_go_chacha() {
+    use std::io;
+    use std::io::Seek;
+    use std::io::{SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::{CryptoWrite, BLOCK_SIZE};
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -814,7 +922,7 @@ fn test_writer_seek_blocks_one_go_chacha() {
     cursor_random.write_all(vec![0; 42].as_slice()).unwrap();
 
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key);
+    compare(&mut cursor_random, cursor, cipher, key);
 }
 
 /// Do all operations and compare only at the end. Harder to debug to see which operation failed but helps test more real world scenarios.
@@ -822,6 +930,18 @@ fn test_writer_seek_blocks_one_go_chacha() {
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 fn test_writer_seek_blocks_one_go_aes() {
+    use std::io;
+    use std::io::Seek;
+    use std::io::{SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::{CryptoWrite, BLOCK_SIZE};
+    use crate::crypto::Cipher;
+
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
@@ -923,9 +1043,10 @@ fn test_writer_seek_blocks_one_go_aes() {
     cursor_random.write_all(vec![0; 42].as_slice()).unwrap();
 
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key);
+    compare(&mut cursor_random, cursor, cipher, key);
 }
 
+#[allow(dead_code)]
 fn compare(
     mut plaintext: &mut io::Cursor<Vec<u8>>,
     mut ciphertext: io::Cursor<Vec<u8>>,

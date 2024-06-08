@@ -1,17 +1,18 @@
-use std::io;
-use std::io::Seek;
-use std::sync::Arc;
-use test::{black_box, Bencher};
-
-use rand::RngCore;
-use secrecy::SecretVec;
-
-use crate::crypto;
-use crate::crypto::write::CryptoWrite;
-use crate::crypto::Cipher;
+#[allow(unused_imports)]
+use test::Bencher;
 
 #[bench]
 fn bench_read_1mb_chacha_file(b: &mut Bencher) {
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+    use rand::RngCore;
+    use secrecy::SecretVec;
+    use std::io;
+    use std::io::Seek;
+    use std::sync::Arc;
+    use test::black_box;
+
     let cipher = Cipher::ChaCha20Poly1305;
     let len = 1024 * 1024;
 
@@ -40,6 +41,16 @@ fn bench_read_1mb_chacha_file(b: &mut Bencher) {
 
 #[bench]
 fn bench_read_1mb_aes_file(b: &mut Bencher) {
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+    use rand::RngCore;
+    use secrecy::SecretVec;
+    use std::io;
+    use std::io::Seek;
+    use std::sync::Arc;
+    use test::black_box;
+
     let cipher = Cipher::Aes256Gcm;
     let len = 1024 * 1024;
 
@@ -68,6 +79,16 @@ fn bench_read_1mb_aes_file(b: &mut Bencher) {
 
 #[bench]
 fn bench_read_1mb_chacha_ram(b: &mut Bencher) {
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+    use rand::RngCore;
+    use secrecy::SecretVec;
+    use std::io;
+    use std::io::Seek;
+    use std::sync::Arc;
+    use test::black_box;
+
     let cipher = Cipher::ChaCha20Poly1305;
     let len = 1024 * 1024;
 
@@ -96,6 +117,16 @@ fn bench_read_1mb_chacha_ram(b: &mut Bencher) {
 
 #[bench]
 fn bench_read_1mb_aes_ram(b: &mut Bencher) {
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+    use rand::RngCore;
+    use secrecy::SecretVec;
+    use std::io;
+    use std::io::Seek;
+    use std::sync::Arc;
+    use test::black_box;
+
     let cipher = Cipher::Aes256Gcm;
     let len = 1024 * 1024;
 

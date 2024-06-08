@@ -15,7 +15,6 @@ use crate::encryptedfs::{
 };
 use crate::test_common::run_test;
 use crate::test_common::TestSetup;
-use crate::test_common::SETUP_RESULT;
 use crate::test_common::{create_attr, get_fs};
 use crate::{crypto, test_common};
 

@@ -1,7 +1,7 @@
+#![deny(warnings)]
 use std::env::args;
 use std::io;
 use std::io::Write;
-use std::str::FromStr;
 
 use rpassword::read_password;
 use secrecy::{ExposeSecret, SecretString};

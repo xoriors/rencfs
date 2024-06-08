@@ -1,9 +1,6 @@
-mod bench;
-mod test;
-
 use std::fs::File;
 use std::io;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -20,6 +17,9 @@ use crate::crypto::buf_mut::BufMut;
 use crate::crypto::write::BLOCK_SIZE;
 use crate::crypto::Cipher;
 use crate::{crypto, stream_util};
+
+mod bench;
+mod test;
 
 /// Reads encrypted content from the wrapped Reader.
 #[allow(clippy::module_name_repetitions)]

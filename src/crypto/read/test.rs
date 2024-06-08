@@ -1,19 +1,18 @@
-use std::fs::File;
-use std::io;
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-use std::sync::Arc;
-
-use rand::Rng;
-use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
-use secrecy::SecretVec;
+#[allow(unused_imports)]
 use tracing_test::traced_test;
-
-use crate::crypto::read::RingCryptoRead;
-use crate::crypto::write::{CryptoWrite, RingCryptoWrite, BLOCK_SIZE};
 
 #[test]
 #[traced_test]
 fn test_ring_crypto_read_seek_chacha() {
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::sync::Arc;
+
+    use ring::aead::CHACHA20_POLY1305;
+    use secrecy::SecretVec;
+
+    use crate::crypto::read::RingCryptoRead;
+    use crate::crypto::write::{CryptoWrite, RingCryptoWrite};
+
     // Create a buffer with some data
     let data = "Hello, world!";
     let mut cursor = Cursor::new(vec![]);
@@ -55,6 +54,15 @@ fn test_ring_crypto_read_seek_chacha() {
 #[test]
 #[traced_test]
 fn test_ring_crypto_read_seek_aes() {
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::sync::Arc;
+
+    use ring::aead::AES_256_GCM;
+    use secrecy::SecretVec;
+
+    use crate::crypto::read::RingCryptoRead;
+    use crate::crypto::write::{CryptoWrite, RingCryptoWrite};
+
     // Create a buffer with some data
     let data = "Hello, world!";
     let mut cursor = Cursor::new(vec![]);
@@ -96,6 +104,16 @@ fn test_ring_crypto_read_seek_aes() {
 #[test]
 #[traced_test]
 fn test_ring_crypto_read_seek_blocks_chacha() {
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::Rng;
+    use ring::aead::CHACHA20_POLY1305;
+    use secrecy::SecretVec;
+
+    use crate::crypto::read::RingCryptoRead;
+    use crate::crypto::write::{CryptoWrite, RingCryptoWrite, BLOCK_SIZE};
+
     // Create a buffer with some data larger than BUF_SIZE
     let mut data = vec![0u8; 2 * BLOCK_SIZE];
     let mut rng = rand::thread_rng();
@@ -139,6 +157,16 @@ fn test_ring_crypto_read_seek_blocks_chacha() {
 #[test]
 #[traced_test]
 fn test_ring_crypto_read_seek_blocks_aes() {
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::Rng;
+    use ring::aead::AES_256_GCM;
+    use secrecy::SecretVec;
+
+    use crate::crypto::read::RingCryptoRead;
+    use crate::crypto::write::{CryptoWrite, RingCryptoWrite, BLOCK_SIZE};
+
     // Create a buffer with some data larger than BUF_SIZE
     let mut data = vec![0u8; 2 * BLOCK_SIZE];
     let mut rng = rand::thread_rng();
@@ -182,6 +210,16 @@ fn test_ring_crypto_read_seek_blocks_aes() {
 #[test]
 #[traced_test]
 fn test_ring_crypto_read_seek_blocks_boundary_chacha() {
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::Rng;
+    use ring::aead::CHACHA20_POLY1305;
+    use secrecy::SecretVec;
+
+    use crate::crypto::read::RingCryptoRead;
+    use crate::crypto::write::{CryptoWrite, RingCryptoWrite, BLOCK_SIZE};
+
     // Create a buffer with some data larger than BUF_SIZE
     let mut data = vec![0u8; 2 * BLOCK_SIZE];
     let mut rng = rand::thread_rng();
@@ -222,6 +260,16 @@ fn test_ring_crypto_read_seek_blocks_boundary_chacha() {
 #[test]
 #[traced_test]
 fn test_ring_crypto_read_seek_blocks_boundary_aes() {
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::Rng;
+    use ring::aead::AES_256_GCM;
+    use secrecy::SecretVec;
+
+    use crate::crypto::read::RingCryptoRead;
+    use crate::crypto::write::{CryptoWrite, RingCryptoWrite, BLOCK_SIZE};
+
     // Create a buffer with some data larger than BUF_SIZE
     let mut data = vec![0u8; 2 * BLOCK_SIZE];
     let mut rng = rand::thread_rng();
@@ -262,6 +310,16 @@ fn test_ring_crypto_read_seek_blocks_boundary_aes() {
 #[test]
 #[traced_test]
 fn test_ring_crypto_read_seek_skip_blocks_chacha() {
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::Rng;
+    use ring::aead::CHACHA20_POLY1305;
+    use secrecy::SecretVec;
+
+    use crate::crypto::read::RingCryptoRead;
+    use crate::crypto::write::{CryptoWrite, RingCryptoWrite, BLOCK_SIZE};
+
     // Create a buffer with some data larger than BUF_SIZE
     let mut data = vec![0u8; 3 * BLOCK_SIZE];
     let mut rng = rand::thread_rng();
@@ -290,6 +348,16 @@ fn test_ring_crypto_read_seek_skip_blocks_chacha() {
 #[test]
 #[traced_test]
 fn test_ring_crypto_read_seek_skip_blocks_aes() {
+    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::Rng;
+    use ring::aead::AES_256_GCM;
+    use secrecy::SecretVec;
+
+    use crate::crypto::read::RingCryptoRead;
+    use crate::crypto::write::{CryptoWrite, RingCryptoWrite, BLOCK_SIZE};
+
     // Create a buffer with some data larger than BUF_SIZE
     let mut data = vec![0u8; 3 * BLOCK_SIZE];
     let mut rng = rand::thread_rng();
@@ -318,6 +386,16 @@ fn test_ring_crypto_read_seek_skip_blocks_aes() {
 #[test]
 #[traced_test]
 fn test_ring_crypto_read_seek_in_second_block() {
+    use std::io::{Cursor, Seek, SeekFrom, Write};
+    use std::sync::Arc;
+
+    use rand::Rng;
+    use ring::aead::AES_256_GCM;
+    use secrecy::SecretVec;
+
+    use crate::crypto::read::RingCryptoRead;
+    use crate::crypto::write::{CryptoWrite, RingCryptoWrite, BLOCK_SIZE};
+
     // Create a buffer with some data larger than BUF_SIZE
     let mut data = vec![0; 2 * BLOCK_SIZE];
     let mut rng = rand::thread_rng();

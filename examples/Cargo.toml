@@ -19,10 +19,6 @@ name = "change_password_cli"
 path = "src/change_password_cli.rs"
 
 [[bin]]
-name = "internal_crypto_debug"
-path = "src/internal_crypto_debug.rs"
-
-[[bin]]
 name = "crypto_write_read"
 path = "src/crypto_write_read.rs"
 
@@ -41,10 +37,6 @@ path = "src/crypto_speed.rs"
 [[bin]]
 name = "encryptedfs"
 path = "src/encryptedfs.rs"
-
-[[bin]]
-name = "internal_okay_wal"
-path = "src/internal_okay_wal.rs"
 
 [[bin]]
 name = "internal_ring_speed"

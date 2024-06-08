@@ -1,5 +1,4 @@
-mod internal_crypto_debug;
-
+#![deny(warnings)]
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError};
 use secrecy::SecretString;

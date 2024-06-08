@@ -1,9 +1,9 @@
+#![deny(warnings)]
 use anyhow::Result;
 use rand_core::RngCore;
 use std::env::args;
 use std::fs::File;
 use std::io;
-use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 

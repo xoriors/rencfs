@@ -1,3 +1,4 @@
+#![deny(warnings)]
 use std::env::args;
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter, Read, Write};
@@ -37,7 +38,7 @@ fn main() -> io::Result<()> {
     let _ = args.next(); // skip the program name
     let in_path = args.next().expect("in_path is missing");
     println!("in_path = {}", in_path);
-    let mut input = OpenOptions::new().read(true).open(in_path.clone()).unwrap();
+    let input = OpenOptions::new().read(true).open(in_path.clone()).unwrap();
     let out_path = format!(
         "/tmp/{}.enc",
         Path::new(&in_path).file_name().unwrap().to_str().unwrap()
