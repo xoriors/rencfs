@@ -30,8 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fmt check
+        run: cargo fmt --check
       - name: Install Rust nightly
         run: rustup default nightly && rustup update
+
+      - name: Fmt check
+        run: cargo fmt --check
       
       - name: Check
         run: cargo check
