@@ -14,8 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set default nightly
-      run: rustup default nightly && rustup update
+
+    - name: Install Rust
+      run: rustup update && rustup component add rustfmt
     - name: Add clippy
       run: rustup component add clippy
     
