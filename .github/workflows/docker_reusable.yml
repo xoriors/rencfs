@@ -9,9 +9,6 @@ on:
         description: 'The current value in version file (type: string)'
         type: string
         required: true
-    secrets:
-        envPAT:
-            required: true
 
 jobs:
   docker:
