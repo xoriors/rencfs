@@ -424,7 +424,8 @@ Feel free to fork it, change and use it in any way that you want. If you build s
 8. `cargo check --all` and fix any errors and warnings
 9. `cargo clippy --all --all-features -- -D warnings` and fix any errors
 10. `cargo test --all` and fix any issues
-11. Create a PR
-12. Monitor the checks (GitHub actions runned)
-13. Respond to any comments
-14. In the end idelaly it will be merged to `main`
+11. `cargo bench --all` and fix any issues
+12. Create a PR
+13. Monitor the checks (GitHub actions runned)
+14. Respond to any comments
+15. In the end idelaly it will be merged to `main`
