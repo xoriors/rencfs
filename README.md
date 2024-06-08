@@ -328,10 +328,9 @@ You can use the `.devcontainer` directory from the project to start a container 
 - A GUI is on the way [rencfs_desktop](https://github.com/radumarias/rencfs_desktop)
 - Mobile apps for Android and iOS are on the way
 
-# Contribution
+# Contribute
 
-Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like
-sharing pull requests are always appreciated.
+Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing pull requests are always appreciated.
 
 # Performance
 
