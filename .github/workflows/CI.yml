@@ -46,9 +46,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - run: echo "Version changed ${{ needs.check_version.outputs.changed }}"
-      - run: echo "Version changed ${{ needs.check_version.outputs.changed == true }}"
-
       - name: Install latest Rust nightly
         run: rustup default nightly && rustup update
       
@@ -75,7 +72,7 @@ jobs:
           
   create_release:
     name: Create release
-    if: needs.check_version.outputs.changed == true && github.event_name == 'push'
+    if: needs.check_version.outputs.changed && github.event_name == 'push'
     needs: [check_version, aur_build]
     runs-on: ubuntu-latest
     permissions:
@@ -152,7 +149,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Log in to Docker Hub
-        if: ${{ github.event_name == 'push' && needs.check_version.outputs.changed == 'true' }}"
+        if: ${{ github.event_name == 'push' && needs.check_version.outputs.changed }}"
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -161,10 +158,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         
-      - name: Build push = ${{ github.event_name == 'push' && needs.check_version.outputs.changed == 'true' }}"
+      - name: Build push = ${{ github.event_name == 'push' && needs.check_version.outputs.changed }}"
         uses: docker/build-push-action@v5
         with:
-          push: ${{ github.event_name == 'push' && needs.check_version.outputs.changed == 'true' }}
+          push: ${{ github.event_name == 'push' && needs.check_version.outputs.changed }}
           tags: ${{ env.REGISTRY_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           sbom: true
           provenance: true
