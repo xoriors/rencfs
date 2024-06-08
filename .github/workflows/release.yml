@@ -1,0 +1,84 @@
+on:
+  release:
+    types: [published]
+
+jobs:
+  check_version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check_version.outputs.changed }}
+      version: ${{ steps.check_version.outputs.version }}
+      prev_version: ${{ steps.check_version.outputs.prev_version }}
+      
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check_version
+        uses: radumarias/action-check-version-changed-rust@v1
+  
+  build_and_test:
+    name: Build and test
+    needs: [check_version]
+    uses: radumarias/rencfs/.github/workflows/build_and_tests_reusable.yml@main
+    with:
+      upload_artifacts: true
+      version: ${{ needs.check_version.outputs.version }}
+    secrets: inherit
+
+  create_release:
+    name: Create release
+    if: needs.check_version.outputs.changed == 'true'
+    needs: [check_version, build_and_test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz
+
+      - uses: ncipollo/release-action@v1
+        name: Create release
+        with:
+          name: Release v${{ needs.check_version.outputs.version }}
+          tag: v${{ needs.check_version.outputs.version }}
+          artifacts: "${{ github.event.repository.name }}-${{ needs.check_version.outputs.version }}-x86_64.tar.gz"
+          generateReleaseNotes: true
+
+  aur_publish:
+    name: Publish to AUR
+    needs: [create_release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PKGBUILD
+
+      - name: Publish AUR package
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
+        with:
+          pkgname: ${{ github.event.repository.name }}-bin
+          pkgbuild: PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update AUR package
+          ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
+
+  cargo_publish:
+    name: Publish to crates
+    needs: [create_release]
+    runs-on: ubuntu-latest
+    steps:
+        - uses: actions/checkout@v4
+
+        - name: Install latest Rust nightly
+          run: rustup default nightly && rustup update
+
+        - name: Publish
+          run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

@@ -20,10 +20,10 @@ jobs:
       run: rustup component add clippy
     
     - name: Fmt check
-      run: cargo fmt --check
+      run: cargo fmt --all --check
 
     - name: Check
-      run: cargo check --verbose
+      run: cargo check --all
 
     - name: Clippy
-      run: cargo clippy --all-features --verbose
+      run: cargo clippy --all-features -- -D warnings

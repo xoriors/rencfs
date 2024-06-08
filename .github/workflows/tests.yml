@@ -1,0 +1,31 @@
+name: tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]    
+  
+jobs:
+  check_version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check_version.outputs.changed }}
+      version: ${{ steps.check_version.outputs.version }}
+      prev_version: ${{ steps.check_version.outputs.prev_version }}
+      
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check_version
+        uses: radumarias/action-check-version-changed-rust@v1
+  
+  build_and_test:
+    name: Build and test
+    needs: [check_version]
+    uses: radumarias/rencfs/.github/workflows/build_and_tests_reusable.yml@main
+    with:
+      upload_artifacts: false
+      version: ${{ needs.check_version.outputs.version }}
+    secrets: inherit
