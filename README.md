@@ -411,3 +411,17 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
 # Contribute
 
 Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing pull requests are always appreciated.
+
+## How to contribute
+
+1. Fork the repo
+2. Make the changes in your fork
+4. `cargo fmt`, you can cnofigure your IDE to do this on save [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html) and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
+5. `cargo check` and fix any errors and warnings
+6. Ideally also `cargo clippy` and fix any errors and warnings
+7. Add tests for you changes, if applicable
+8. `cargo test` and fix any issues
+9. Create a PR
+10. Monitor the checks (GitHub actions runned)
+11. Respond to any comments
+12. In the end idelaly it will be merged to `main`
