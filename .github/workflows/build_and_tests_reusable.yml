@@ -26,6 +26,7 @@ jobs:
           profile: default
           toolchain: nightly
           components: rustfmt, clippy
+      - run: rustup default nightly
       
       - run: rustup show
 
