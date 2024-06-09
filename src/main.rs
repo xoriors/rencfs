@@ -190,13 +190,13 @@ fn get_cli_args() -> ArgMatches {
                         .requires("mount-point")
                         .help("Use direct I/O (bypass page cache for an open file)"),
                 )
-                .arg(
-                    Arg::new("suid")
-                        .long("suid")
-                        .short('s')
-                        .action(ArgAction::SetTrue)
-                        .help("If it should allow setting SUID and SGID when files are created. Default is false and it will unset those flags when creating files"),
-                )
+                // .arg(
+                //     Arg::new("suid")
+                //         .long("suid")
+                //         .short('s')
+                //         .action(ArgAction::SetTrue)
+                //         .help("If it should allow setting SUID and SGID when files are created. Default is false and it will unset those flags when creating files"),
+                // )
         ).subcommand(
         Command::new("passwd")
             .about("Change password for the master key used to encrypt the data")
@@ -363,7 +363,8 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         matches.get_flag("allow-root"),
         matches.get_flag("allow-other"),
         matches.get_flag("direct-io"),
-        matches.get_flag("suid"),
+        // matches.get_flag("suid"),
+        false,
     );
     let mount_handle = mount_point.mount().await.map_err(|err| {
         error!(err = %err);

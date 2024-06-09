@@ -144,22 +144,22 @@ impl EncryptedFsFuse3 {
         direct_io: bool,
         #[allow(unused_variables)] suid_support: bool,
     ) -> FsResult<Self> {
-        #[cfg(feature = "abi-7-26")]
-        {
-            Ok(Self {
-                fs: EncryptedFs::new(data_dir, password_provider, cipher).await?,
-                direct_io,
-                suid_support,
-            })
-        }
-        #[cfg(not(feature = "abi-7-26"))]
-        {
-            Ok(Self {
-                fs: EncryptedFs::new(data_dir, password_provider, cipher).await?,
-                direct_io,
-                suid_support: false,
-            })
-        }
+        // #[cfg(feature = "abi-7-26")]
+        // {
+        //     Ok(Self {
+        //         fs: EncryptedFs::new(data_dir, password_provider, cipher).await?,
+        //         direct_io,
+        //         suid_support,
+        //     })
+        // }
+        // #[cfg(not(feature = "abi-7-26"))]
+        // {
+        Ok(Self {
+            fs: EncryptedFs::new(data_dir, password_provider, cipher).await?,
+            direct_io,
+            suid_support: false,
+        })
+        // }
     }
 
     fn get_fs(&self) -> Arc<EncryptedFs> {
