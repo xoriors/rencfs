@@ -5,7 +5,7 @@ on:
 jobs:
   version:
     name: Get version
-    uses: radumarias/rencfs/.github/workflows/reusable/version.yml@main
+    uses: radumarias/rencfs/.github/workflows/version.yml@main
   
   build_and_test:
     name: Build and test
