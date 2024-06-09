@@ -21,6 +21,8 @@ jobs:
         profile: default
         toolchain: nightly
         components: rustfmt, clippy
+        
+    - run: rustup show
 
     - name: Fmt check
       run: cargo fmt --all --check
