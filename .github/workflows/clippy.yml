@@ -15,8 +15,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Update Rust
-      run: rustup update
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: default
+        toolchain: nightly
+       components: rustfmt, clippy
 
     - name: Fmt check
       run: cargo fmt --all --check
