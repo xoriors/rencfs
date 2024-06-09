@@ -14,11 +14,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Fmt check
+    - name: fmt check
       run: cargo fmt --all --check
 
-    - name: Check
+    - name: check
       run: cargo check --all
 
-    - name: Clippy
+    - name: clippy
       run: cargo clippy --all-features -- -D warnings

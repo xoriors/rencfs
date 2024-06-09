@@ -33,7 +33,7 @@ jobs:
       attestations: write
     
   create_release:
-    name: Create release
+    name: create release
     needs: [version, package]
     runs-on: ubuntu-latest
     permissions:
@@ -41,13 +41,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download artifact
+      - name: download artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ github.event.repository.name }}-${{ needs.version.outputs.version }}-x86_64.tar.gz
 
       - uses: ncipollo/release-action@v1
-        name: Create release
+        name: create release
         with:
           name: Release v${{ needs.version.outputs.version }}
           tag: v${{ needs.version.outputs.version }}
@@ -55,16 +55,16 @@ jobs:
           generateReleaseNotes: true
 
   aur_publish:
-    name: Publish to AUR
+    name: publish to AUR
     needs: [create_release]
     runs-on: ubuntu-latest
     steps:
-      - name: Download artifact
+      - name: download artifact
         uses: actions/download-artifact@v4
         with:
           name: PKGBUILD
 
-      - name: Publish AUR package
+      - name: publish AUR package
         uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
         with:
           pkgname: ${{ github.event.repository.name }}-bin
@@ -76,14 +76,11 @@ jobs:
           ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
 
   cargo_publish:
-    name: Publish to crates
+    name: publish to crates.io
     needs: [create_release]
     runs-on: ubuntu-latest
     steps:
         - uses: actions/checkout@v4
 
-        - name: Install latest Rust nightly
-          run: rustup default nightly && rustup update
-
-        - name: Publish
+        - name: publish
           run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
