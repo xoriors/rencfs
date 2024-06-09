@@ -20,16 +20,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: default
-          toolchain: nightly
-          components: rustfmt, clippy
-      - run: rustup default nightly
-      
-      - run: rustup show
-
       - name: Fmt check
         run: cargo fmt --all --check
       
