@@ -7,27 +7,17 @@ on:
     branches: [ main ]    
   
 jobs:
-  check_version:
-    name: Check version
-    runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.check_version.outputs.changed }}
-      version: ${{ steps.check_version.outputs.version }}
-      prev_version: ${{ steps.check_version.outputs.prev_version }}
+  version:
+    name: Get version
+    uses: radumarias/rencfs/.github/workflows/reusable/version.yml@main
       
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: check_version
-        uses: radumarias/action-check-version-changed-rust@v1
-  
-  build_and_test:
+  build-and-test:
     name: Build and test
-    needs: [check_version]
+    needs: [version]
     uses: radumarias/rencfs/.github/workflows/build_and_tests_reusable.yml@main
     with:
       upload_artifacts: false
-      version: ${{ needs.check_version.outputs.version }}
+      version: ${{ needs.version.outputs.version }}
     secrets: inherit
     permissions:
       id-token: write

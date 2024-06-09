@@ -1,0 +1,21 @@
+on:
+  workflow_call:
+  outputs:
+    version: ${{ jobs.version.outputs.version }}
+
+  jobs:
+    get-version:
+      name: Get version from Cargo.toml
+      id: version
+      runs-on: ubuntu-latest
+      outputs:
+        version: ${{ steps.version.outputs.version }}
+        
+      steps:
+        - uses: actions/checkout@v4
+
+        - id: version
+          run: |
+          version=$( grep '^version\s*=' Cargo.toml | sed 's/version\s*=\s*"\(.*\)"/\1/' | sed 's/^version\s*=\s*//' )
+          echo "version = $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
