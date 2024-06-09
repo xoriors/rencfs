@@ -429,4 +429,4 @@ Feel free to fork it, change and use it in any way that you want. If you build s
 12. Create a PR
 13. Monitor the checks (GitHub actions runned)
 14. Respond to any comments
-15. In the end idelaly it will be merged to `main`
+15. In the end ideally it will be merged to `main`
