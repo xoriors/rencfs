@@ -2,13 +2,8 @@ name: clippy
 on:
   push:
     branches: [ "main" ]
-  pull_request_target:
-    types:
-      - opened
-      - edited
-      - synchronize
-      - labeled
-      - unlabeled
+  pull_request:
+    branches: [ main ]
       
 env:
   CARGO_TERM_COLOR: always
