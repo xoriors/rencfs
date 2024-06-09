@@ -1,3 +1,4 @@
+name: release
 on:
   workflow_dispatch:
 
@@ -6,7 +7,6 @@ jobs:
     uses: radumarias/rencfs/.github/workflows/version_reusable.yml@main
   
   build_and_test:
-    name: Build and test
     needs: [version]
     uses: radumarias/rencfs/.github/workflows/build_and_tests_reusable.yml@main
     with:
@@ -19,9 +19,22 @@ jobs:
       contents: read
       attestations: write
 
+  package:
+    needs: [version, build_and_test]
+    uses: radumarias/rencfs/.github/workflows/package_reusable.yml@main
+    with:
+      upload_artifacts: false
+      version: ${{ needs.version.outputs.version }}
+    secrets: inherit
+    permissions:
+      id-token: write
+      packages: write
+      contents: read
+      attestations: write
+    
   create_release:
     name: Create release
-    needs: [version, build_and_test]
+    needs: [version, package]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -1,5 +1,4 @@
 name: clippy
-
 on:
   push:
     branches: [ "main" ]

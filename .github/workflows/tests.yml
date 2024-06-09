@@ -1,5 +1,4 @@
 name: tests
-
 on:
   push:
     branches: [ main ]
@@ -10,10 +9,14 @@ jobs:
   version:
       uses: radumarias/rencfs/.github/workflows/version_reusable.yml@main
       
-  build-and-test:
-    name: Build and test
+  build_and_test:
     needs: [version]
     uses: radumarias/rencfs/.github/workflows/build_and_tests_reusable.yml@main
+    secrets: inherit
+
+  package:
+    needs: [version, build_and_test]
+    uses: radumarias/rencfs/.github/workflows/package_reusable.yml@main
     with:
       upload_artifacts: false
       version: ${{ needs.version.outputs.version }}
