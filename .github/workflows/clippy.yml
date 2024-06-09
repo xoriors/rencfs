@@ -15,11 +15,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Rust
-      run: rustup update && rustup component add rustfmt
-    - name: Add clippy
-      run: rustup component add clippy
-    
+    - name: Update Rust
+      run: rustup update
+
     - name: Fmt check
       run: cargo fmt --all --check
 
