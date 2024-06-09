@@ -20,7 +20,7 @@ jobs:
       with:
         profile: default
         toolchain: nightly
-       components: rustfmt, clippy
+        components: rustfmt, clippy
 
     - name: Fmt check
       run: cargo fmt --all --check
