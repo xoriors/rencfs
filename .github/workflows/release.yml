@@ -16,7 +16,7 @@ jobs:
     needs: [version, build_and_test]
     uses: radumarias/rencfs/.github/workflows/package_reusable.yml@main
     with:
-      upload_artifacts: false
+      upload_artifacts: true
       version: ${{ needs.version.outputs.version }}
     secrets: inherit
     permissions:
