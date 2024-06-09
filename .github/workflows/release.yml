@@ -9,15 +9,7 @@ jobs:
   build_and_test:
     needs: [version]
     uses: radumarias/rencfs/.github/workflows/build_and_tests_reusable.yml@main
-    with:
-      upload_artifacts: true
-      version: ${{ needs.version.outputs.version }}
     secrets: inherit
-    permissions:
-      id-token: write
-      packages: write
-      contents: read
-      attestations: write
 
   package:
     needs: [version, build_and_test]
