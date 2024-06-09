@@ -9,17 +9,18 @@
 [![codecov](https://codecov.io/gh/radumarias/rencfs/graph/badge.svg?token=NUQI6XGF2Y)](https://codecov.io/gh/radumarias/rencfs)
 [![Discord](https://img.shields.io/discord/1236855443486277653?label=Discord)](https://discord.com/channels/1236855443486277653/1236855448515252306)
 [![Matrix](https://img.shields.io/matrix/rencfs%3Amatrix.org?label=Matrix)](https://matrix.to/#/#rencfs:matrix.org)
-[![Zulip](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg?label=Zulip)](https://rencfs.zulipchat.com)  
+[![Zulip](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg?label=Zulip)](https://rencfs.zulipchat.com)
 
-> [!WARNING]
-> **This crate hasn't been audited, it's using `ring` crate which is a well known audited library, so in principle at least the primitives should offer as similar level of security.  
+> [!WARNING]    
+> **This crate hasn't been audited, it's using `ring` crate which is a well-known audited library, so in principle at
+least the primitives should offer as similar level of security.  
 > This is still under development. Please do not use it with sensitive data just yet. Please wait for a
 stable release and maybe an audit.  
 > It's mostly ideal for experimental and learning projects.**
 
 An encrypted file system that is mounted with FUSE on Linux. It can be used to create encrypted directories.
 
-You can then safely backup the encrypted folder on an untrusted server without worrying about the data being exposed.\
+You can then safely backup the encrypted folder on an untrusted server without worrying about the data being exposed.
 You can also store it in any cloud storage like Google Drive, Dropbox, etc. and have it synced across multiple devices.
 
 You can use it as CLI or build your custom FUSE implementation with it.
@@ -27,20 +28,25 @@ You can use it as CLI or build your custom FUSE implementation with it.
 # Functionality
 
 - It keeps all encrypted data and master encryption key in a dedicated directory with files structured on inodes (with
-meta
-info), files for binary content and directories with files/directories entries. All data, metadata and also filenames
-are encrypted. For new files it generates inode number randomly in `u64` space so it reduces the chance of conflicts
-when used offline and synced later.
+  meta
+  info), files for binary content and directories with files/directories entries. All data, metadata and also filenames
+  are encrypted. For new files it generates inode number randomly in `u64` space, so it reduces the chance of conflicts
+  when used offline and synced later.
 - Password is collected from CLI and it's saved in OS keyring while app is running. This is because of safety reasons we
-clear the password from memory on inactivity and we reload it again from keyring just when needed.
-- Master encryption key is also encrypted with another key derived from the password. This gives the ability to change the
-password without re-encrypting all data, we just re-encrypt the master key.
+  clear the password from memory on inactivity and we reload it again from keyring just when needed.
+- Master encryption key is also encrypted with another key derived from the password. This gives the ability to change
+  the
+  password without re-encrypting all data, we just re-encrypt the master key.
 - Files are encrypted in chunks of 256KB, so when making a change we just re-encrypt those chunks.
-- Fast seek on read and write, so if you're watching a movie you you can seek to any position and that would be very fast. This is because we can seek to particular chunk.
-- Encryption key is `zeroize`d in mem on idle. Also it's `mlock`ed while used to prevent being moved to swap. It's also `mprotect`ed while not read.
+- Fast seek on read and write, so if you're watching a movie you you can seek to any position, and that would be rapid.
+  This is because we can seek to particular chunk.
+- Encryption key is `zeroize`d in mem on idle. Also it's `mlock`ed while used to prevent being moved to swap. It's
+  also `mprotect`ed while not read.
 
 In progress:
-- ensure file integrity by saving each change to WAL, so on crash or power loss on next start we apply the pending changes. This makes the write operations atomic.
+
+- ensure file integrity by saving each change to WAL, so on crash or power loss on next start we apply the pending
+  changes. This makes the write operations atomic.
 - multiple writes in parallel to the same file, ideal for torrent like applications
 
 # Stack
@@ -50,7 +56,7 @@ In progress:
   function (creating key used to encrypt master encryption key from password)
 - [rand_chacha](https://crates.io/crates/rand_chacha) for random generators
 - [secrecy](https://crates.io/crates/secrecy) for keeping pass and encryption keys safe in memory and zeroing them when
-  not used. It keeps encryption keys in memory only while being used and when not active it will release and zeroing
+  not used. It keeps encryption keys in memory only while being used, and when not active it will release and zeroing
   them from memory
 - password can be saved in OS keyring using [keyring](https://crates.io/crates/keyring)
 - [tracing](https://crates.io/crates/tracing) for logs
@@ -113,8 +119,8 @@ echo "test" > 1/test
 cat 1/test
 ```
 
-You can use it as a command line tool to mount an encrypted file system, or directly using the library to build your own
-binary (for library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/)).
+You can use it as a command line tool to mount an encrypted file system, or directly use the library to build your own
+binary (for the library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/)).
 
 ## Command Line Tool
 
@@ -212,13 +218,16 @@ You can see more [here](https://crates.io/crates/rencfs)
 [![Open Rustlings On Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new/?repo=radumarias%2Frencfs&ref=main)
 
 You can compile it, run it, and give it a quick try in browser. After you start it from above
+
 ```bash
 sudo apt-get update && sudo apt-get install fuse3
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 mkdir mnt && mkdir data
 cargo run --release -- mount -m mnt -d data
 ```
+
 Open another terminal
+
 ```bash
 cd mnt
 mkdir a && cd a
@@ -320,7 +329,8 @@ sudo dnf localinstall rencfs-xxx.x86_64.rpm
 See here how to configure for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers)  
 And here for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html)
 
-You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build and run the app.
+You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build
+and run the app.
 
 # Future
 
@@ -342,22 +352,26 @@ You can use the `.devcontainer` directory from the project to start a container 
 
 - If you have hardware acceleration (e.g. AES-NI), then AES-GCM provides better performance. On my benchmarks, it was
   faster by a factor of **1.28** on average.  
-  If you do not have hardware acceleration, AES-GCM is either slower than ChaCha20-Poly1305, or it leaks your encryption
+  If you do not have a hardware acceleration, AES-GCM is either slower than ChaCha20-Poly1305, or it leaks your
+  encryption
   keys in cache timing.
 - AES-GCM can target multiple security levels (128-bit, 192-bit, 256-bit), whereas ChaCha20-Poly1305 is only defined at
   the 256-bit security level.
 - Nonce size:
-    - AES-GCM: Varies, but standard is 96 bits (12 bytes). If you supply a longer nonce, this gets hashed down to 16
+    - AES-GCM: Varies, but the standard is 96 bits (12 bytes).
+      If you supply a longer nonce, this gets hashed down to 16
       bytes.
-    - ChaCha20-Poly1305: The standardized version uses 96-bit nonces (12 bytes), but the original used 64-bit
-      nonces (8 bytes).
-- Wearout of a single (key, nonce) pair:
-    - AES-GCM: Messages must be less than 2^32 – 2 blocks (a.k.a. `2^36 – 32 bytes`, a.k.a. `2^39 – 256 bits`), that's raughly `64GB`. This
-      also makes the security analysis of AES-GCM with long nonces complicated, since the hashed nonce doesn’t start
+    - ChaCha20-Poly1305: The standardized version uses 96-bit nonce (12 bytes), but the original used 64-bit
+      nonce (8 bytes).
+- Wear-out of a single (key, nonce) pair:
+    - AES-GCM: Messages must be less than 2^32 – 2 blocks (a.k.a. `2^36 – 32 bytes`, a.k.a. `2^39 – 256 bits`), that's
+      roughly `64GB`.
+      This also makes the security analysis of AES-GCM with long nonces complicated, since the hashed nonce doesn’t
+      start
       with the lower 4 bytes set to 00 00 00 02.
     - ChaCha20-Poly1305: ChaCha has an internal counter (32 bits in the standardized IETF variant, 64 bits in the
-      original design). Max message lebgth is `2^39 - 256 bits`, about `256 GB`
-- Neither algorithm is nonce misuse resistant.
+      original design). Max message length is `2^39 - 256 bits`, about `256 GB`
+- Neither algorithm is nonce misuse-resistant.
 
 Conclusion: Both are good options. AES-GCM can be faster with hardware support, but pure-software implementations of
 ChaCha20-Poly1305 are almost always fast and constant-time.
@@ -369,59 +383,71 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
   see [here](https://pubs.opengroup.org/onlinepubs/009695399/functions/rename.html) `That specification requires that the action of the function be atomic.`
 - Phantom reads: reading older content from a file, this is not possible. While writing, data is kept in a buffer and
   tmp file and on releasing the file handle we write the new content to the file (as per above the tmp file is moved
-  into place with `mv`). After that we reset all opened readers so any reads after that will pick up the new content  
-  One problem that may occur is if we do a truncate we change the content of the file but the process is killed before
-  we write the metadata with the new filesize. In this case next time we mount the system we are still seeing the old
-  filesize but the content of the file could be bigger, and we read until the old size offset, se we would not pick up
+  into place with `mv`).
+  After that, we reset all opened readers so any reads after that will pick up the new content.    
+  One problem that may occur is if we do a truncate we change the content of the file, but the process is killed before
+  we write the metadata with the new filesize. In this case, next time we mount the system, we are still seeing the old
+  filesize. However, the content of the file could be bigger, and we read until the old size offset, se we would not
+  pick up
   the new zeros bytes written on truncating by increasing the size. If content is smaller the read would stop and
-  end-of-file of the actual content so this would not be such a big issue
+  end-of-file of the actual content, so this would not be such a big issue
 - What kind of metadata does it leak: close to none. The filename, actual file size and other file attrs (times,
-  permissions, other flags) are kept encrypted. What it could possible leak is the following
-    - If a directory has children we keep those children in a directory with name as inode number with encrypted names
-      of children as files in it. So we could see how many children a directory has, but we can't identify that actual
-      directory name, we can just see it's inode number (internal representation like an id for each file) and we cannot
-      see the actual filenames of directory or children. Also we cannot identify which file content correspond to a
-      directory child
-    - Each file content is saved in a separate file so we could see the size of the encrypted content, but not the
+  permissions, other flags) are kept encrypted. What it could possibly leak is the following
+    - If a directory has children, we keep those children in a directory with name as inode number with encrypted names
+      of children as files in it.
+      So we could see how many children a directory has.
+      However, we can't identify that actual directory name,
+      we can just see its inode number (internal representation like an id for each file), and we cannot see the actual
+      filenames of directory or children.
+      Also, we cannot identify which file content corresponds to a directory child
+    - Each file content is saved in a separate file, so we could see the size of the encrypted content, but not the
       actual filesize
     - We can also see the last time the file was accessed
 - It's always recommended to use encrypted disks for at least your sensitive data, this project is not a replacement for
   that
-- In order to reduce the risk of encryption key to be exposed from memory it's recommended to disable mem dumps on the
+- To reduce the risk of encryption key to be exposed from memory, it's recommended to disable mem dumps on the
   OS level. Please see [here](https://www.cyberciti.biz/faq/disable-core-dumps-in-linux-with-systemd-sysctl/) how to do
   it on Linux
-- Cold boot attacks: in order to reduce the risk of this we keep the encryption key in memory just as long as we really
+- Cold boot attacks: to reduce the risk of this, we keep the encryption key in memory just as long as we really
   need it to encrypt/decrypt data and we are zeroing it after that. We also remove it from memory after a period of
   inactivity
 - Please note that this project is not audited by any security expert. It's built with security in mind and tries to
   follow all the best practices, but it's not guaranteed to be secure
-- **Also please backup your data, the project is still in development and there might be bugs that can lead to data loss**
+- **Also, please back up your data, the project is still in development, and there might be bugs that can lead to data
+  loss
+  **
 
 # Considerations
 
 - Please note, this project doesn't try to reinvent the wheel or be better than already proven implementations
 - This project doesn't want to be a replacement in any way of already proven file encryption solutions. If you really
-  want close to bullet proof solutions than maybe this is not the ideal one for you. But is trying to offer a simple use
-  of an ecryption solution that should be used taking into consideration all the security concerns from above
-- It started as a learning project of Rust programming language and I feel like keep building more on it
+  want close to bulletproof solutions, then maybe this is not the ideal one for you. But is trying to offer a simple use
+  of an encryption solution that should be used taking into consideration all the security concerns from above
+- It started as a learning project of Rust programming language, and I feel like keep building more on it
 - It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and
-  ciphers in the implementation so that it can be extended from this. Indeed it doesn't have the maturity yet to "fight"
-  other well known implementations but it can be a project from which others can learn or build upon or why not for some
-  to actually use it keeping in mind all the above
+  ciphers in the implementation so that it can be extended from this. Indeed, it doesn't have the maturity yet to "
+  fight"
+  other well-known implementations.
+  But it can be a project from which others can learn or build upon or why not for some to actually use it keeping in
+  mind all the above
 
 # Contribute
 
-Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing pull requests are always appreciated.
+Feel free to fork it, change and use it in any way that you want.
+If you build something interesting and feel like sharing pull requests are always appreciated.
 
 ## How to contribute
 
 1. Fork the repo
 2. Make the changes in your fork
 3. If you add new `.rs` files in `examples` member add `#![deny(warnings)]` as first line.
-4. If you add new members to the workspace add `#![deny(warnings)]` to it's `lib.rs` and to any `bin` file (like `main.rs` or other files declared as `[[bin]]`).
-5. Add tests for you changes, if applicable
+4. If you add new members to the workspace add `#![deny(warnings)]` to it's `lib.rs` and to any `bin` file (
+   like `main.rs` or other files declared as `[[bin]]`).
+5. Add tests for your changes, if applicable
 6. `cargo build --all` and fix any issues
-7. `cargo fmt --all`, you can cnofigure your IDE to do this on save [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html) and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
+7. `cargo fmt --all`, you can cnofigure your IDE to do this on
+   save [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html)
+   and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
 8. `cargo check --all` and fix any errors and warnings
 9. `cargo clippy --all --all-features -- -D warnings` and fix any errors
 10. `cargo test --all` and fix any issues
