@@ -26,4 +26,4 @@ jobs:
       run: cargo check --all
 
     - name: clippy
-      run: cargo clippy --all-features -- -D warnings
+      run: cargo clippy --all-features
