@@ -444,15 +444,16 @@ If you build something interesting and feel like sharing pull requests are alway
 4. If you add new members to the workspace add `#![deny(warnings)]` to it's `lib.rs` and to any `bin` file (
    like `main.rs` or other files declared as `[[bin]]`).
 5. Add tests for your changes, if applicable
-6. `cargo build --all --all-features` and fix any issues
-7. `cargo fmt --all`, you can cnofigure your IDE to do this on
+6. `RUSTFLAGS: "-Dwarnings"` set this before you run `cargo` commands, one time per terminal or add it to your `rc` file
+7. `cargo build --all --all-features` and fix any issues
+8. `cargo fmt --all`, you can cnofigure your IDE to do this on
    save [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html)
    and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
-8. `cargo check --all --all-features` and fix any errors and warnings
-9. `cargo clippy --all --all-features -- -D warnings` and fix any errors
-10. `cargo test --all --all-features` and fix any issues
-11. `cargo bench --all --all-features` and fix any issues
-12. Create a PR
-13. Monitor the checks (GitHub actions runned)
-14. Respond to any comments
-15. In the end ideally it will be merged to `main`
+9. `cargo check --all --all-features` and fix any errors and warnings
+10. `cargo clippy --all --all-features` and fix any errors
+11. `cargo test --all --all-features` and fix any issues
+12. `cargo bench --all --all-features` and fix any issues
+13. Create a PR
+14. Monitor the checks (GitHub actions runned)
+15. Respond to any comments
+16. In the end ideally it will be merged to `main`
