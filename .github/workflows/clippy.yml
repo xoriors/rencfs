@@ -19,6 +19,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Setup Rust
+      run: rustup update    
+
     - name: fmt check
       run: cargo fmt --all --check
 
