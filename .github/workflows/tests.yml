@@ -8,7 +8,6 @@ on:
   
 jobs:
   version:
-    name: Get version
     uses: radumarias/rencfs/.github/workflows/version_reusable.yml@main
       
   build-and-test:
