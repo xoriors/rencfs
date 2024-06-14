@@ -80,7 +80,7 @@ pub(crate) trait MountHandleInner: Future<Output = io::Result<()>> {
 /// **`allow_root`** allow root to access the file system  
 /// **`allow_other`** allow other users to access the file system  
 /// **`direct_io`** use direct I/O (bypass page cache for open files)
-///// **`suid_support`** if it should allow setting `SUID` and `SGID` when files are created. On `false` it will unset those flags when creating files
+/// **`suid_support`** if it should allow setting `SUID` and `SGID` when files are created. On `false` it will unset those flags when creating files
 ///
 #[must_use]
 #[allow(clippy::fn_params_excessive_bools)]

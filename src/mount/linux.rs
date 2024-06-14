@@ -157,7 +157,7 @@ impl EncryptedFsFuse3 {
         Ok(Self {
             fs: EncryptedFs::new(data_dir, password_provider, cipher).await?,
             direct_io,
-            suid_support: false,
+            suid_support,
         })
         // }
     }
@@ -401,7 +401,7 @@ impl Filesystem for EncryptedFsFuse3 {
             }
             if req.uid != 0 && req.gid != attr.gid && !get_groups(req.pid).contains(&attr.gid) {
                 // If SGID is set and the file belongs to a group that the caller is not part of
-                // then the SGID bit is suppose to be cleared during chmod
+                // then the SGID bit is supposed to be cleared during chmod
                 set_attr2 = set_attr2.with_perm((mode & !libc::S_ISGID) as u16);
             } else {
                 set_attr2 = set_attr2.with_perm(mode as u16);

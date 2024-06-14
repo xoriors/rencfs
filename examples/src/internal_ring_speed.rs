@@ -163,18 +163,18 @@ fn main() -> io::Result<()> {
             println!("len = {}", len);
         }
         // Data to be encrypted
-        let mut data = &mut buffer[..len];
+        let mut ciphertext = &mut buffer[..len];
 
         // Create a mutable copy of the data that will be encrypted in place
         //         let mut in_out = data.clone();
 
         // Encrypt the data with AEAD using the AES_256_GCM algorithm
-        let dec = opening_key
-            .open_within(Aad::empty(), &mut data, 0..)
+        let plaintext = opening_key
+            .open_within(Aad::empty(), &mut ciphertext, 0..)
             .unwrap();
         // let dec = opening_key.open_in_place(Aad::empty(), &mut data).unwrap();
 
-        let _ = out.write(&dec).unwrap();
+        let _ = out.write(&plaintext).unwrap();
     }
     out.flush().unwrap();
     let end = std::time::Instant::now();
