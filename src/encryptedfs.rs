@@ -1765,7 +1765,7 @@ impl EncryptedFs {
             }
         }
 
-        let mut attr = self
+        let attr = self
             .find_by_name(parent, name)
             .await?
             .ok_or(FsError::NotFound("name not found"))?;
