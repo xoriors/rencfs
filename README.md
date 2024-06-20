@@ -393,7 +393,7 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
 
 # Security
 
-- Phantom reads: reading older content from a file, this is not possible. Data is written in WAL and periodically flushed to file. This ensures data integrity and maintain changes order. 
+- Phantom reads: reading older content from a file, this is not possible. Data is written with WAL and periodically flushed to file. This ensures data integrity and maintain changes order. 
   One problem that may occur is if we do a truncate we change the content of the file, but the process is killed before
   we write the metadata with the new filesize. In this case, next time we mount the system, we are still seeing the old
   filesize. However, the content of the file could be bigger, and we read until the old size offset, se we would not
