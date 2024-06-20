@@ -25,6 +25,21 @@ You can also store it in any cloud storage like Google Drive, Dropbox, etc. and 
 
 You can use it as CLI or build your custom FUSE implementation with it.
 
+# Key features
+
+- Security,using well known audited AEAD cryptography primitives
+- Data integrity, data is written with WAL to ensure integrity even on crash or power loss
+- All metadata and content are encrypted 
+- Safe manage of credentials in memory with mlock(2) and zeroize
+- Encryption key generated based on password
+- Password saved in OS's keyring
+- Change password / encryption key without re-encrypting all data
+- Fast seek on both reads and writes
+- Writes in parallel
+- Expose with FUSE
+- Fully concurrency for all operations
+- In future, support for macOS, Windows and mobile
+
 # Functionality
 
 - It keeps all encrypted data and master encryption key in a dedicated directory with files structured on inodes (with
@@ -378,13 +393,7 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
 
 # Security
 
-- Safety on process kill (or crash): all writes to encrypted content is done in a tmp file and then using `mv` to move
-  to destination. the `mv` operation is atomic as it's using `rename()` which is atomic as per specs,
-  see [here](https://pubs.opengroup.org/onlinepubs/009695399/functions/rename.html) `That specification requires that the action of the function be atomic.`
-- Phantom reads: reading older content from a file, this is not possible. While writing, data is kept in a buffer and
-  tmp file and on releasing the file handle we write the new content to the file (as per above the tmp file is moved
-  into place with `mv`).
-  After that, we reset all opened readers so any reads after that will pick up the new content.    
+- Phantom reads: reading older content from a file, this is not possible. Data is written in WAL and periodically flushed to file. This ensures data integrity and maintain changes order. 
   One problem that may occur is if we do a truncate we change the content of the file, but the process is killed before
   we write the metadata with the new filesize. In this case, next time we mount the system, we are still seeing the old
   filesize. However, the content of the file could be bigger, and we read until the old size offset, se we would not
@@ -424,10 +433,7 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
   want close to bulletproof solutions, then maybe this is not the ideal one for you. But is trying to offer a simple use
   of an encryption solution that should be used taking into consideration all the security concerns from above
 - It started as a learning project of Rust programming language, and I feel like keep building more on it
-- It's a fairly simple and standard implementation that tries to respect all security standards, use safe libs and
-  ciphers in the implementation so that it can be extended from this. Indeed, it doesn't have the maturity yet to "
-  fight"
-  other well-known implementations.
+- It's a fairly simple and standard implementation that tries to respect all security standards, use secure and robust primitives so that it can be extended from this. Indeed, it doesn't have the maturity yet to "fight" other well-known implementations.
   But it can be a project from which others can learn or build upon or why not for some to actually use it keeping in
   mind all the above
 
