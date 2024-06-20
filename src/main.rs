@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::{env, io, panic, process};
 
 use anyhow::Result;
-use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
+use clap::{crate_authors, crate_name, crate_version, Arg, ArgAction, ArgMatches, Command};
 use ctrlc::set_handler;
 use rpassword::read_password;
 use secrecy::{ExposeSecret, SecretString};
@@ -41,8 +41,7 @@ async fn main() -> Result<()> {
     let str = matches.get_one::<String>("log-level").unwrap().as_str();
     let log_level = Level::from_str(str);
     if log_level.is_err() {
-        error!("Invalid log level");
-        return Err(ExitStatusError::Failure(1).into());
+        panic!("Invalid log level");
     }
     let log_level = log_level.unwrap();
     let guard = log_init(log_level);
@@ -119,9 +118,9 @@ async fn main() -> Result<()> {
 
 #[allow(clippy::too_many_lines)]
 fn get_cli_args() -> ArgMatches {
-    Command::new("RencFs")
+    Command::new(crate_name!())
         .version(crate_version!())
-        .author("Radu Marias")
+        .author(crate_authors!())
         .arg_required_else_help(true)
         .arg(
             Arg::new("log-level")
@@ -320,7 +319,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         warn!(err = %err);
     });
     if res.is_err() {
-        // maybe we don't have security manager, keep it in mem
+        // maybe we don't have a security manager, keep it in mem
         unsafe {
             warn!("Cannot save password in keyring, keep it in memory");
             PASS = Some(password.clone());

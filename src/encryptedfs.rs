@@ -25,11 +25,9 @@ use tokio::task::{JoinError, JoinSet};
 use tokio_stream::wrappers::ReadDirStream;
 use tracing::{debug, error, instrument, warn};
 
-use crate::arc_hashmap::{ArcHashMap, Holder};
+use crate::arc_hashmap::ArcHashMap;
 use crate::crypto::read::{CryptoRead, CryptoReadSeek};
-use crate::crypto::write::{
-    CryptoWrite, CryptoWriteSeek, FileCryptoWriteCallback, FileCryptoWriteMetadataProvider,
-};
+use crate::crypto::write::{CryptoWrite, CryptoWriteSeek};
 use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
 use crate::{crypto, fs_util, stream_util};
@@ -69,7 +67,7 @@ async fn reset_handles(
     fh: u64,
 ) -> FsResult<()> {
     {
-        let mut attr = fs.get_inode_from_storage(ino, fs.key.get().await?)?;
+        let mut attr = fs.get_inode_from_storage(ino, &*fs.key.get().await?)?;
         let lock = fs
             .serialize_update_inode_locks
             .get_or_insert_with(ino, || Mutex::new(false));
@@ -92,7 +90,7 @@ async fn get_metadata(fs: Arc<EncryptedFs>, ino: u64) -> FsResult<FileAttr> {
     if let Some(attr) = attr {
         Ok(*attr)
     } else {
-        let attr = fs.get_inode_from_storage(ino, fs.key.get().await?)?;
+        let attr = fs.get_inode_from_storage(ino, &*fs.key.get().await?)?;
         guard.put(ino, attr);
         Ok(attr)
     }
@@ -274,14 +272,15 @@ pub struct CreateFileAttr {
 
 impl From<CreateFileAttr> for FileAttr {
     fn from(value: CreateFileAttr) -> Self {
+        let now = SystemTime::now();
         Self {
             ino: 0,
             size: 0,
             blocks: 0,
-            atime: SystemTime::now(),
-            mtime: SystemTime::now(),
-            ctime: SystemTime::now(),
-            crtime: SystemTime::now(),
+            atime: now,
+            mtime: now,
+            ctime: now,
+            crtime: now,
             kind: value.kind,
             perm: value.perm,
             nlink: if value.kind == FileType::Directory {
@@ -773,12 +772,14 @@ impl EncryptedFs {
 
                 let self_clone = fs.clone();
                 join_set.spawn(async move {
+                    let now = SystemTime::now();
                     self_clone
                         .set_attr(
                             parent,
                             SetFileAttr::default()
-                                .with_mtime(SystemTime::now())
-                                .with_ctime(SystemTime::now()),
+                                .with_mtime(now)
+                                .with_ctime(now)
+                                .with_atime(now),
                         )
                         .await?;
                     Ok::<(), FsError>(())
@@ -834,7 +835,7 @@ impl EncryptedFs {
         let (ino, _, _): (u64, FileType, String) = bincode::deserialize_from(crypto::create_read(
             File::open(hash_path)?,
             self.cipher,
-            self.key.get().await?,
+            &*self.key.get().await?,
         ))?;
         drop(guard);
         self.get_inode_from_cache_or_storage(ino).await.map(Some)
@@ -915,12 +916,14 @@ impl EncryptedFs {
                     .await
                     .demote(&attr.ino);
 
+                let now = SystemTime::now();
                 self_clone
                     .set_attr(
                         parent,
                         SetFileAttr::default()
-                            .with_mtime(SystemTime::now())
-                            .with_ctime(SystemTime::now()),
+                            .with_mtime(now)
+                            .with_ctime(now)
+                            .with_atime(now),
                     )
                     .await?;
 
@@ -982,12 +985,14 @@ impl EncryptedFs {
                     .await
                     .demote(&attr.ino);
 
+                let now = SystemTime::now();
                 self_clone
                     .set_attr(
                         parent,
                         SetFileAttr::default()
-                            .with_mtime(SystemTime::now())
-                            .with_ctime(SystemTime::now()),
+                            .with_mtime(now)
+                            .with_ctime(now)
+                            .with_atime(now),
                     )
                     .await?;
 
@@ -1012,23 +1017,33 @@ impl EncryptedFs {
 
     #[allow(clippy::missing_errors_doc)]
     pub async fn read_dir(&self, ino: u64) -> FsResult<DirectoryEntryIterator> {
+        if !self.is_dir(ino) {
+            return Err(FsError::InvalidInodeType);
+        }
         let ls_dir = self.contents_path(ino).join(LS_DIR);
         if !ls_dir.is_dir() {
             return Err(FsError::InvalidInodeType);
         }
 
         let iter = fs::read_dir(ls_dir)?;
+        let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
+        self.set_attr(ino, set_attr).await?;
         Ok(self.create_directory_entry_iterator(iter).await)
     }
 
     /// Like [`EncryptedFs::read_dir`] but with [`FileAttr`] so we don't need to query again for those.
     pub async fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
+        if !self.is_dir(ino) {
+            return Err(FsError::InvalidInodeType);
+        }
         let ls_dir = self.contents_path(ino).join(LS_DIR);
         if !ls_dir.is_dir() {
             return Err(FsError::InvalidInodeType);
         }
 
         let iter = fs::read_dir(ls_dir)?;
+        let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
+        self.set_attr(ino, set_attr).await?;
         Ok(self.create_directory_entry_plus_iterator(iter).await)
     }
 
@@ -1107,7 +1122,7 @@ impl EncryptedFs {
                 } else {
                     drop(cache);
                     if let Ok(decrypted_name) =
-                        crypto::decrypt_file_name(&name, self.cipher, self.key.get().await?)
+                        crypto::decrypt_file_name(&name, self.cipher, &*self.key.get().await?)
                             .map_err(|err| {
                                 error!(err = %err, "decrypting file name");
                                 err
@@ -1125,11 +1140,11 @@ impl EncryptedFs {
         // try from cache
         let lock = self.dir_entries_meta_cache.get().await?;
         let mut cache = lock.lock().await;
-        if let Some(meta) = cache.get(&file_path) {
+        if let Some((ino, kind)) = cache.get(&file_path) {
             return Ok(DirectoryEntry {
-                ino: meta.0,
+                ino: *ino,
                 name,
-                kind: meta.1,
+                kind: *kind,
             });
         }
         drop(cache);
@@ -1141,7 +1156,7 @@ impl EncryptedFs {
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto::create_read(
             file,
             self.cipher,
-            self.key.get().await?,
+            &*self.key.get().await?,
         ));
         drop(guard);
         if let Err(e) = res {
@@ -1192,7 +1207,7 @@ impl EncryptedFs {
     }
 
     #[allow(clippy::missing_errors_doc)]
-    fn get_inode_from_storage(&self, ino: u64, key: Arc<SecretVec<u8>>) -> FsResult<FileAttr> {
+    fn get_inode_from_storage(&self, ino: u64, key: &SecretVec<u8>) -> FsResult<FileAttr> {
         let lock = self
             .serialize_inode_locks
             .get_or_insert_with(ino, || RwLock::new(false));
@@ -1209,7 +1224,7 @@ impl EncryptedFs {
         Ok(bincode::deserialize_from(crypto::create_read(
             file,
             self.cipher,
-            key,
+            &key,
         ))?)
     }
 
@@ -1220,7 +1235,7 @@ impl EncryptedFs {
         if let Some(attr) = attr {
             Ok(*attr)
         } else {
-            let attr = self.get_inode_from_storage(ino, self.key.get().await?)?;
+            let attr = self.get_inode_from_storage(ino, &*self.key.get().await?)?;
             guard.put(ino, attr);
             Ok(attr)
         }
@@ -1271,8 +1286,12 @@ impl EncryptedFs {
 
         let mut attr = self.get_attr(ino).await?;
         merge_attr(&mut attr, &set_attr);
+        let now = SystemTime::now();
+        attr.ctime = now;
+        attr.atime = now;
 
         self.write_inode_to_storage(&attr).await?;
+
         Ok(())
     }
 
@@ -1285,7 +1304,7 @@ impl EncryptedFs {
             &self.ino_file(attr.ino),
             attr,
             self.cipher,
-            self.key.get().await?,
+            &*self.key.get().await?,
         )?;
         drop(guard);
         // update cache also
@@ -1298,10 +1317,6 @@ impl EncryptedFs {
     }
 
     /// Read the contents from an 'offset'. If we try to read outside of file size, we return 0 bytes.
-    /// Depending on the encryption type we might need to re-read bytes until the 'offset', in some case even
-    /// from the beginning of the file to the desired `offset`. This will slow down the read operation if we
-    /// read from very distanced offsets.
-    /// The most speed is obtained when we read sequentially from the beginning of the file.
     /// If the file is not opened for read, it will return an error of type ['FsError::InvalidFileHandle'].
     #[instrument(skip(self, buf))]
     #[allow(clippy::missing_errors_doc)]
@@ -1410,7 +1425,9 @@ impl EncryptedFs {
             let mut ctx = ctx.lock().await;
 
             let mut writer = ctx.writer.take().unwrap();
-            writer.finish()?;
+            let file = writer.finish()?;
+            file.sync_all()?;
+            File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
 
             self.opened_files_for_write.write().await.remove(&ctx.ino);
 
@@ -1439,12 +1456,8 @@ impl EncryptedFs {
     }
 
     /// Writes the contents of `buf` to the file at `ino` starting at `offset`.
-    /// Depending on the encryption type we might need to re-write bytes until the 'offset', in some case even
-    /// from the beginning of the file to the desired `offset`. This will slow down the write operation if we
-    /// write to very distanced offsets.  
-    /// The most speed is obtained when we write sequentially from the beginning of the file.  
     /// If we write outside of file size, we fill up with zeros until offset.  
-    /// If the file is not opened for write, it will return an error of type ['FsError::InvalidFileHandle'].
+    /// If the file is not opened for writing, it will return an error of type ['FsError::InvalidFileHandle'].
     #[instrument(skip(self, buf))]
     pub async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
         if !self.exists(ino) {
@@ -1508,8 +1521,10 @@ impl EncryptedFs {
             debug!("setting new file size {}", pos);
             ctx.attr.size = pos;
         }
-        ctx.attr.mtime = SystemTime::now();
-        ctx.attr.ctime = SystemTime::now();
+        let now = SystemTime::now();
+        ctx.attr.mtime = now;
+        ctx.attr.ctime = now;
+        ctx.attr.atime = now;
         drop(ctx);
 
         Ok(len)
@@ -1519,7 +1534,7 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     pub async fn flush(&self, handle: u64) -> FsResult<()> {
         if handle == 0 {
-            // in case of directory or if the file was crated without being opened we don't use handle
+            // in the case of directory or if the file was crated without being opened we don't use a handle
             return Ok(());
         }
         let mut valid_fh = self.read_handles.read().await.get(&handle).is_some();
@@ -1530,6 +1545,8 @@ impl EncryptedFs {
                 .as_mut()
                 .expect("writer is missing")
                 .flush()?;
+            File::open(self.contents_path(ctx.lock().await.ino))?.sync_all()?;
+            File::open(self.contents_path(ctx.lock().await.ino).parent().unwrap())?.sync_all()?;
             valid_fh = true;
         }
 
@@ -1574,7 +1591,7 @@ impl EncryptedFs {
         Ok(len)
     }
 
-    /// Open a file. We can open multiple times for read but only one for write at a time.
+    /// Open a file. We can open multiple times for read but only one to write at a time.
     #[allow(clippy::missing_panics_doc)]
     pub async fn open(&self, ino: u64, read: bool, write: bool) -> FsResult<u64> {
         if !read && !write {
@@ -1644,20 +1661,20 @@ impl EncryptedFs {
         // obtain a write lock to whole file, we ue a special value `u64::MAX - 42_u64` to indicate this
         let _guard = lock.write().await;
 
+        let file_path = self.contents_path(ino);
         if size == 0 {
             debug!("truncate to zero");
             // truncate to zero
-            let file_path = self.contents_path(ino);
-            fs::remove_file(&file_path)?;
-            File::create_new(&file_path)?;
+            let file = File::create(&file_path)?;
+            file.set_len(0)?;
+            file.sync_all()?;
         } else {
             debug!("truncate size to {}", size.to_formatted_string(&Locale::en));
 
-            let in_path = self.contents_path(attr.ino);
-            let mut file = fs_util::open_atomic_write(&self.contents_path(ino))?;
+            let mut file = fs_util::open_atomic_write(&file_path)?;
             {
                 // have a new scope, so we drop the reader before moving new content files
-                let mut reader = self.create_file_read(&in_path, None).await?;
+                let mut reader = self.create_read(File::open(file_path.as_path())?).await?;
 
                 let mut writer = self.create_write(file).await?;
 
@@ -1677,11 +1694,14 @@ impl EncryptedFs {
             }
             file.commit()?;
         }
+        File::open(file_path.parent().unwrap())?.sync_all()?;
 
+        let now = SystemTime::now();
         let set_attr = SetFileAttr::default()
             .with_size(size)
-            .with_mtime(SystemTime::now())
-            .with_ctime(SystemTime::now());
+            .with_mtime(now)
+            .with_ctime(now)
+            .with_atime(now);
         self.set_attr(ino, set_attr).await?;
 
         // also recreate handles because the file has changed
@@ -1766,18 +1786,8 @@ impl EncryptedFs {
         )
         .await?;
 
-        let mut parent_attr = self.get_attr(parent).await?;
-        parent_attr.mtime = SystemTime::now();
-        parent_attr.ctime = SystemTime::now();
-
-        let mut new_parent_attr = self.get_attr(new_parent).await?;
-        new_parent_attr.mtime = SystemTime::now();
-        new_parent_attr.ctime = SystemTime::now();
-
-        attr.ctime = SystemTime::now();
-
         if attr.kind == FileType::Directory {
-            // add parent link to new directory
+            // add the parent link to the new directory
             self.insert_directory_entry(
                 attr.ino,
                 &DirectoryEntry {
@@ -1788,6 +1798,22 @@ impl EncryptedFs {
             )
             .await?;
         }
+
+        let now = SystemTime::now();
+        let set_attr = SetFileAttr::default()
+            .with_mtime(now)
+            .with_ctime(now)
+            .with_atime(now);
+        self.set_attr(parent, set_attr).await?;
+
+        let set_attr = SetFileAttr::default()
+            .with_mtime(now)
+            .with_ctime(now)
+            .with_atime(now);
+        self.set_attr(new_parent, set_attr).await?;
+
+        let set_attr = SetFileAttr::default().with_ctime(now).with_atime(now);
+        self.set_attr(attr.ino, set_attr).await?;
 
         Ok(())
     }
@@ -1800,7 +1826,7 @@ impl EncryptedFs {
         Ok(crypto::create_write(
             file,
             self.cipher,
-            self.key.get().await?,
+            &*self.key.get().await?,
         ))
     }
 
@@ -1812,51 +1838,8 @@ impl EncryptedFs {
         Ok(crypto::create_write_seek(
             file,
             self.cipher,
-            self.key.get().await?,
+            &*self.key.get().await?,
         ))
-    }
-
-    /// Create a crypto writer to file using internal encryption info.
-    ///
-    /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
-    ///
-    /// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do  
-    ///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
-    ///
-    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file  
-    ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
-    #[allow(dead_code)]
-    async fn create_file_write(
-        &self,
-        file: &Path,
-        callback: Option<Box<dyn FileCryptoWriteCallback>>,
-        lock: Option<Holder<RwLock<bool>>>,
-        metadata_provider: Option<Box<dyn FileCryptoWriteMetadataProvider>>,
-    ) -> FsResult<Box<dyn CryptoWriteSeek<File>>> {
-        Ok(crypto::create_file_write(
-            file,
-            self.cipher,
-            self.key.get().await?,
-            *Box::new(callback),
-            lock,
-            metadata_provider,
-        )?)
-    }
-
-    /// Create a crypto reader from file using internal encryption info.
-    /// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read\
-    ///     You need to provide the same lock to any writers to this file, you should obtain a new [`Holder`] that wraps the same lock,
-    async fn create_file_read(
-        &self,
-        file: &Path,
-        lock: Option<Holder<RwLock<bool>>>,
-    ) -> FsResult<Box<dyn CryptoRead<File>>> {
-        Ok(crypto::create_file_read(
-            file,
-            self.cipher,
-            self.key.get().await?,
-            lock,
-        )?)
     }
 
     /// Create a crypto reader using internal encryption info.
@@ -1867,7 +1850,7 @@ impl EncryptedFs {
         Ok(crypto::create_read(
             reader,
             self.cipher,
-            self.key.get().await?,
+            &*self.key.get().await?,
         ))
     }
 
@@ -1879,7 +1862,7 @@ impl EncryptedFs {
         Ok(crypto::create_read_seek(
             reader,
             self.cipher,
-            self.key.get().await?,
+            &*self.key.get().await?,
         ))
     }
 
@@ -1897,7 +1880,7 @@ impl EncryptedFs {
         )?)?;
         let initial_key = crypto::derive_key(&old_password, cipher, &salt)?;
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
-        let reader = crypto::create_read(File::open(enc_file)?, cipher, Arc::new(initial_key));
+        let reader = crypto::create_read(File::open(enc_file)?, cipher, &initial_key);
         let key: Vec<u8> =
             bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
         let key = SecretVec::new(key);
@@ -1907,7 +1890,7 @@ impl EncryptedFs {
             &data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
             &key.expose_secret(),
             cipher,
-            Arc::new(new_key),
+            &new_key,
         )?;
         Ok(())
     }
@@ -1943,7 +1926,7 @@ impl EncryptedFs {
                 let writer = ctx.writer.as_mut().unwrap();
                 writer.flush()?;
                 writer.seek(SeekFrom::Start(0))?;
-                let attr = self.get_inode_from_storage(ino, self.key.get().await?)?;
+                let attr = self.get_inode_from_storage(ino, &*self.key.get().await?)?;
                 ctx.attr.size = attr.size;
             }
         }
@@ -1958,7 +1941,7 @@ impl EncryptedFs {
     ) -> FsResult<()> {
         let ino = op.get_ino();
         let path = self.contents_path(ino);
-        let attr = self.get_inode_from_storage(ino, self.key.get().await?)?;
+        let attr = self.get_inode_from_storage(ino, &*self.key.get().await?)?;
         match op {
             ReadHandleContextOperation::Create { ino } => {
                 let attr: TimeAndSizeFileAttr = attr.into();
@@ -2077,7 +2060,7 @@ impl EncryptedFs {
     ) -> FsResult<()> {
         let parent_path = self.contents_path(ino_contents_dir);
         let encrypted_name =
-            crypto::encrypt_file_name(&entry.name, self.cipher, self.key.get().await?)?;
+            crypto::encrypt_file_name(&entry.name, self.cipher, &*self.key.get().await?)?;
         // add to LS directory
         let self_clone = self
             .self_weak
@@ -2107,7 +2090,7 @@ impl EncryptedFs {
                 &file_path,
                 &entry,
                 self_clone.cipher,
-                self_clone.key.get().await?,
+                &*self_clone.key.get().await?,
             )?;
             Ok::<(), FsError>(())
         });
@@ -2137,7 +2120,7 @@ impl EncryptedFs {
                 &file_path,
                 &entry,
                 self_clone.cipher,
-                self_clone.key.get().await?,
+                &*self_clone.key.get().await?,
             )?;
             Ok::<(), FsError>(())
         })
@@ -2167,7 +2150,7 @@ impl EncryptedFs {
             bincode::deserialize_from(crypto::create_read(
                 File::open(path.clone())?,
                 self.cipher,
-                self.key.get().await?,
+                &*self.key.get().await?,
             ))?;
         fs::remove_file(path)?;
         drop(guard);
@@ -2224,7 +2207,7 @@ fn read_or_create_key(
     let derived_key = crypto::derive_key(password, cipher, &salt)?;
     if key_path.exists() {
         // read key
-        let reader = crypto::create_read(File::open(key_path)?, cipher, Arc::new(derived_key));
+        let reader = crypto::create_read(File::open(key_path)?, cipher, &derived_key);
         let key: Vec<u8> =
             bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
         Ok(SecretVec::new(key))
@@ -2242,7 +2225,7 @@ fn read_or_create_key(
                 .truncate(true)
                 .open(key_path)?,
             cipher,
-            Arc::new(derived_key),
+            &derived_key,
         );
         bincode::serialize_into(&mut writer, &key)?;
         writer.finish()?;

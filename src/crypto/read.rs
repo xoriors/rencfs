@@ -1,7 +1,5 @@
-use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use ring::aead::{
@@ -9,14 +7,11 @@ use ring::aead::{
 };
 use ring::error;
 use secrecy::{ExposeSecret, SecretVec};
-use tokio::sync::RwLock;
 use tracing::{error, instrument, warn};
 
-use crate::arc_hashmap::Holder;
 use crate::crypto::buf_mut::BufMut;
 use crate::crypto::write::BLOCK_SIZE;
-use crate::crypto::Cipher;
-use crate::{crypto, stream_util};
+use crate::stream_util;
 
 mod bench;
 mod test;
@@ -24,6 +19,7 @@ mod test;
 /// Reads encrypted content from the wrapped Reader.
 #[allow(clippy::module_name_repetitions)]
 pub trait CryptoRead<R: Read + Send + Sync>: Read + Send + Sync {
+    #[allow(clippy::wrong_self_convention)]
     fn into_inner(&mut self) -> R;
 }
 
@@ -92,7 +88,7 @@ pub struct RingCryptoRead<R: Read> {
 
 impl<R: Read> RingCryptoRead<R> {
     #[allow(clippy::missing_panics_doc)]
-    pub fn new(reader: R, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>) -> Self {
+    pub fn new(reader: R, algorithm: &'static Algorithm, key: &SecretVec<u8>) -> Self {
         let ciphertext_block_size = NONCE_LEN + BLOCK_SIZE + algorithm.tag_len();
         let buf = BufMut::new(vec![0; ciphertext_block_size]);
         let last_nonce = Arc::new(Mutex::new(None));
@@ -162,11 +158,11 @@ pub trait CryptoReadSeek<R: Read + Seek + Send + Sync>:
 }
 
 impl<R: Read + Seek> RingCryptoRead<R> {
-    pub fn new_seek(reader: R, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>) -> Self {
-        RingCryptoRead::new(reader, algorithm, key)
+    pub fn new_seek(reader: R, algorithm: &'static Algorithm, key: &SecretVec<u8>) -> Self {
+        Self::new(reader, algorithm, &key)
     }
 
-    fn pos(&mut self) -> u64 {
+    const fn pos(&self) -> u64 {
         self.block_index.saturating_sub(1) * self.plaintext_block_size as u64
             + self.buf.pos_read().saturating_sub(NONCE_LEN) as u64
     }
@@ -253,91 +249,3 @@ impl<R: Read + Seek> Seek for RingCryptoRead<R> {
 }
 
 impl<R: Read + Seek + Send + Sync> CryptoReadSeek<R> for RingCryptoRead<R> {}
-
-/// File Read
-
-#[allow(clippy::module_name_repetitions)]
-pub struct FileCryptoRead {
-    file: PathBuf,
-    reader: Option<Box<dyn CryptoReadSeek<File>>>,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-    lock: Option<Holder<RwLock<bool>>>,
-}
-
-impl FileCryptoRead {
-    /// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read  
-    ///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
-    #[allow(clippy::missing_errors_doc)]
-    pub fn new(
-        file: &Path,
-        cipher: Cipher,
-        key: Arc<SecretVec<u8>>,
-        lock: Option<Holder<RwLock<bool>>>,
-    ) -> io::Result<Self> {
-        Ok(Self {
-            file: file.to_owned(),
-            reader: Some(Box::new(crypto::create_read_seek(
-                File::open(file)?,
-                cipher,
-                key.clone(),
-            ))),
-            cipher,
-            key,
-            lock,
-        })
-    }
-}
-
-impl Read for FileCryptoRead {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let _guard = self.lock.as_ref().map(|lock| lock.read());
-        let len = self.reader.as_mut().unwrap().read(buf)?;
-        Ok(len)
-    }
-}
-
-impl Seek for FileCryptoRead {
-    #[allow(clippy::cast_possible_wrap)]
-    #[allow(clippy::cast_sign_loss)]
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let pos = match pos {
-            SeekFrom::Start(pos) => pos,
-            SeekFrom::End(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "can't seek from end",
-                ))
-            }
-            SeekFrom::Current(pos) => {
-                let new_pos = self.reader.as_mut().unwrap().stream_position()? as i64 + pos;
-                if new_pos < 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "can't seek before start",
-                    ));
-                }
-                new_pos as u64
-            }
-        };
-        let current_pos = self.reader.as_mut().unwrap().stream_position()?;
-        if current_pos > pos {
-            // we need to recreate the reader
-            self.reader = Some(Box::new(crypto::create_read_seek(
-                File::open(&self.file)?,
-                self.cipher,
-                self.key.clone(),
-            )));
-        }
-        self.reader.as_mut().unwrap().seek(SeekFrom::Start(pos))?;
-        self.reader.as_mut().unwrap().stream_position()
-    }
-}
-
-impl CryptoRead<File> for FileCryptoRead {
-    fn into_inner(&mut self) -> File {
-        self.reader.take().unwrap().into_inner()
-    }
-}
-
-impl CryptoReadSeek<File> for FileCryptoRead {}

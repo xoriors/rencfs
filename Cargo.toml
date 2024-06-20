@@ -1,11 +1,11 @@
 [package]
 name = "rencfs"
 description = "An encrypted file system that is mounted with FUSE on Linux. It can be used to create encrypted directories."
-version = "0.13.48"
+version = "0.13.49"
 edition = "2021"
-license = "MIT OR Apache-2.0 OR BSD3"
+license = "MIT OR Apache-2.0"
 authors = ["Radu Marias <radumarias@gmail.com>"]
-homepage = "https://github.com/radumarias/rencfs"
+homepage = "https://radumarias.github.io/rencfs"
 repository = "https://github.com/radumarias/rencfs"
 readme = "README.md"
 keywords = ["filesystem", "fuse", "encryption", "system", "security"]
@@ -29,7 +29,6 @@ base64 = "0.22.1"
 tokio = { version = "1.36", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["fs"] }
 futures-util = "0.3.30"
-mio = { version = "0.8.11", features = ["os-poll"] }
 bytes = "1.5"
 tracing = { version = "0.1.40", features = ["max_level_trace", "release_max_level_info"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -39,7 +38,6 @@ ctrlc = { version = "3.1.9", features = ["termination"] }
 strum = "0.26.2"
 strum_macros = "0.26.2"
 rpassword = "7.3.1"
-#cryptostream = "0.3.2"
 anyhow = "1.0.82"
 argon2 = "0.5.3"
 keyring = "2.3.2"
@@ -49,7 +47,6 @@ num-format = "0.4.4"
 ring = "0.17.8"
 hex = "0.4.3"
 rand_chacha = "0.3.1"
-test-log = "0.2.16"
 lru = "0.12.3"
 okaywal = "0.3.1"
 atomic-write-file = "0.1.4"
@@ -64,14 +61,17 @@ fuse3 = { version = "0.7.1", features = ["tokio-runtime", "unprivileged"] }
 [package.metadata.aur]
 depends = ["fuse3"]
 files = [
-    ["LICENSE-APACHE", "/usr/share/licenses/$pkgname/LICENSE-APACHE"],
+    ["LICENSE-Apache-2.0", "/usr/share/licenses/$pkgname/LICENSE-Apache-2.0"],
     ["LICENSE-MIT", "/usr/share/licenses/$pkgname/LICENSE-MIT"],
-    #    ["LICENSE-BSD3", "/usr/share/licenses/$pkgname/LICENSE-BSD3"]
+    #    ["LICENSE-BSD-3-Clause", "/usr/share/licenses/$pkgname/LICENSE-BSD-3-Clause"]
 ]
 
 [package.metadata.generate-rpm]
 assets = [
-    { source = "target/release/rencfs", dest = "/usr/bin/rencfs", mode = "755" }
+    { source = "target/release/rencfs", dest = "/usr/bin/rencfs", mode = "755" },
+    { source = "LICENSE-Apache-2.0", dest = "/usr/share/licenses/rencfs-bin/LICENSE-Apache-2.0", mode = "644" },
+    { source = "LICENSE-MIT", dest = "/usr/share/licenses/rencfs-bin/LICENSE-MIT", mode = "644" },
+    { source = "LICENSE-BSD-3-Clause", dest = "/usr/share/licenses/rencfs-bin/LICENSE-BSD-3-Clause", mode = "644" }
 ]
 [package.metadata.generate-rpm.requires]
 fuse3 = "*"

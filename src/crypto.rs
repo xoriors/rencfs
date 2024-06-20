@@ -3,9 +3,7 @@ use std::io;
 use std::io::{Read, Seek, Write};
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use crate::arc_hashmap::Holder;
 use argon2::Argon2;
 use base64::alphabet::STANDARD;
 use base64::engine::general_purpose::NO_PAD;
@@ -20,14 +18,10 @@ use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
-use tokio::sync::RwLock;
 use tracing::{debug, error, instrument};
 
-use crate::crypto::read::{CryptoRead, CryptoReadSeek, FileCryptoRead, RingCryptoRead};
-use crate::crypto::write::{
-    CryptoWrite, CryptoWriteSeek, FileCryptoWrite, FileCryptoWriteCallback,
-    FileCryptoWriteMetadataProvider, RingCryptoWrite, RingCryptoWriteSeek,
-};
+use crate::crypto::read::{CryptoRead, CryptoReadSeek, RingCryptoRead};
+use crate::crypto::write::{CryptoWrite, CryptoWriteSeek, RingCryptoWrite, RingCryptoWriteSeek};
 use crate::encryptedfs::FsResult;
 use crate::{fs_util, stream_util};
 
@@ -117,7 +111,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub fn create_write<W: Write + Send + Sync>(
     writer: W,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> impl CryptoWrite<W> {
     create_ring_write(writer, cipher, key)
 }
@@ -126,41 +120,15 @@ pub fn create_write<W: Write + Send + Sync>(
 pub fn create_write_seek<W: Write + Seek + Read + Send + Sync>(
     writer: W,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> impl CryptoWriteSeek<W> {
     create_ring_write_seek(writer, cipher, key)
-}
-
-/// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
-///
-/// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do  
-///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
-///
-/// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file  
-///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
-#[allow(clippy::missing_errors_doc)]
-pub fn create_file_write(
-    file: &Path,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-    callback: Option<Box<dyn FileCryptoWriteCallback>>,
-    lock: Option<Holder<RwLock<bool>>>,
-    metadata_provider: Option<Box<dyn FileCryptoWriteMetadataProvider>>,
-) -> io::Result<Box<dyn CryptoWriteSeek<File>>> {
-    Ok(Box::new(FileCryptoWrite::new(
-        file,
-        cipher,
-        key,
-        callback,
-        lock,
-        metadata_provider,
-    )?))
 }
 
 fn create_ring_write<W: Write + Send + Sync>(
     writer: W,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> RingCryptoWrite<W> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
@@ -172,7 +140,7 @@ fn create_ring_write<W: Write + Send + Sync>(
 fn create_ring_write_seek<W: Write + Seek + Read + Send + Sync>(
     writer: W,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> RingCryptoWriteSeek<W> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
@@ -184,7 +152,7 @@ fn create_ring_write_seek<W: Write + Seek + Read + Send + Sync>(
 fn create_ring_read<R: Read + Send + Sync>(
     reader: R,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> RingCryptoRead<R> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
@@ -196,7 +164,7 @@ fn create_ring_read<R: Read + Send + Sync>(
 fn create_ring_read_seek<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> RingCryptoRead<R> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
@@ -209,7 +177,7 @@ fn create_ring_read_seek<R: Read + Seek + Send + Sync>(
 pub fn create_read<R: Read + Send + Sync>(
     reader: R,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> impl CryptoRead<R> {
     create_ring_read(reader, cipher, key)
 }
@@ -218,25 +186,13 @@ pub fn create_read<R: Read + Send + Sync>(
 pub fn create_read_seek<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> impl CryptoReadSeek<R> {
     create_ring_read_seek(reader, cipher, key)
 }
 
-/// **`lock`** is used to read lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we read  
-///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
 #[allow(clippy::missing_errors_doc)]
-pub fn create_file_read(
-    file: &Path,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-    lock: Option<Holder<RwLock<bool>>>,
-) -> io::Result<Box<dyn CryptoRead<File>>> {
-    Ok(Box::new(FileCryptoRead::new(file, cipher, key, lock)?))
-}
-
-#[allow(clippy::missing_errors_doc)]
-pub fn encrypt(s: &SecretString, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<String> {
+pub fn encrypt(s: &SecretString, cipher: Cipher, key: &SecretVec<u8>) -> Result<String> {
     let mut cursor = io::Cursor::new(vec![]);
     let mut writer = create_write(cursor, cipher, key);
     writer.write_all(s.expose_secret().as_bytes())?;
@@ -247,7 +203,7 @@ pub fn encrypt(s: &SecretString, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Res
 
 #[allow(clippy::missing_panics_doc)]
 #[allow(clippy::missing_errors_doc)]
-pub fn decrypt(s: &str, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<SecretString> {
+pub fn decrypt(s: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretString> {
     let vec = BASE64.decode(s)?;
     let cursor = io::Cursor::new(vec);
 
@@ -258,11 +214,7 @@ pub fn decrypt(s: &str, cipher: Cipher, key: Arc<SecretVec<u8>>) -> Result<Secre
 }
 
 #[allow(clippy::missing_errors_doc)]
-pub fn decrypt_file_name(
-    name: &str,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-) -> Result<SecretString> {
+pub fn decrypt_file_name(name: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretString> {
     let name = String::from(name).replace('|', "/");
     decrypt(&name, cipher, key)
 }
@@ -283,7 +235,7 @@ pub fn derive_key(password: &SecretString, cipher: Cipher, salt: &[u8]) -> Resul
 pub fn encrypt_file_name(
     name: &SecretString,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> FsResult<String> {
     if name.expose_secret() == "$." || name.expose_secret() == "$.." {
         Ok(name.expose_secret().clone())
@@ -291,7 +243,7 @@ pub fn encrypt_file_name(
         Ok(format!("${}", name.expose_secret()))
     } else {
         let normalized_name = SecretString::new(name.expose_secret().replace(['/', '\\'], " "));
-        let mut encrypted = encrypt(&normalized_name, cipher, key)?;
+        let mut encrypted = encrypt(&normalized_name, cipher, &key)?;
         encrypted = encrypted.replace('/', "|");
         Ok(encrypted)
     }
@@ -342,7 +294,7 @@ pub fn copy_from_file_exact(
     pos: u64,
     len: u64,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
     w: &mut impl Write,
 ) -> io::Result<()> {
     debug!("");
@@ -356,7 +308,7 @@ pub fn copy_from_file(
     pos: u64,
     len: u64,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
     w: &mut impl Write,
     stop_on_eof: bool,
 ) -> io::Result<u64> {
@@ -365,7 +317,7 @@ pub fn copy_from_file(
         return Ok(0);
     }
     // create a new reader by reading from the beginning of the file
-    let mut reader = create_read(OpenOptions::new().read(true).open(file)?, cipher, key);
+    let mut reader = create_read(OpenOptions::new().read(true).open(file)?, cipher, &key);
     // move read position to the write position
     let pos2 = stream_util::seek_forward(&mut reader, pos, stop_on_eof)?;
     if pos2 < pos {
@@ -393,7 +345,7 @@ pub fn serialize_encrypt_into<W, T>(
     writer: W,
     value: &T,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> Result<()>
 where
     W: Write + Send + Sync,
@@ -409,7 +361,7 @@ pub fn atomic_serialize_encrypt_into<T>(
     file: &Path,
     value: &T,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> Result<()>
 where
     T: serde::Serialize + ?Sized,

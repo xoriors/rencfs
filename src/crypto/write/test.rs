@@ -1,6 +1,5 @@
 use std::io;
 use std::io::{Seek, SeekFrom};
-use std::sync::Arc;
 
 use secrecy::SecretVec;
 #[allow(unused_imports)]
@@ -16,7 +15,6 @@ fn test_reader_writer_chacha() {
     use std::io;
     use std::io::{Read, Seek};
     use std::io::{SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -29,29 +27,28 @@ fn test_reader_writer_chacha() {
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
     let key = SecretVec::new(key);
-    let key = Arc::new(key);
 
     // simple text
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write(cursor, cipher, &key);
     let data = "hello, this is my secret message";
     writer.write_all(data.as_bytes()).unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     assert_eq!(data, s);
 
     // larger data
     let mut cursor = io::Cursor::new(vec![]);
-    let mut writer = crypto::create_write(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write(cursor, cipher, &key);
     let mut data: [u8; BLOCK_SIZE + 42] = [0; BLOCK_SIZE + 42];
     rand::thread_rng().fill_bytes(&mut data);
     writer.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key);
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut data2 = vec![];
     reader.read_to_end(&mut data2).unwrap();
     assert_eq!(data.len(), data2.len());
@@ -64,7 +61,6 @@ fn test_reader_writer_1mb_chacha() {
     use std::io;
     use std::io::Seek;
     use std::io::SeekFrom;
-    use std::sync::Arc;
 
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -77,19 +73,18 @@ fn test_reader_writer_1mb_chacha() {
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
     let key = SecretVec::new(key);
-    let key = Arc::new(key);
 
     let len = 1024 * 1024;
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write(cursor, cipher, &key);
     let mut cursor_random = io::Cursor::new(vec![0; len]);
     rand::thread_rng().fill_bytes(cursor_random.get_mut());
     io::copy(&mut cursor_random, &mut writer).unwrap();
     cursor = writer.finish().unwrap();
     cursor_random.seek(SeekFrom::Start(0)).unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key);
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let hash1 = crypto::hash_reader(&mut cursor_random).unwrap();
     let hash2 = crypto::hash_reader(&mut reader).unwrap();
     assert_eq!(hash1, hash2);
@@ -101,7 +96,6 @@ fn test_reader_writer_aes() {
     use std::io;
     use std::io::{Read, Seek};
     use std::io::{SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -114,29 +108,28 @@ fn test_reader_writer_aes() {
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
     let key = SecretVec::new(key);
-    let key = Arc::new(key);
 
     // simple text
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write(cursor, cipher, &key);
     let data = "hello, this is my secret message";
     writer.write_all(data.as_bytes()).unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     assert_eq!(data, s);
 
     // larger data
     let mut cursor = io::Cursor::new(vec![]);
-    let mut writer = crypto::create_write(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write(cursor, cipher, &key);
     let mut data: [u8; BLOCK_SIZE + 42] = [0; BLOCK_SIZE + 42];
     rand::thread_rng().fill_bytes(&mut data);
     writer.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key);
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut data2 = vec![];
     reader.read_to_end(&mut data2).unwrap();
     assert_eq!(data.len(), data2.len());
@@ -149,7 +142,6 @@ fn test_reader_writer_1mb_aes() {
     use std::io;
     use std::io::Seek;
     use std::io::SeekFrom;
-    use std::sync::Arc;
 
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -162,19 +154,18 @@ fn test_reader_writer_1mb_aes() {
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
     let key = SecretVec::new(key);
-    let key = Arc::new(key);
 
     let len = 1024 * 1024;
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write(cursor, cipher, &key);
     let mut cursor_random = io::Cursor::new(vec![0; len]);
     rand::thread_rng().fill_bytes(cursor_random.get_mut());
     io::copy(&mut cursor_random, &mut writer).unwrap();
     cursor = writer.finish().unwrap();
     cursor_random.seek(SeekFrom::Start(0)).unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key);
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let hash1 = crypto::hash_reader(&mut cursor_random).unwrap();
     let hash2 = crypto::hash_reader(&mut reader).unwrap();
     assert_eq!(hash1, hash2);
@@ -187,7 +178,6 @@ fn test_writer_seek_text_chacha() {
     use std::io;
     use std::io::{Read, Seek};
     use std::io::{SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -200,10 +190,10 @@ fn test_writer_seek_text_chacha() {
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = Arc::new(SecretVec::new(key));
+    let key = SecretVec::new(key);
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer
         .write_all(b"This is a test message for the seek capability")
         .unwrap();
@@ -213,7 +203,7 @@ fn test_writer_seek_text_chacha() {
     writer.write_all(b"THE").unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     cursor = reader.into_inner();
@@ -221,12 +211,12 @@ fn test_writer_seek_text_chacha() {
 
     // open existing content
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(10)).unwrap();
     writer.write_all(b"TEST").unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     cursor = reader.into_inner();
@@ -234,12 +224,12 @@ fn test_writer_seek_text_chacha() {
 
     // seek current
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Current(15)).unwrap();
     writer.write_all(b"MESSAGE").unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     cursor = reader.into_inner();
@@ -247,12 +237,12 @@ fn test_writer_seek_text_chacha() {
 
     // seek from the end
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::End(-15)).unwrap();
     writer.write_all(b"SEEK").unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     cursor = reader.into_inner();
@@ -260,17 +250,17 @@ fn test_writer_seek_text_chacha() {
 
     // seek < 0
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     assert!(writer.seek(SeekFrom::Current(-1)).is_err());
     cursor = writer.finish().unwrap();
 
     // seek after content size
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::End(1)).unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     reader.into_inner();
@@ -280,7 +270,7 @@ fn test_writer_seek_text_chacha() {
     );
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     let mut buf: [u8; 10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     writer.write_all(&buf).unwrap();
     writer.seek(SeekFrom::Start(5)).unwrap();
@@ -289,7 +279,7 @@ fn test_writer_seek_text_chacha() {
     writer.write_all(&[2, 2]).unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut buf2 = [0; 10];
     reader.read_exact(&mut buf2).unwrap();
     cursor = reader.into_inner();
@@ -301,12 +291,12 @@ fn test_writer_seek_text_chacha() {
 
     // open existing content
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(3)).unwrap();
     writer.write_all(&[3, 3]).unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key);
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     buf[3] = 3;
     buf[4] = 3;
     let mut buf2 = [0; 10];
@@ -322,7 +312,6 @@ fn test_writer_seek_text_aes() {
     use std::io;
     use std::io::{Read, Seek};
     use std::io::{SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -335,10 +324,10 @@ fn test_writer_seek_text_aes() {
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = Arc::new(SecretVec::new(key));
+    let key = SecretVec::new(key);
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer
         .write_all(b"This is a test message for the seek capability")
         .unwrap();
@@ -348,7 +337,7 @@ fn test_writer_seek_text_aes() {
     writer.write_all(b"THE").unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     cursor = reader.into_inner();
@@ -356,12 +345,12 @@ fn test_writer_seek_text_aes() {
 
     // open existing content
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(10)).unwrap();
     writer.write_all(b"TEST").unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     cursor = reader.into_inner();
@@ -369,12 +358,12 @@ fn test_writer_seek_text_aes() {
 
     // seek current
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Current(15)).unwrap();
     writer.write_all(b"MESSAGE").unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     cursor = reader.into_inner();
@@ -382,12 +371,12 @@ fn test_writer_seek_text_aes() {
 
     // seek from the end
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::End(-15)).unwrap();
     writer.write_all(b"SEEK").unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     cursor = reader.into_inner();
@@ -395,17 +384,17 @@ fn test_writer_seek_text_aes() {
 
     // seek < 0
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     assert!(writer.seek(SeekFrom::Current(-1)).is_err());
     cursor = writer.finish().unwrap();
 
     // seek after content size
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::End(1)).unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut s = String::new();
     reader.read_to_string(&mut s).unwrap();
     reader.into_inner();
@@ -415,7 +404,7 @@ fn test_writer_seek_text_aes() {
     );
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     let mut buf: [u8; 10] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     writer.write_all(&buf).unwrap();
     writer.seek(SeekFrom::Start(5)).unwrap();
@@ -424,7 +413,7 @@ fn test_writer_seek_text_aes() {
     writer.write_all(&[2, 2]).unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key.clone());
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     let mut buf2 = [0; 10];
     reader.read_exact(&mut buf2).unwrap();
     cursor = reader.into_inner();
@@ -436,12 +425,12 @@ fn test_writer_seek_text_aes() {
 
     // open existing content
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(3)).unwrap();
     writer.write_all(&[3, 3]).unwrap();
     cursor = writer.finish().unwrap();
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(cursor, cipher, key);
+    let mut reader = crypto::create_read(cursor, cipher, &key);
     buf[3] = 3;
     buf[4] = 3;
     let mut buf2 = [0; 10];
@@ -457,7 +446,6 @@ fn test_writer_seek_blocks_chacha() {
     use std::io;
     use std::io::Seek;
     use std::io::{SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -469,13 +457,13 @@ fn test_writer_seek_blocks_chacha() {
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = Arc::new(SecretVec::new(key));
+    let key = SecretVec::new(key);
 
     let len = BLOCK_SIZE * 3 + 42;
     let data = [42];
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     let mut cursor_random = io::Cursor::new(vec![0; len]);
     rand::thread_rng().fill_bytes(cursor_random.get_mut());
     io::copy(&mut cursor_random, &mut writer).unwrap();
@@ -487,10 +475,10 @@ fn test_writer_seek_blocks_chacha() {
     writer.write_all(&data).unwrap();
     cursor_random.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // write something that extends to the second block
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(42)).unwrap();
     assert_eq!(writer.stream_position().unwrap(), 42);
     cursor_random.seek(SeekFrom::Start(42)).unwrap();
@@ -500,10 +488,10 @@ fn test_writer_seek_blocks_chacha() {
         .write_all(vec![0_u8; BLOCK_SIZE].as_slice())
         .unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // write at the boundary of block
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap();
     assert_eq!(writer.stream_position().unwrap(), BLOCK_SIZE as u64);
     cursor_random
@@ -512,10 +500,10 @@ fn test_writer_seek_blocks_chacha() {
     writer.write_all(&data).unwrap();
     cursor_random.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // write after boundary of block
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap();
     assert_eq!(writer.stream_position().unwrap(), BLOCK_SIZE as u64);
     cursor_random
@@ -527,10 +515,10 @@ fn test_writer_seek_blocks_chacha() {
     writer.write_all(&data).unwrap();
     cursor_random.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // write until block boundary then seek and write inside new block
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.write_all(&[0_u8; BLOCK_SIZE]).unwrap();
     assert_eq!(writer.stream_position().unwrap(), BLOCK_SIZE as u64);
     cursor_random.write_all(&[0_u8; BLOCK_SIZE]).unwrap();
@@ -543,7 +531,7 @@ fn test_writer_seek_blocks_chacha() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // seek from block boundary to block boundary
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap();
     assert_eq!(writer.stream_position().unwrap(), BLOCK_SIZE as u64);
     cursor_random
@@ -570,7 +558,7 @@ fn test_writer_seek_blocks_chacha() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // seek after content size, make sure it writes zeros
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::End(42)).unwrap();
     assert_eq!(
         writer.stream_position().unwrap(),
@@ -583,7 +571,7 @@ fn test_writer_seek_blocks_chacha() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // seek after content size, more blocks, make sure it writes zeros
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer
         .seek(SeekFrom::End(10 * BLOCK_SIZE as i64 + 43))
         .unwrap();
@@ -600,7 +588,7 @@ fn test_writer_seek_blocks_chacha() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // write something after the end then seek after the end, after write we should have a bigger end
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::End(42)).unwrap();
     assert_eq!(
         writer.stream_position().unwrap(),
@@ -634,7 +622,6 @@ fn test_writer_seek_blocks_aes() {
     use std::io;
     use std::io::Seek;
     use std::io::{SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -646,13 +633,13 @@ fn test_writer_seek_blocks_aes() {
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = Arc::new(SecretVec::new(key));
+    let key = SecretVec::new(key);
 
     let len = BLOCK_SIZE * 3 + 42;
     let data = [42];
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     let mut cursor_random = io::Cursor::new(vec![0; len]);
     rand::thread_rng().fill_bytes(cursor_random.get_mut());
     io::copy(&mut cursor_random, &mut writer).unwrap();
@@ -667,7 +654,7 @@ fn test_writer_seek_blocks_aes() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // write something that extends to the second block
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(42)).unwrap();
     assert_eq!(writer.stream_position().unwrap(), 42);
     cursor_random.seek(SeekFrom::Start(42)).unwrap();
@@ -680,7 +667,7 @@ fn test_writer_seek_blocks_aes() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // write at the boundary of block
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap();
     assert_eq!(writer.stream_position().unwrap(), BLOCK_SIZE as u64);
     cursor_random
@@ -692,7 +679,7 @@ fn test_writer_seek_blocks_aes() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // write after boundary of block
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap();
     assert_eq!(writer.stream_position().unwrap(), BLOCK_SIZE as u64);
     cursor_random
@@ -707,7 +694,7 @@ fn test_writer_seek_blocks_aes() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // write until block boundary then seek and write inside new block
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.write_all(&[0_u8; BLOCK_SIZE]).unwrap();
     assert_eq!(writer.stream_position().unwrap(), BLOCK_SIZE as u64);
     cursor_random.write_all(&[0_u8; BLOCK_SIZE]).unwrap();
@@ -720,7 +707,7 @@ fn test_writer_seek_blocks_aes() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // seek from block boundary to block boundary
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap();
     assert_eq!(writer.stream_position().unwrap(), BLOCK_SIZE as u64);
     cursor_random
@@ -747,7 +734,7 @@ fn test_writer_seek_blocks_aes() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // seek after content size, make sure it writes zeros
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::End(42)).unwrap();
     assert_eq!(
         writer.stream_position().unwrap(),
@@ -760,7 +747,7 @@ fn test_writer_seek_blocks_aes() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // seek after content size, more blocks, make sure it writes zeros
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer
         .seek(SeekFrom::End(10 * BLOCK_SIZE as i64 + 43))
         .unwrap();
@@ -777,7 +764,7 @@ fn test_writer_seek_blocks_aes() {
     cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
 
     // write something after the end then seek after the end, after write we should have a bigger end
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     writer.seek(SeekFrom::End(42)).unwrap();
     assert_eq!(
         writer.stream_position().unwrap(),
@@ -812,7 +799,6 @@ fn test_writer_seek_blocks_one_go_chacha() {
     use std::io;
     use std::io::Seek;
     use std::io::{SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -824,13 +810,13 @@ fn test_writer_seek_blocks_one_go_chacha() {
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = Arc::new(SecretVec::new(key));
+    let key = SecretVec::new(key);
 
     let len = BLOCK_SIZE * 3 + 42;
     let data = [42];
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     let mut cursor_random = io::Cursor::new(vec![0; len]);
     rand::thread_rng().fill_bytes(cursor_random.get_mut());
     io::copy(&mut cursor_random, &mut writer).unwrap();
@@ -933,7 +919,6 @@ fn test_writer_seek_blocks_one_go_aes() {
     use std::io;
     use std::io::Seek;
     use std::io::{SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::RngCore;
     use secrecy::SecretVec;
@@ -945,13 +930,13 @@ fn test_writer_seek_blocks_one_go_aes() {
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = Arc::new(SecretVec::new(key));
+    let key = SecretVec::new(key);
 
     let len = BLOCK_SIZE * 3 + 42;
     let data = [42];
 
     let mut cursor = io::Cursor::new(vec![0; 0]);
-    let mut writer = crypto::create_write_seek(cursor, cipher, key.clone());
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
     let mut cursor_random = io::Cursor::new(vec![0; len]);
     rand::thread_rng().fill_bytes(cursor_random.get_mut());
     io::copy(&mut cursor_random, &mut writer).unwrap();
@@ -1051,11 +1036,11 @@ fn compare(
     mut plaintext: &mut io::Cursor<Vec<u8>>,
     mut ciphertext: io::Cursor<Vec<u8>>,
     cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
+    key: &SecretVec<u8>,
 ) -> io::Cursor<Vec<u8>> {
     plaintext.seek(SeekFrom::Start(0)).unwrap();
     ciphertext.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(ciphertext, cipher, key);
+    let mut reader = crypto::create_read(ciphertext, cipher, &key);
     let hash1 = crypto::hash_reader(&mut plaintext).unwrap();
     let hash2 = crypto::hash_reader(&mut reader).unwrap();
     assert_eq!(hash1, hash2);

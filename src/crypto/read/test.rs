@@ -5,7 +5,6 @@ use tracing_test::traced_test;
 #[traced_test]
 fn test_ring_crypto_read_seek_chacha() {
     use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-    use std::sync::Arc;
 
     use ring::aead::CHACHA20_POLY1305;
     use secrecy::SecretVec;
@@ -19,16 +18,16 @@ fn test_ring_crypto_read_seek_chacha() {
 
     let algorithm = &CHACHA20_POLY1305;
     // Create a key for encryption
-    let key = Arc::new(SecretVec::new(vec![0; algorithm.key_len()]));
+    let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, key.clone());
+    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
     writer.write_all(data.as_bytes()).unwrap();
     writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new(&mut cursor, algorithm, key);
+    let mut reader = RingCryptoRead::new(&mut cursor, algorithm, &key);
 
     // Seek to the middle of the data
     reader.seek(SeekFrom::Start(7)).unwrap();
@@ -55,7 +54,6 @@ fn test_ring_crypto_read_seek_chacha() {
 #[traced_test]
 fn test_ring_crypto_read_seek_aes() {
     use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-    use std::sync::Arc;
 
     use ring::aead::AES_256_GCM;
     use secrecy::SecretVec;
@@ -69,16 +67,16 @@ fn test_ring_crypto_read_seek_aes() {
 
     let algorithm = &AES_256_GCM;
     // Create a key for encryption
-    let key = Arc::new(SecretVec::new(vec![0; algorithm.key_len()]));
+    let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, key.clone());
+    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
     writer.write_all(data.as_bytes()).unwrap();
     writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, key);
+    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
 
     // Seek to the middle of the data
     reader.seek(SeekFrom::Start(7)).unwrap();
@@ -105,7 +103,6 @@ fn test_ring_crypto_read_seek_aes() {
 #[traced_test]
 fn test_ring_crypto_read_seek_blocks_chacha() {
     use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::Rng;
     use ring::aead::CHACHA20_POLY1305;
@@ -122,16 +119,16 @@ fn test_ring_crypto_read_seek_blocks_chacha() {
 
     // Create a key for encryption
     let algorithm = &CHACHA20_POLY1305;
-    let key = Arc::new(SecretVec::new(vec![0; algorithm.key_len()]));
+    let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, key.clone());
+    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
     writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, key);
+    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
 
     // Seek in the second block
     reader.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap();
@@ -158,7 +155,6 @@ fn test_ring_crypto_read_seek_blocks_chacha() {
 #[traced_test]
 fn test_ring_crypto_read_seek_blocks_aes() {
     use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::Rng;
     use ring::aead::AES_256_GCM;
@@ -175,16 +171,16 @@ fn test_ring_crypto_read_seek_blocks_aes() {
 
     // Create a key for encryption
     let algorithm = &AES_256_GCM;
-    let key = Arc::new(SecretVec::new(vec![0; algorithm.key_len()]));
+    let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, key.clone());
+    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
     writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, key);
+    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
 
     // Seek in the second block
     reader.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap();
@@ -211,7 +207,6 @@ fn test_ring_crypto_read_seek_blocks_aes() {
 #[traced_test]
 fn test_ring_crypto_read_seek_blocks_boundary_chacha() {
     use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::Rng;
     use ring::aead::CHACHA20_POLY1305;
@@ -228,16 +223,16 @@ fn test_ring_crypto_read_seek_blocks_boundary_chacha() {
 
     // Create a key for encryption
     let algorithm = &CHACHA20_POLY1305;
-    let key = Arc::new(SecretVec::new(vec![0; algorithm.key_len()]));
+    let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, key.clone());
+    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
     writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, key);
+    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
 
     reader.read_exact(&mut [0; 1]).unwrap();
     // Seek to the second block boundary
@@ -261,7 +256,6 @@ fn test_ring_crypto_read_seek_blocks_boundary_chacha() {
 #[traced_test]
 fn test_ring_crypto_read_seek_blocks_boundary_aes() {
     use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::Rng;
     use ring::aead::AES_256_GCM;
@@ -278,16 +272,16 @@ fn test_ring_crypto_read_seek_blocks_boundary_aes() {
 
     // Create a key for encryption
     let algorithm = &AES_256_GCM;
-    let key = Arc::new(SecretVec::new(vec![0; algorithm.key_len()]));
+    let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, key.clone());
+    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
     writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, key);
+    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
 
     reader.read_exact(&mut [0; 1]).unwrap();
     // Seek to the second block boundary
@@ -311,7 +305,6 @@ fn test_ring_crypto_read_seek_blocks_boundary_aes() {
 #[traced_test]
 fn test_ring_crypto_read_seek_skip_blocks_chacha() {
     use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::Rng;
     use ring::aead::CHACHA20_POLY1305;
@@ -328,16 +321,16 @@ fn test_ring_crypto_read_seek_skip_blocks_chacha() {
 
     // Create a key for encryption
     let algorithm = &CHACHA20_POLY1305;
-    let key = Arc::new(SecretVec::new(vec![0; algorithm.key_len()]));
+    let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, key.clone());
+    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
     writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, key);
+    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
 
     reader.seek(SeekFrom::Start(2 * BLOCK_SIZE as u64)).unwrap();
     let mut buffer = vec![0; BLOCK_SIZE];
@@ -349,7 +342,6 @@ fn test_ring_crypto_read_seek_skip_blocks_chacha() {
 #[traced_test]
 fn test_ring_crypto_read_seek_skip_blocks_aes() {
     use std::io::{Cursor, Read, Seek, SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::Rng;
     use ring::aead::AES_256_GCM;
@@ -366,16 +358,16 @@ fn test_ring_crypto_read_seek_skip_blocks_aes() {
 
     // Create a key for encryption
     let algorithm = &AES_256_GCM;
-    let key = Arc::new(SecretVec::new(vec![0; algorithm.key_len()]));
+    let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, key.clone());
+    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
     writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, key);
+    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
 
     reader.seek(SeekFrom::Start(2 * BLOCK_SIZE as u64)).unwrap();
     let mut buffer = vec![0; BLOCK_SIZE];
@@ -387,7 +379,6 @@ fn test_ring_crypto_read_seek_skip_blocks_aes() {
 #[traced_test]
 fn test_ring_crypto_read_seek_in_second_block() {
     use std::io::{Cursor, Seek, SeekFrom, Write};
-    use std::sync::Arc;
 
     use rand::Rng;
     use ring::aead::AES_256_GCM;
@@ -404,16 +395,16 @@ fn test_ring_crypto_read_seek_in_second_block() {
 
     // Create a key for encryption
     let algorithm = &AES_256_GCM;
-    let key = Arc::new(SecretVec::new(vec![0; algorithm.key_len()]));
+    let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, key.clone());
+    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
     writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, key);
+    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
 
     assert_eq!(
         reader.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap(),

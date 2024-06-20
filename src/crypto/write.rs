@@ -1,29 +1,22 @@
-mod bench;
-mod test;
-
-use std::fs::File;
 use std::io;
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
 
-use atomic_write_file::AtomicWriteFile;
 use bytes::Buf;
-use num_format::{Locale, ToFormattedString};
 use rand_chacha::rand_core::RngCore;
 use ring::aead::{
     Aad, Algorithm, BoundKey, Nonce, NonceSequence, OpeningKey, SealingKey, UnboundKey, NONCE_LEN,
 };
 use ring::error::Unspecified;
 use secrecy::{ExposeSecret, SecretVec};
-use tokio::sync::RwLock;
-use tracing::{debug, error};
+use tracing::error;
 
-use crate::arc_hashmap::Holder;
 use crate::crypto::buf_mut::BufMut;
 use crate::crypto::read::ExistingNonceSequence;
-use crate::crypto::Cipher;
-use crate::{crypto, decrypt_block, fs_util, stream_util};
+use crate::{crypto, decrypt_block, stream_util};
+
+mod bench;
+mod test;
 
 #[cfg(test)]
 pub(crate) const BLOCK_SIZE: usize = 100; // round value easier for debugging
@@ -54,7 +47,7 @@ pub struct RingCryptoWrite<W: Write> {
 impl<W: Write> RingCryptoWrite<W> {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::needless_pass_by_value)]
-    pub fn new(writer: W, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>) -> Self {
+    pub fn new(writer: W, algorithm: &'static Algorithm, key: &SecretVec<u8>) -> Self {
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).expect("unbound key");
         let nonce_sequence = Arc::new(Mutex::new(RandomNonceSequence::default()));
         let wrapping_nonce_sequence = RandomNonceSequenceWrapper::new(nonce_sequence.clone());
@@ -202,7 +195,7 @@ pub struct RingCryptoWriteSeek<W: Write + Seek + Read> {
 }
 
 impl<W: Write + Seek + Read> RingCryptoWriteSeek<W> {
-    pub(crate) fn new(writer: W, algorithm: &'static Algorithm, key: Arc<SecretVec<u8>>) -> Self {
+    pub(crate) fn new(writer: W, algorithm: &'static Algorithm, key: &SecretVec<u8>) -> Self {
         let last_nonce = Arc::new(Mutex::new(None));
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).unwrap();
         let nonce_sequence = ExistingNonceSequence::new(last_nonce.clone());
@@ -394,240 +387,3 @@ impl<W: Write + Seek + Read + Send + Sync> CryptoWrite<W> for RingCryptoWriteSee
 }
 
 impl<W: Write + Seek + Read + Send + Sync> CryptoWriteSeek<W> for RingCryptoWriteSeek<W> {}
-
-/// File Writer
-
-#[allow(clippy::module_name_repetitions)]
-pub trait FileCryptoWriteCallback: Send + Sync {
-    #[allow(clippy::missing_errors_doc)]
-    fn on_file_content_changed(&self, changed_from_pos: i64, last_write_pos: u64)
-        -> io::Result<()>;
-}
-
-#[allow(clippy::module_name_repetitions)]
-pub trait FileCryptoWriteMetadataProvider: Send + Sync {
-    fn size(&self) -> io::Result<u64>;
-}
-
-#[allow(clippy::module_name_repetitions)]
-pub struct FileCryptoWrite {
-    file_path: PathBuf,
-    writer: Option<Box<dyn CryptoWrite<BufWriter<AtomicWriteFile>>>>,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-    callback: Option<Box<dyn FileCryptoWriteCallback>>,
-    lock: Option<Holder<RwLock<bool>>>,
-    metadata_provider: Option<Box<dyn FileCryptoWriteMetadataProvider>>,
-    pos: u64,
-}
-
-impl FileCryptoWrite {
-    /// **`callback`** is called when the file content changes. It receives the position from where the file content changed and the last write position
-    ///
-    /// **`lock`** is used to write lock the file when accessing it. If not provided, it will not ensure that other instances are not writing to the file while we do  
-    ///     You need to provide the same lock to all writers and readers of this file, you should obtain a new [`Holder`] that wraps the same lock
-    ///
-    /// **`metadata_provider`** it's used to do some optimizations to reduce some copy operations from original file  
-    ///     If the file exists or is created before flushing, in worse case scenarios, it can reduce the overall write speed by half, so it's recommended to provide it
-    #[allow(clippy::missing_errors_doc)]
-    pub fn new(
-        file_path: &Path,
-        cipher: Cipher,
-        key: Arc<SecretVec<u8>>,
-        callback: Option<Box<dyn FileCryptoWriteCallback>>,
-        lock: Option<Holder<RwLock<bool>>>,
-        metadata_provider: Option<Box<dyn FileCryptoWriteMetadataProvider>>,
-    ) -> io::Result<Self> {
-        if !file_path.exists() {
-            File::create(file_path)?;
-        }
-        Ok(Self {
-            file_path: file_path.to_owned(),
-            writer: None,
-            cipher,
-            key,
-            callback,
-            lock,
-            metadata_provider,
-            pos: 0,
-        })
-    }
-
-    #[allow(clippy::unnecessary_wraps)] // remove this when we seek the inner writer
-    fn pos(&self) -> io::Result<u64> {
-        if self.writer.is_some() {
-            Ok(self.pos)
-        } else {
-            Ok(0)
-        }
-    }
-
-    fn ensure_writer_created(&mut self) -> io::Result<()> {
-        if self.writer.is_none() {
-            self.writer = Some(Box::new(crypto::create_write(
-                BufWriter::new(fs_util::open_atomic_write(&self.file_path)?),
-                self.cipher,
-                self.key.clone(),
-            )));
-            self.pos = 0;
-        }
-        Ok(())
-    }
-
-    fn seek_from_start(&mut self, pos: u64) -> io::Result<u64> {
-        if pos == self.pos()? {
-            return Ok(pos);
-        }
-
-        self.ensure_writer_created()?;
-
-        if self.pos()? < pos {
-            // seek forward
-            debug!(
-                pos = pos.to_formatted_string(&Locale::en),
-                current_pos = self.pos()?.to_formatted_string(&Locale::en),
-                "seeking forward"
-            );
-            let len = pos - self.pos()?;
-            crypto::copy_from_file(
-                self.file_path.clone(),
-                self.pos()?,
-                len,
-                self.cipher,
-                self.key.clone(),
-                self,
-                true,
-            )?;
-            if self.pos()? < pos {
-                // eof, we write zeros until pos
-                stream_util::fill_zeros(self, pos - self.pos()?)?;
-            }
-        } else {
-            // seek backward
-            // write dirty data, recreate writer and copy until pos
-
-            debug!(
-                pos = pos.to_formatted_string(&Locale::en),
-                current_pos = self.pos()?.to_formatted_string(&Locale::en),
-                "seeking backward"
-            );
-
-            // write dirty data
-            self.writer.as_mut().unwrap().flush()?;
-
-            let size = {
-                if let Some(metadata_provider) = &self.metadata_provider {
-                    metadata_provider.size()?
-                } else {
-                    // we don't have actual size, we use a max value to copy all remaining data
-                    u64::MAX
-                }
-            };
-            if self.pos()? < size {
-                // copy remaining data from file
-                debug!(size, "copying remaining data from file");
-                crypto::copy_from_file(
-                    self.file_path.clone(),
-                    self.pos()?,
-                    u64::MAX,
-                    self.cipher,
-                    self.key.clone(),
-                    self,
-                    true,
-                )?;
-            }
-
-            let last_write_pos = self.pos()?;
-
-            // finish writer
-            let mut writer = self.writer.take().unwrap();
-            let mut file = writer.finish()?;
-            file.flush()?;
-            let file = file.into_inner()?;
-            self.pos = 0;
-            {
-                let _guard = self.lock.as_ref().map(|lock| lock.write());
-                file.commit()?;
-            }
-
-            if let Some(callback) = &self.callback {
-                // notify back that file content has changed
-                // set pos to -1 to reset also readers that opened the file but didn't read anything yet, because we need to take the new moved file
-                callback
-                    .on_file_content_changed(-1, last_write_pos)
-                    .map_err(|err| {
-                        error!("error notifying file content changed: {}", err);
-                        err
-                    })?;
-            }
-
-            // copy until pos
-            let len = pos;
-            if len != 0 {
-                crypto::copy_from_file_exact(
-                    self.file_path.clone(),
-                    self.pos()?,
-                    len,
-                    self.cipher,
-                    self.key.clone(),
-                    self,
-                )?;
-            }
-        }
-        self.pos()
-    }
-}
-
-impl Write for FileCryptoWrite {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.ensure_writer_created()?;
-        let len = self.writer.as_mut().unwrap().write(buf)?;
-        self.pos += len as u64;
-        Ok(len)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        if let Some(writer) = self.writer.as_mut() {
-            writer.flush()?;
-        }
-
-        Ok(())
-    }
-}
-
-impl CryptoWrite<File> for FileCryptoWrite {
-    fn finish(&mut self) -> io::Result<File> {
-        self.flush()?;
-        self.seek(SeekFrom::Start(0))?; // this will handle moving the tmp file to the original file
-        if let Some(mut writer) = self.writer.take() {
-            writer.finish()?;
-        }
-        File::open(self.file_path.clone())
-    }
-}
-
-impl Seek for FileCryptoWrite {
-    #[allow(clippy::cast_possible_wrap)]
-    #[allow(clippy::cast_sign_loss)]
-    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        match pos {
-            SeekFrom::Start(pos) => self.seek_from_start(pos),
-            SeekFrom::End(_) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "seek from end not supported",
-            )),
-            SeekFrom::Current(pos) => {
-                let new_pos = self.pos()? as i64 + pos;
-                if new_pos < 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "can't seek before start",
-                    ));
-                }
-                self.seek_from_start(new_pos as u64)
-            }
-        }
-    }
-}
-
-impl CryptoWriteSeek<File> for FileCryptoWrite {}

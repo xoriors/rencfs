@@ -87,9 +87,9 @@ fn stream_speed(
     let path_out2 = Path::new(&path_out).to_path_buf().with_extension("dec");
     let _ = fs::remove_file(path_out2.clone());
     let mut file_out2 = File::create(path_out2.clone())?;
-    let mut writer = crypto::create_write(file_out, cipher, key.clone());
+    let mut writer = crypto::create_write(file_out, cipher, &key);
     let size = file_in.metadata()?.len();
-    let f = || crypto::create_read(File::open(path_out).unwrap(), cipher, key.clone());
+    let f = || crypto::create_read(File::open(path_out).unwrap(), cipher, &key);
     test_speed(&mut file_in, &mut writer, &mut file_out2, size, f)?;
     file_in.seek(io::SeekFrom::Start(0))?;
     check_hash(&mut file_in, &mut f())?;
@@ -98,36 +98,20 @@ fn stream_speed(
     Ok(())
 }
 
-fn file_speed(
-    path_in: &str,
-    path_out: &str,
-    cipher: Cipher,
-    key: Arc<SecretVec<u8>>,
-) -> Result<()> {
+fn file_speed(path_in: &str, path_out: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<()> {
     println!("file speed");
     let _ = fs::remove_file(path_out);
     let mut file_in = File::open(path_in)?;
-    let mut writer = crypto::create_file_write(
-        &Path::new(&path_out).to_path_buf(),
+    let mut writer = crypto::create_write(
+        File::create(Path::new(&path_out).to_path_buf())?,
         cipher,
-        key.clone(),
-        None,
-        None,
-        None,
+        &key,
     )?;
     let path_out2 = Path::new(&path_out).to_path_buf().with_extension("dec");
     let _ = fs::remove_file(path_out2.clone());
     let mut file_out2 = File::create(path_out2.clone())?;
     let size = file_in.metadata()?.len();
-    let f = || {
-        crypto::create_file_read(
-            &Path::new(&path_out).to_path_buf(),
-            cipher,
-            key.clone(),
-            None,
-        )
-        .unwrap()
-    };
+    let f = || crypto::create_read(File::open(path_out).unwrap(), cipher, key).unwrap();
     test_speed(&mut file_in, &mut *writer, &mut file_out2, size, f)?;
     file_in.seek(io::SeekFrom::Start(0)).unwrap();
     check_hash(&mut file_in, &mut *f())?;
