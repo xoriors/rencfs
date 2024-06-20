@@ -1,9 +1,9 @@
 [package]
 name = "rencfs"
 description = "An encrypted file system that is mounted with FUSE on Linux. It can be used to create encrypted directories."
-version = "0.13.47"
+version = "0.13.48"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "MIT OR Apache-2.0 OR BSD3"
 authors = ["Radu Marias <radumarias@gmail.com>"]
 homepage = "https://github.com/radumarias/rencfs"
 repository = "https://github.com/radumarias/rencfs"
@@ -63,6 +63,11 @@ fuse3 = { version = "0.7.1", features = ["tokio-runtime", "unprivileged"] }
 
 [package.metadata.aur]
 depends = ["fuse3"]
+files = [
+    ["LICENSE-APACHE", "/usr/share/licenses/$pkgname/LICENSE-APACHE"],
+    ["LICENSE-MIT", "/usr/share/licenses/$pkgname/LICENSE-MIT"],
+    #    ["LICENSE-BSD3", "/usr/share/licenses/$pkgname/LICENSE-BSD3"]
+]
 
 [package.metadata.generate-rpm]
 assets = [
