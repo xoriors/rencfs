@@ -3,6 +3,7 @@
 // #![feature(error_generic_member_access)]
 #![feature(seek_stream_len)]
 #![feature(const_refs_to_cell)]
+#![doc(html_playground_url = "https://play.rust-lang.org")]
 #![deny(clippy::all)]
 #![deny(clippy::pedantic)]
 #![deny(clippy::nursery)]
