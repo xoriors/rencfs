@@ -111,8 +111,8 @@ fn main() -> io::Result<()> {
             .seal_in_place_separate_tag(Aad::empty(), &mut data)
             .unwrap();
 
-        let _ = out.write(&data).unwrap();
-        let _ = out.write(tag.as_ref()).unwrap();
+        let _ = out.write_all(&data).unwrap();
+        let _ = out.write_all(tag.as_ref()).unwrap();
     }
     out.flush().unwrap();
     let end = std::time::Instant::now();
@@ -168,7 +168,6 @@ fn main() -> io::Result<()> {
         // Create a mutable copy of the data that will be encrypted in place
         //         let mut in_out = data.clone();
 
-        // Encrypt the data with AEAD using the AES_256_GCM algorithm
         let plaintext = opening_key
             .open_within(Aad::empty(), &mut ciphertext, 0..)
             .unwrap();

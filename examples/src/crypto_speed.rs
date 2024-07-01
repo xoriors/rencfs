@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
 
     stream_speed(&path_in, &path_out, cipher, &key)?;
     println!();
-    file_speed(&path_in, &path_out, cipher, key.clone())?;
+    file_speed(&path_in, &path_out, cipher, &key)?;
 
     let cipher = Cipher::Aes256Gcm;
     let key = Arc::new(get_key(cipher)?);
@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
 
     stream_speed(&path_in, &path_out, cipher, &key)?;
     println!();
-    file_speed(&path_in, &path_out, cipher, key.clone())?;
+    file_speed(&path_in, &path_out, cipher, &key)?;
 
     Ok(())
 }

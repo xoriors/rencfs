@@ -528,7 +528,7 @@ fn test_writer_seek_blocks_chacha() {
     writer.write_all(&data).unwrap();
     cursor_random.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // seek from block boundary to block boundary
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -555,7 +555,7 @@ fn test_writer_seek_blocks_chacha() {
     writer.write_all(&data).unwrap();
     cursor_random.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // seek after content size, make sure it writes zeros
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -568,7 +568,7 @@ fn test_writer_seek_blocks_chacha() {
     cursor_random.seek(SeekFrom::End(0)).unwrap();
     cursor_random.write_all(vec![0; 42].as_slice()).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // seek after content size, more blocks, make sure it writes zeros
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -585,7 +585,7 @@ fn test_writer_seek_blocks_chacha() {
         .write_all(vec![0; 10 * BLOCK_SIZE + 43].as_slice())
         .unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // write something after the end then seek after the end, after write we should have a bigger end
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -612,7 +612,7 @@ fn test_writer_seek_blocks_chacha() {
     cursor_random.seek(SeekFrom::End(0)).unwrap();
     cursor_random.write_all(vec![0; 42].as_slice()).unwrap();
     cursor = writer.finish().unwrap();
-    compare(&mut cursor_random, cursor, cipher, key);
+    compare(&mut cursor_random, cursor, cipher, &key);
 }
 
 #[test]
@@ -651,7 +651,7 @@ fn test_writer_seek_blocks_aes() {
     writer.write_all(&data).unwrap();
     cursor_random.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // write something that extends to the second block
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -664,7 +664,7 @@ fn test_writer_seek_blocks_aes() {
         .write_all(vec![0_u8; BLOCK_SIZE].as_slice())
         .unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // write at the boundary of block
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -676,7 +676,7 @@ fn test_writer_seek_blocks_aes() {
     writer.write_all(&data).unwrap();
     cursor_random.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // write after boundary of block
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -691,7 +691,7 @@ fn test_writer_seek_blocks_aes() {
     writer.write_all(&data).unwrap();
     cursor_random.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // write until block boundary then seek and write inside new block
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -704,7 +704,7 @@ fn test_writer_seek_blocks_aes() {
     writer.write_all(&data).unwrap();
     cursor_random.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // seek from block boundary to block boundary
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -731,7 +731,7 @@ fn test_writer_seek_blocks_aes() {
     writer.write_all(&data).unwrap();
     cursor_random.write_all(&data).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // seek after content size, make sure it writes zeros
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -744,7 +744,7 @@ fn test_writer_seek_blocks_aes() {
     cursor_random.seek(SeekFrom::End(0)).unwrap();
     cursor_random.write_all(vec![0; 42].as_slice()).unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // seek after content size, more blocks, make sure it writes zeros
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -761,7 +761,7 @@ fn test_writer_seek_blocks_aes() {
         .write_all(vec![0; 10 * BLOCK_SIZE + 43].as_slice())
         .unwrap();
     cursor = writer.finish().unwrap();
-    cursor = compare(&mut cursor_random, cursor, cipher, key.clone());
+    cursor = compare(&mut cursor_random, cursor, cipher, &key);
 
     // write something after the end then seek after the end, after write we should have a bigger end
     let mut writer = crypto::create_write_seek(cursor, cipher, &key);
@@ -788,7 +788,7 @@ fn test_writer_seek_blocks_aes() {
     cursor_random.seek(SeekFrom::End(0)).unwrap();
     cursor_random.write_all(vec![0; 42].as_slice()).unwrap();
     cursor = writer.finish().unwrap();
-    compare(&mut cursor_random, cursor, cipher, key);
+    compare(&mut cursor_random, cursor, cipher, &key);
 }
 
 /// Do all operations and compare only at the end. Harder to debug to see which operation failed but helps test more real world scenarios.
@@ -908,7 +908,7 @@ fn test_writer_seek_blocks_one_go_chacha() {
     cursor_random.write_all(vec![0; 42].as_slice()).unwrap();
 
     cursor = writer.finish().unwrap();
-    compare(&mut cursor_random, cursor, cipher, key);
+    compare(&mut cursor_random, cursor, cipher, &key);
 }
 
 /// Do all operations and compare only at the end. Harder to debug to see which operation failed but helps test more real world scenarios.
@@ -1028,7 +1028,7 @@ fn test_writer_seek_blocks_one_go_aes() {
     cursor_random.write_all(vec![0; 42].as_slice()).unwrap();
 
     cursor = writer.finish().unwrap();
-    compare(&mut cursor_random, cursor, cipher, key);
+    compare(&mut cursor_random, cursor, cipher, &key);
 }
 
 #[allow(dead_code)]
