@@ -79,7 +79,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
         
       - name: build push = ${{ inputs.upload_artifacts }}
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           push: ${{ inputs.upload_artifacts }}
           tags: ${{ env.REGISTRY_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
