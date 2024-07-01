@@ -26,7 +26,7 @@ jobs:
       run: cargo fmt --all --check
 
     - name: check
-      run: cargo check --all
+      run: cargo check --all --release
 
     - name: clippy
-      run: cargo clippy --all-features
+      run: cargo clippy --all-features --release
