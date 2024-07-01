@@ -1,4 +1,4 @@
-#![deny(warnings)]
+#![cfg_attr(not(debug_assertions), deny(warnings))]
 #![feature(test)]
 // #![feature(error_generic_member_access)]
 #![feature(seek_stream_len)]

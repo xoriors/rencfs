@@ -1,6 +1,5 @@
-use std::fs::File;
 use std::future::Future;
-use std::io::Read;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
@@ -106,14 +105,26 @@ where
 }
 
 #[allow(dead_code)]
-pub async fn read_to_string(path: PathBuf, fs: &EncryptedFs) -> String {
-    let mut buf: Vec<u8> = vec![];
-    fs.create_read(File::open(path).unwrap())
-        .await
-        .unwrap()
-        .read_to_end(&mut buf)
-        .unwrap();
-    String::from_utf8(buf).unwrap()
+pub async fn read_to_string(ino: u64, fs: &EncryptedFs) -> String {
+    let fh = fs.open(ino, true, false).await.unwrap();
+    let buf = &mut [0; 4096];
+    let buf2 = vec![];
+    let mut cur = Cursor::new(buf2);
+    let mut read = 0;
+    let mut offset = 0;
+    loop {
+        if read == buf.len() {
+            read = 0;
+        }
+        let len = fs.read(ino, offset, &mut buf[read..], fh).await.unwrap();
+        if len == 0 {
+            fs.release(fh).await.unwrap();
+            return String::from_utf8(cur.into_inner()).unwrap();
+        }
+        cur.write_all(&buf[read..len]).unwrap();
+        read += len;
+        offset += len as u64;
+    }
 }
 
 #[allow(dead_code)]

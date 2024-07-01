@@ -44,14 +44,7 @@ async fn test_write() {
             .unwrap();
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
-        assert_eq!(
-            data,
-            test_common::read_to_string(
-                fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                &fs,
-            )
-            .await
-        );
+        assert_eq!(data, test_common::read_to_string(attr.ino, &fs,).await);
         let attr = fs.get_attr(attr.ino).await.unwrap();
         assert_eq!(data.len() as u64, attr.size);
 
@@ -65,11 +58,7 @@ async fn test_write() {
         fs.release(fh).await.unwrap();
         assert_eq!(
             data,
-            &test_common::read_to_string(
-                fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                &fs,
-            )
-            .await[5..]
+            &test_common::read_to_string(attr.ino, &fs,).await[5..]
         );
 
         // offset after the file end
@@ -82,11 +71,7 @@ async fn test_write() {
         fs.release(fh).await.unwrap();
         assert_eq!(
             format!("test-37{}37", "\0".repeat(35)),
-            test_common::read_to_string(
-                fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                &fs,
-            )
-            .await
+            test_common::read_to_string(attr.ino, &fs,).await
         );
 
         // offset before current position, several blocks
@@ -117,11 +102,7 @@ async fn test_write() {
         fs.release(fh).await.unwrap();
         assert_eq!(
             "test-01-02-42",
-            &test_common::read_to_string(
-                fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                &fs,
-            )
-            .await
+            &test_common::read_to_string(attr.ino, &fs,).await
         );
 
         // write before current position then write to the end, also check it preserves the content from
@@ -149,11 +130,7 @@ async fn test_write() {
             .unwrap();
         fs.flush(fh).await.unwrap();
         fs.release(fh).await.unwrap();
-        let new_content = test_common::read_to_string(
-            fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-            &fs,
-        )
-        .await;
+        let new_content = test_common::read_to_string(attr.ino, &fs).await;
         assert_eq!("test-37-37-42", new_content);
 
         let buf = [0; 0];
@@ -400,11 +377,7 @@ async fn test_set_len() {
             assert_eq!(10, fs.get_attr(attr.ino).await.unwrap().size);
             assert_eq!(
                 format!("test-37{}", "\0".repeat(3)),
-                test_common::read_to_string(
-                    fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                )
-                .await
+                test_common::read_to_string(attr.ino, &fs,).await
             );
             fs.release(fh).await.unwrap();
 
@@ -413,11 +386,7 @@ async fn test_set_len() {
             assert_eq!(10, fs.get_attr(attr.ino).await.unwrap().size);
             assert_eq!(
                 format!("test-37{}", "\0".repeat(3)),
-                test_common::read_to_string(
-                    fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                )
-                .await
+                test_common::read_to_string(attr.ino, &fs,).await
             );
 
             // size decrease, preserve opened writer content
@@ -428,14 +397,7 @@ async fn test_set_len() {
                 .unwrap();
             fs.set_len(attr.ino, 4).await.unwrap();
             assert_eq!(4, fs.get_attr(attr.ino).await.unwrap().size);
-            assert_eq!(
-                "37st",
-                test_common::read_to_string(
-                    fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                )
-                .await
-            );
+            assert_eq!("37st", test_common::read_to_string(attr.ino, &fs,).await);
             fs.release(fh).await.unwrap();
 
             // size decrease to 0
@@ -443,11 +405,7 @@ async fn test_set_len() {
             assert_eq!(0, fs.get_attr(attr.ino).await.unwrap().size);
             assert_eq!(
                 String::new(),
-                test_common::read_to_string(
-                    fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string()),
-                    &fs,
-                )
-                .await
+                test_common::read_to_string(attr.ino, &fs,).await
             );
         },
     )
@@ -766,6 +724,8 @@ async fn test_read_dir_plus() {
                 entries.into_iter().map(Result::unwrap).collect();
             assert_eq!(entries.len(), 2);
             let attr_root = fs.get_attr(ROOT_INODE).await.unwrap();
+            // reload it as atime is changed on read_dir*()
+            let dir_attr = fs.get_attr(dir_attr.ino).await.unwrap();
             assert_eq!(
                 vec![
                     DirectoryEntryPlus {
@@ -795,6 +755,8 @@ async fn test_read_dir_plus() {
             });
             let entries: Vec<DirectoryEntryPlus> =
                 entries.into_iter().map(Result::unwrap).collect();
+            // reload it as atime is changed on read_dir*()
+            let attr_root = fs.get_attr(ROOT_INODE).await.unwrap();
             let mut sample = vec![
                 DirectoryEntryPlus {
                     ino: ROOT_INODE,
@@ -845,8 +807,6 @@ async fn test_read_dir_plus() {
                 )
                 .await
                 .unwrap();
-            // for some reason the tv_nsec is not the same between what create_nod() and read_dir_plus() returns, so we reload it again
-            let dir_attr = fs.get_attr(dir_attr.ino).await.unwrap();
             let attr_parent = fs.get_attr(attr_parent.ino).await.unwrap();
             let mut entries: Vec<FsResult<DirectoryEntryPlus>> =
                 fs.read_dir_plus(dir_attr.ino).await.unwrap().collect();
@@ -859,6 +819,8 @@ async fn test_read_dir_plus() {
             });
             let entries: Vec<DirectoryEntryPlus> =
                 entries.into_iter().map(Result::unwrap).collect();
+            // reload it as atime is changed on read_dir*()
+            let dir_attr = fs.get_attr(dir_attr.ino).await.unwrap();
             assert_eq!(entries.len(), 2);
             assert_eq!(
                 vec![
@@ -881,6 +843,8 @@ async fn test_read_dir_plus() {
             let iter = fs.read_dir_plus(parent).await.unwrap();
             let mut entries: Vec<DirectoryEntryPlus> = iter.map(Result::unwrap).collect();
             entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
+            // reload it as atime is changed on read_dir*()
+            let attr_parent = fs.get_attr(attr_parent.ino).await.unwrap();
             let mut sample = vec![
                 DirectoryEntryPlus {
                     ino: parent,
@@ -1234,16 +1198,8 @@ async fn test_create() {
             .map(Result::unwrap)
             .collect();
         entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
+        assert_eq!(ROOT_INODE, entries[0].attr.ino);
         assert_eq!(attr, entries[1].attr);
-        let mut entries: Vec<DirectoryEntryPlus> = fs
-            .read_dir_plus(attr.ino)
-            .await
-            .unwrap()
-            .map(Result::unwrap)
-            .collect();
-        entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
-        assert_eq!(attr, entries[0].attr);
-        assert_eq!(ROOT_INODE, entries[1].attr.ino);
         assert!(fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
         assert_eq!(
             attr,
@@ -1294,15 +1250,7 @@ async fn test_create() {
             .collect();
         entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
         assert_eq!(attr, entries[2].attr);
-        let mut entries: Vec<DirectoryEntryPlus> = fs
-            .read_dir_plus(attr.ino)
-            .await
-            .unwrap()
-            .map(Result::unwrap)
-            .collect();
-        entries.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
-        assert_eq!(attr, entries[0].attr);
-        assert_eq!(parent, entries[1].attr.ino);
+        assert_eq!(parent, entries[0].attr.ino);
         assert!(fs.exists_by_name(parent, &test_dir_2).unwrap());
         assert_eq!(
             attr,

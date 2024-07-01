@@ -1,4 +1,3 @@
-use std::cmp::max;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::fs::{DirEntry, File, OpenOptions, ReadDir};
@@ -57,62 +56,6 @@ fn spawn_runtime() -> Runtime {
 
 static DIR_ENTRIES_RT: LazyLock<Runtime> = LazyLock::new(|| spawn_runtime());
 static NOD_RT: LazyLock<Runtime> = LazyLock::new(|| spawn_runtime());
-
-#[allow(dead_code)]
-async fn reset_handles(
-    fs: Arc<EncryptedFs>,
-    ino: u64,
-    changed_from_pos: i64,
-    last_write_pos: u64,
-    fh: u64,
-) -> FsResult<()> {
-    {
-        let mut attr = fs.get_inode_from_storage(ino, &*fs.key.get().await?)?;
-        let lock = fs
-            .serialize_update_inode_locks
-            .get_or_insert_with(ino, || Mutex::new(false));
-        let _guard = lock.lock().await;
-        // if we wrote pass the filesize we need to update the filesize
-        if last_write_pos > attr.size {
-            attr.size = last_write_pos;
-            fs.write_inode_to_storage(&attr).await?;
-        }
-    }
-    fs.reset_handles(ino, changed_from_pos, Some(fh)).await?;
-    Ok(())
-}
-
-#[allow(dead_code)]
-async fn get_metadata(fs: Arc<EncryptedFs>, ino: u64) -> FsResult<FileAttr> {
-    let lock = fs.attr_cache.get().await?;
-    let mut guard = lock.lock().await;
-    let attr = guard.get(&ino);
-    if let Some(attr) = attr {
-        Ok(*attr)
-    } else {
-        let attr = fs.get_inode_from_storage(ino, &*fs.key.get().await?)?;
-        guard.put(ino, attr);
-        Ok(attr)
-    }
-}
-
-// todo: remove
-// struct LocalFileCryptoWriterMetadataProvider(Weak<EncryptedFs>, u64);
-// impl FileCryptoWriteMetadataProvider for LocalFileCryptoWriterMetadataProvider {
-//     fn size(&self) -> io::Result<u64> {
-//         debug!("requesting size info");
-//         call_async(async {
-//             if let Some(fs) = self.0.upgrade() {
-//                 get_metadata(fs, self.1)
-//                     .await
-//                     .map_err(|e| io::Error::new(Other, e))
-//                     .map(|attr| attr.size)
-//             } else {
-//                 Err(io::Error::new(Other, "fs dropped"))
-//             }
-//         })
-//     }
-// }
 
 /// File attributes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -362,7 +305,7 @@ pub enum FsError {
 }
 
 #[derive(Debug, Clone)]
-struct TimeAndSizeFileAttr {
+struct TimesAndSizeFileAttr {
     atime: SystemTime,
     mtime: SystemTime,
     ctime: SystemTime,
@@ -370,7 +313,7 @@ struct TimeAndSizeFileAttr {
     size: u64,
 }
 
-impl TimeAndSizeFileAttr {
+impl TimesAndSizeFileAttr {
     #[allow(dead_code)]
     const fn new(
         atime: SystemTime,
@@ -389,7 +332,7 @@ impl TimeAndSizeFileAttr {
     }
 }
 
-impl From<FileAttr> for TimeAndSizeFileAttr {
+impl From<FileAttr> for TimesAndSizeFileAttr {
     fn from(value: FileAttr) -> Self {
         Self {
             atime: value.atime,
@@ -401,14 +344,60 @@ impl From<FileAttr> for TimeAndSizeFileAttr {
     }
 }
 
-impl From<TimeAndSizeFileAttr> for SetFileAttr {
-    fn from(value: TimeAndSizeFileAttr) -> Self {
+impl From<TimesAndSizeFileAttr> for SetFileAttr {
+    fn from(value: TimesAndSizeFileAttr) -> Self {
         Self::default()
             .with_atime(value.atime)
             .with_mtime(value.mtime)
             .with_ctime(value.ctime)
             .with_crtime(value.crtime)
             .with_size(value.size)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TimesFileAttr {
+    atime: SystemTime,
+    mtime: SystemTime,
+    ctime: SystemTime,
+    crtime: SystemTime,
+}
+
+impl TimesFileAttr {
+    #[allow(dead_code)]
+    const fn new(
+        atime: SystemTime,
+        mtime: SystemTime,
+        ctime: SystemTime,
+        crtime: SystemTime,
+    ) -> Self {
+        Self {
+            atime,
+            mtime,
+            ctime,
+            crtime,
+        }
+    }
+}
+
+impl From<FileAttr> for TimesFileAttr {
+    fn from(value: FileAttr) -> Self {
+        Self {
+            atime: value.atime,
+            mtime: value.mtime,
+            ctime: value.ctime,
+            crtime: value.crtime,
+        }
+    }
+}
+
+impl From<TimesFileAttr> for SetFileAttr {
+    fn from(value: TimesFileAttr) -> Self {
+        Self::default()
+            .with_atime(value.atime)
+            .with_mtime(value.mtime)
+            .with_ctime(value.ctime)
+            .with_crtime(value.crtime)
     }
 }
 
@@ -470,7 +459,7 @@ impl Iterator for DirectoryEntryPlusIterator {
 
 struct ReadHandleContext {
     ino: u64,
-    attr: TimeAndSizeFileAttr,
+    attr: TimesFileAttr,
     reader: Option<Box<dyn CryptoReadSeek<File>>>,
 }
 
@@ -500,7 +489,7 @@ impl WriteHandleContextOperation {
 
 struct WriteHandleContext {
     ino: u64,
-    attr: TimeAndSizeFileAttr,
+    attr: TimesAndSizeFileAttr,
     writer: Option<Box<dyn CryptoWriteSeek<File>>>,
 }
 
@@ -544,9 +533,9 @@ impl ValueProvider<Mutex<DirEntryMetaCache>, FsError> for DirEntryMetaCacheProvi
 
 struct AttrCacheProvider {}
 #[async_trait]
-impl ValueProvider<Mutex<LruCache<u64, FileAttr>>, FsError> for AttrCacheProvider {
-    async fn provide(&self) -> Result<Mutex<LruCache<u64, FileAttr>>, FsError> {
-        Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
+impl ValueProvider<RwLock<LruCache<u64, FileAttr>>, FsError> for AttrCacheProvider {
+    async fn provide(&self) -> Result<RwLock<LruCache<u64, FileAttr>>, FsError> {
+        Ok(RwLock::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
     }
 }
 
@@ -573,7 +562,7 @@ pub struct EncryptedFs {
     read_write_locks: ArcHashMap<u64, RwLock<bool>>,
     key: ExpireValue<SecretVec<u8>, FsError, KeyProvider>,
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
-    attr_cache: ExpireValue<Mutex<LruCache<u64, FileAttr>>, FsError, AttrCacheProvider>,
+    attr_cache: ExpireValue<RwLock<LruCache<u64, FileAttr>>, FsError, AttrCacheProvider>,
     dir_entries_name_cache:
         ExpireValue<Mutex<LruCache<String, SecretString>>, FsError, DirEntryNameCacheProvider>,
     dir_entries_meta_cache:
@@ -611,16 +600,17 @@ impl EncryptedFs {
             serialize_update_inode_locks: ArcHashMap::default(),
             serialize_dir_entries_ls_locks: Arc::new(ArcHashMap::default()),
             serialize_dir_entries_hash_locks: Arc::new(ArcHashMap::default()),
-            // todo: take duration from param
             key,
             self_weak: std::sync::Mutex::new(None),
             read_write_locks: ArcHashMap::default(),
             // todo: take duration from param
             attr_cache: ExpireValue::new(AttrCacheProvider {}, Duration::from_secs(10 * 60)),
+            // todo: take duration from param
             dir_entries_name_cache: ExpireValue::new(
                 DirEntryNameCacheProvider {},
                 Duration::from_secs(10 * 60),
             ),
+            // todo: take duration from param
             dir_entries_meta_cache: ExpireValue::new(
                 DirEntryMetaCacheProvider {},
                 Duration::from_secs(10 * 60),
@@ -692,8 +682,7 @@ impl EncryptedFs {
 
                 // write inode
                 let self_clone = fs.clone();
-                let attr_clone = attr;
-                self_clone.write_inode_to_storage(&attr_clone).await?;
+                self_clone.write_inode_to_storage(&attr).await?;
 
                 match attr.kind {
                     FileType::RegularFile => {
@@ -717,6 +706,7 @@ impl EncryptedFs {
                     }
                     FileType::Directory => {
                         let self_clone = fs.clone();
+                        let attr_clone = attr;
                         join_set.spawn(async move {
                             // create in contents directory
                             let contents_dir = self_clone.contents_path(attr.ino);
@@ -912,7 +902,7 @@ impl EncryptedFs {
                     .attr_cache
                     .get()
                     .await?
-                    .lock()
+                    .write()
                     .await
                     .demote(&attr.ino);
 
@@ -981,7 +971,7 @@ impl EncryptedFs {
                     .attr_cache
                     .get()
                     .await?
-                    .lock()
+                    .write()
                     .await
                     .demote(&attr.ino);
 
@@ -1052,11 +1042,9 @@ impl EncryptedFs {
         entry: io::Result<DirEntry>,
     ) -> FsResult<DirectoryEntryPlus> {
         let entry = self.create_directory_entry(entry).await?;
-        let lock_ino = self
-            .serialize_inode_locks
-            .clone()
-            .get_or_insert_with(entry.ino, || RwLock::new(false));
-        let _guard_ino = lock_ino.read();
+        let lock = self.serialize_inode_locks.clone();
+        let lock_ino = lock.get_or_insert_with(entry.ino, || RwLock::new(false));
+        let _ino_guard = lock_ino.read();
         let attr = self.get_inode_from_cache_or_storage(entry.ino).await?;
         Ok(DirectoryEntryPlus {
             ino: entry.ino,
@@ -1207,7 +1195,7 @@ impl EncryptedFs {
     }
 
     #[allow(clippy::missing_errors_doc)]
-    fn get_inode_from_storage(&self, ino: u64, key: &SecretVec<u8>) -> FsResult<FileAttr> {
+    async fn get_inode_from_storage(&self, ino: u64) -> FsResult<FileAttr> {
         let lock = self
             .serialize_inode_locks
             .get_or_insert_with(ino, || RwLock::new(false));
@@ -1224,18 +1212,20 @@ impl EncryptedFs {
         Ok(bincode::deserialize_from(crypto::create_read(
             file,
             self.cipher,
-            &key,
+            &*self.key.get().await?,
         ))?)
     }
 
     async fn get_inode_from_cache_or_storage(&self, ino: u64) -> FsResult<FileAttr> {
         let lock = self.attr_cache.get().await?;
-        let mut guard = lock.lock().await;
+        let mut guard = lock.write().await;
         let attr = guard.get(&ino);
         if let Some(attr) = attr {
             Ok(*attr)
         } else {
-            let attr = self.get_inode_from_storage(ino, &*self.key.get().await?)?;
+            drop(guard);
+            let attr = self.get_inode_from_storage(ino).await?;
+            let mut guard = lock.write().await;
             guard.put(ino, attr);
             Ok(attr)
         }
@@ -1253,10 +1243,8 @@ impl EncryptedFs {
             if let Some(fhs) = fhs {
                 for fh in fhs {
                     if let Some(ctx) = self.read_handles.read().await.get(&fh) {
-                        let mut attr1: SetFileAttr = ctx.lock().await.attr.clone().into();
-                        // we don't want to set size because readers don't change the size, and we might have an older version
-                        attr1.size.take();
-                        merge_attr(&mut attr, &attr1);
+                        let set_atr: SetFileAttr = ctx.lock().await.attr.clone().into();
+                        merge_attr(&mut attr, &set_atr, false);
                     }
                 }
             }
@@ -1269,7 +1257,7 @@ impl EncryptedFs {
             if let Some(fh) = fh {
                 if let Some(ctx) = self.write_handles.read().await.get(&fh) {
                     let ctx = ctx.lock().await;
-                    merge_attr(&mut attr, &ctx.attr.clone().into());
+                    merge_attr(&mut attr, &ctx.attr.clone().into(), false);
                 }
             }
         }
@@ -1279,13 +1267,22 @@ impl EncryptedFs {
 
     /// Set metadata
     pub async fn set_attr(&self, ino: u64, set_attr: SetFileAttr) -> FsResult<()> {
-        let lock_serialize_update = self
+        self.set_attr2(ino, set_attr, false).await
+    }
+
+    async fn set_attr2(
+        &self,
+        ino: u64,
+        set_attr: SetFileAttr,
+        overwrite_size: bool,
+    ) -> FsResult<()> {
+        let serialize_update_lock = self
             .serialize_update_inode_locks
             .get_or_insert_with(ino, || Mutex::new(false));
-        let _guard_serialize_update = lock_serialize_update.lock().await;
+        let _serialize_update_guard = serialize_update_lock.lock().await;
 
         let mut attr = self.get_attr(ino).await?;
-        merge_attr(&mut attr, &set_attr);
+        merge_attr(&mut attr, &set_attr, overwrite_size);
         let now = SystemTime::now();
         attr.ctime = now;
         attr.atime = now;
@@ -1310,7 +1307,7 @@ impl EncryptedFs {
         // update cache also
         {
             let lock = self.attr_cache.get().await?;
-            let mut guard = lock.lock().await;
+            let mut guard = lock.write().await;
             guard.put(attr.ino, *attr);
         }
         Ok(())
@@ -1337,6 +1334,11 @@ impl EncryptedFs {
         if !self.read_handles.read().await.contains_key(&handle) {
             return Err(FsError::InvalidFileHandle);
         }
+
+        let lock = self
+            .read_write_locks
+            .get_or_insert_with(ino, || RwLock::new(false));
+        let _read_guard = lock.read().await;
 
         let guard = self.read_handles.read().await;
         let mut ctx = guard.get(&handle).unwrap().lock().await;
@@ -1410,12 +1412,11 @@ impl EncryptedFs {
 
             // write attr only here to avoid serializing it multiple times while reading
             // it will merge time fields with existing data because it might got change while we kept the handle
-            let mut attr: SetFileAttr = ctx.attr.clone().into();
-            // we don't want to set size because readers don't change the size, and we might have an older version
-            attr.size.take();
-            self.set_attr(ctx.ino, attr).await?;
-
+            let set_attr: SetFileAttr = ctx.attr.clone().into();
+            let ino = ctx.ino;
             drop(ctx);
+            self.set_attr(ino, set_attr).await?;
+
             valid_fh = true;
         }
 
@@ -1425,16 +1426,22 @@ impl EncryptedFs {
             let mut ctx = ctx.lock().await;
 
             let mut writer = ctx.writer.take().unwrap();
+            let lock = self
+                .read_write_locks
+                .get_or_insert_with(ctx.ino, || RwLock::new(false));
+            let write_guard = lock.write().await;
             let file = writer.finish()?;
             file.sync_all()?;
             File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
-
-            self.opened_files_for_write.write().await.remove(&ctx.ino);
-
             // write attr only here to avoid serializing it multiple times while writing
             // it will merge time fields with existing data because it might got change while we kept the handle
-            self.set_attr(ctx.ino, ctx.attr.clone().into()).await?;
+            let ino = ctx.ino;
+            let attr = ctx.attr.clone();
             drop(ctx);
+            self.set_attr(ino, attr.into()).await?;
+            drop(write_guard);
+            self.opened_files_for_write.write().await.remove(&ino);
+            self.reset_handles(ino, Some(handle), true).await?;
 
             valid_fh = true;
         }
@@ -1483,6 +1490,11 @@ impl EncryptedFs {
             return Ok(0);
         }
 
+        let lock = self
+            .read_write_locks
+            .get_or_insert_with(ino, || RwLock::new(false));
+        let write_guard = lock.write().await;
+
         let guard = self.write_handles.read().await;
         let mut ctx = guard.get(&handle).unwrap().lock().await;
 
@@ -1527,6 +1539,9 @@ impl EncryptedFs {
         ctx.attr.atime = now;
         drop(ctx);
 
+        drop(write_guard);
+        self.reset_handles(ino, Some(handle), true).await?;
+
         Ok(len)
     }
 
@@ -1539,14 +1554,18 @@ impl EncryptedFs {
         }
         let mut valid_fh = self.read_handles.read().await.get(&handle).is_some();
         if let Some(ctx) = self.write_handles.read().await.get(&handle) {
-            ctx.lock()
-                .await
-                .writer
-                .as_mut()
-                .expect("writer is missing")
-                .flush()?;
-            File::open(self.contents_path(ctx.lock().await.ino))?.sync_all()?;
-            File::open(self.contents_path(ctx.lock().await.ino).parent().unwrap())?.sync_all()?;
+            let mut ctx = ctx.lock().await;
+            let lock = self
+                .read_write_locks
+                .get_or_insert_with(ctx.ino, || RwLock::new(false));
+            let write_guard = lock.write().await;
+            ctx.writer.as_mut().expect("writer is missing").flush()?;
+            File::open(self.contents_path(ctx.ino))?.sync_all()?;
+            File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+            drop(write_guard);
+            let ino = ctx.ino;
+            drop(ctx);
+            self.reset_handles(ino, Some(handle), true).await?;
             valid_fh = true;
         }
 
@@ -1652,14 +1671,13 @@ impl EncryptedFs {
             return Ok(());
         }
 
-        // flush writers
-        self.flush_and_reset_writers(ino).await?;
-
         let lock = self
             .read_write_locks
             .get_or_insert_with(ino, || RwLock::new(false));
-        // obtain a write lock to whole file, we ue a special value `u64::MAX - 42_u64` to indicate this
-        let _guard = lock.write().await;
+        let _write_guard = lock.write().await;
+
+        // flush writers
+        self.flush_and_reset_writers(ino).await?;
 
         let file_path = self.contents_path(ino);
         if size == 0 {
@@ -1702,30 +1720,65 @@ impl EncryptedFs {
             .with_mtime(now)
             .with_ctime(now)
             .with_atime(now);
-        self.set_attr(ino, set_attr).await?;
+        self.set_attr2(ino, set_attr, true).await?;
 
-        // also recreate handles because the file has changed
-        self.reset_handles(attr.ino, 0, None).await?;
+        let attr = self.get_inode_from_storage(ino).await?;
+        println!("attr 1: {:?}", attr.size);
+        let attr = self.get_attr(ino).await?;
+        println!("attr 1: {:?}", attr.size);
+
+        // reset handles because the file has changed
+        self.reset_handles(attr.ino, None, false).await?;
+
+        let attr = self.get_inode_from_storage(ino).await?;
+        println!("attr 2: {:?}", attr.size);
+        let attr = self.get_attr(ino).await?;
+        println!("attr 2: {:?}", attr.size);
 
         Ok(())
     }
 
-    /// This will write any dirty data to the file and seek to start
+    /// This will write any dirty data to the file from all writers and reset them.
+    /// Timestamps and size will be updated to the storage.
     /// > ⚠️ **Warning**
-    /// > Need to be called in a context with write lock on `self.read_write_inode_locks.lock().await.get(ino)`.
+    /// > Need to be called in a context with write lock on `self.read_write_inode.lock().await.get(ino)`.
+    /// > That is because we want to make sure caller is holding a lock while all writers flush and we can't
+    /// > lock here also as we would end-up in a deadlock.
     async fn flush_and_reset_writers(&self, ino: u64) -> FsResult<()> {
-        let map = self.opened_files_for_write.read().await;
-        let handle = map.get(&ino);
+        let opened_files_for_write_guard = self.opened_files_for_write.read().await;
+        let handle = opened_files_for_write_guard.get(&ino);
         if let Some(handle) = handle {
-            let guard = self.write_handles.read().await;
-            if let Some(lock) = guard.get(handle) {
+            let write_handles_guard = self.write_handles.write().await;
+            let ctx = write_handles_guard.get(handle);
+            if let Some(lock) = ctx {
                 let mut ctx = lock.lock().await;
-                let writer = ctx.writer.as_mut().unwrap();
-                writer.flush()?;
-                writer.seek(SeekFrom::Start(0))?;
+
+                let mut writer = ctx.writer.take().unwrap();
+                let file = writer.finish()?;
+                file.sync_all()?;
+                File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+                let handle = *handle;
+                let set_attr: SetFileAttr = ctx.attr.clone().into();
+                drop(ctx);
+                drop(opened_files_for_write_guard);
+                drop(write_handles_guard);
+                self.set_attr(ino, set_attr).await?;
+                self.reset_handles(ino, Some(handle), true).await?;
+                let write_handles_guard = self.write_handles.write().await;
+                let mut ctx = write_handles_guard.get(&handle).unwrap().lock().await;
+                let writer = self
+                    .create_write_seek(
+                        OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .open(&self.contents_path(ino))?,
+                    )
+                    .await?;
+                ctx.writer = Some(Box::new(writer));
+                let attr = self.get_inode_from_storage(ino).await?;
+                ctx.attr = attr.into();
             }
         }
-
         Ok(())
     }
 
@@ -1884,7 +1937,7 @@ impl EncryptedFs {
         let key: Vec<u8> =
             bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
         let key = SecretVec::new(key);
-        // encrypt it with new key derived from new password
+        // encrypt it with a new key derived from new password
         let new_key = crypto::derive_key(&new_password, cipher, &salt)?;
         crypto::atomic_serialize_encrypt_into(
             &data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
@@ -1900,34 +1953,70 @@ impl EncryptedFs {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
-    async fn reset_handles(&self, ino: u64, pos: i64, skip_fh: Option<u64>) -> FsResult<()> {
+    /// Reset all handles for a file.
+    /// Read handles will be recreated.
+    /// Write handles will be flushed and recreated.
+    /// Timestamps and size will be updated to storage.
+    /// > ⚠️ **Warning**
+    /// > Need to be called in a context with write lock on `self.read_write_inode.lock().await.get(ino)`.
+    /// > That is because we want to make sure caller is holding a lock while all writers flush, and we can't
+    /// > lock here also as we would end-up in a deadlock.
+    async fn reset_handles(
+        &self,
+        ino: u64,
+        skip_write_fh: Option<u64>,
+        save_attr: bool,
+    ) -> FsResult<()> {
+        let path = self.contents_path(ino);
+
         // read
         if let Some(set) = self.opened_files_for_read.read().await.get(&ino) {
-            for handle in set.iter().filter(|h| skip_fh.map_or(true, |fh| **h != fh)) {
-                let map = self.read_handles.read().await;
-                let mut ctx = map.get(handle).unwrap().lock().await;
-                let reader = ctx.reader.as_mut().unwrap();
-                #[allow(clippy::cast_possible_wrap)]
-                if reader.stream_position()? as i64 > pos {
-                    reader.seek(SeekFrom::Start(0))?;
-                }
+            for handle in set
+                .iter()
+                .filter(|h| skip_write_fh.map_or(true, |fh| **h != fh))
+            {
+                let guard = self.read_handles.read().await;
+                let ctx = guard.get(handle).unwrap().lock().await;
+                let set_attr: SetFileAttr = ctx.attr.clone().into();
+                drop(ctx);
+                self.set_attr(ino, set_attr).await?;
+                let attr = self.get_inode_from_storage(ino).await?;
+                let mut ctx = guard.get(handle).unwrap().lock().await;
+                let reader = self.create_read_seek(File::open(&path)?).await?;
+                ctx.reader = Some(Box::new(reader));
+                ctx.attr = attr.into();
             }
         }
 
         // write
         if let Some(fh) = self.opened_files_for_write.read().await.get(&ino) {
-            if let Some(handle) = skip_fh {
+            if let Some(handle) = skip_write_fh {
                 if *fh == handle {
                     return Ok(());
                 }
             }
-            if let Some(ctx) = self.write_handles.read().await.get(fh) {
-                let mut ctx = ctx.lock().await;
+            if let Some(lock) = self.write_handles.read().await.get(fh) {
+                let mut ctx = lock.lock().await;
                 let writer = ctx.writer.as_mut().unwrap();
-                writer.flush()?;
-                writer.seek(SeekFrom::Start(0))?;
-                let attr = self.get_inode_from_storage(ino, &*self.key.get().await?)?;
-                ctx.attr.size = attr.size;
+                let file = writer.finish()?;
+                file.sync_all()?;
+                File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+                let set_attr: Option<SetFileAttr> = if save_attr {
+                    Some(ctx.attr.clone().into())
+                } else {
+                    None
+                };
+                drop(ctx);
+                if let Some(set_attr) = set_attr {
+                    self.set_attr(ino, set_attr).await?;
+                }
+                let writer = self
+                    .create_write_seek(OpenOptions::new().read(true).write(true).open(&path)?)
+                    .await?;
+                let mut ctx = lock.lock().await;
+                ctx.writer = Some(Box::new(writer));
+                let attr = self.get_inode_from_storage(ino).await?;
+                ctx.attr = attr.into();
             }
         }
 
@@ -1941,13 +2030,10 @@ impl EncryptedFs {
     ) -> FsResult<()> {
         let ino = op.get_ino();
         let path = self.contents_path(ino);
-        let attr = self.get_inode_from_storage(ino, &*self.key.get().await?)?;
+        let attr = self.get_inode_from_storage(ino).await?;
         match op {
             ReadHandleContextOperation::Create { ino } => {
-                let attr: TimeAndSizeFileAttr = attr.into();
-                // let lock = self
-                //     .read_write_locks
-                //     .get_or_insert_with(ino, || RwLock::new(false));
+                let attr: TimesFileAttr = attr.into();
                 let reader = self.create_read_seek(File::open(&path)?).await?;
                 let ctx = ReadHandleContext {
                     ino,
@@ -1976,21 +2062,9 @@ impl EncryptedFs {
     ) -> FsResult<()> {
         let ino = op.get_ino();
         let path = self.contents_path(ino);
-        // let callback = LocalFileCryptoWriterCallback(
-        //     (*self.self_weak.lock().unwrap().as_ref().unwrap()).clone(),
-        //     ino,
-        //     handle,
-        // );
         match op {
             WriteHandleContextOperation::Create { ino } => {
                 let attr = self.get_attr(ino).await?.into();
-                // let metadata_provider = Box::new(LocalFileCryptoWriterMetadataProvider(
-                //     (*self.self_weak.lock().unwrap().as_ref().unwrap()).clone(),
-                //     ino,
-                // ));
-                // let lock = self
-                //     .read_write_locks
-                //     .get_or_insert_with(ino, || RwLock::new(false));
                 let writer = self
                     .create_write_seek(OpenOptions::new().read(true).write(true).open(&path)?)
                     .await?;
@@ -2228,7 +2302,9 @@ fn read_or_create_key(
             &derived_key,
         );
         bincode::serialize_into(&mut writer, &key)?;
-        writer.finish()?;
+        let file = writer.finish()?;
+        file.sync_all()?;
+        File::open(key_path.parent().unwrap())?.sync_all()?;
         Ok(SecretVec::new(key))
     }
 }
@@ -2285,21 +2361,25 @@ async fn check_structure(data_dir: &Path, ignore_empty: bool) -> FsResult<()> {
     Ok(())
 }
 
-fn merge_attr(attr: &mut FileAttr, set_attr: &SetFileAttr) {
+fn merge_attr(attr: &mut FileAttr, set_attr: &SetFileAttr, overwrite_size: bool) {
     if let Some(size) = set_attr.size {
-        attr.size = size;
+        if overwrite_size {
+            attr.size = size;
+        } else {
+            attr.size = attr.size.max(size);
+        }
     }
     if let Some(atime) = set_attr.atime {
-        attr.atime = max(atime, attr.atime);
+        attr.atime = attr.atime.max(atime);
     }
     if let Some(mtime) = set_attr.mtime {
-        attr.mtime = max(mtime, attr.mtime);
+        attr.mtime = attr.mtime.max(mtime);
     }
     if let Some(ctime) = set_attr.ctime {
-        attr.ctime = max(ctime, attr.ctime);
+        attr.ctime = attr.ctime.max(ctime);
     }
     if let Some(crtime) = set_attr.crtime {
-        attr.crtime = max(crtime, attr.crtime);
+        attr.crtime = attr.crtime.max(crtime);
     }
     if let Some(perm) = set_attr.perm {
         attr.perm = perm;
@@ -2314,29 +2394,6 @@ fn merge_attr(attr: &mut FileAttr, set_attr: &SetFileAttr) {
         attr.flags = flags;
     }
 }
-
-// todo: remove
-// struct LocalFileCryptoWriterCallback(Weak<EncryptedFs>, u64, u64);
-// impl FileCryptoWriteCallback for LocalFileCryptoWriterCallback {
-//     #[instrument(skip(self))]
-//     fn on_file_content_changed(
-//         &self,
-//         changed_from_pos: i64,
-//         last_write_pos: u64,
-//     ) -> io::Result<()> {
-//         debug!("on file content changed");
-//         call_async(async {
-//             if let Some(fs) = self.0.upgrade() {
-//                 reset_handles(fs, self.1, changed_from_pos, last_write_pos, self.2)
-//                     .await
-//                     .map_err(|e| io::Error::new(Other, e))?;
-//                 Ok(())
-//             } else {
-//                 Err(io::Error::new(Other, "fs dropped"))
-//             }
-//         })
-//     }
-// }
 
 pub async fn write_all_string_to_fs(
     fs: &EncryptedFs,
