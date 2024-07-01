@@ -1,4 +1,4 @@
-name: Version
+name: version
 on:
   workflow_call:
     outputs:
