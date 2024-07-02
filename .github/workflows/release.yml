@@ -50,26 +50,26 @@ jobs:
           artifacts: "${{ github.event.repository.name }}-${{ needs.version.outputs.version }}-x86_64.tar.gz"
           generateReleaseNotes: true
 
-  aur_publish:
-    name: publish to AUR
-    needs: [create_release]
-    runs-on: ubuntu-latest
-    steps:
-      - name: download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: PKGBUILD
+  # aur_publish:
+  #   name: publish to AUR
+  #   needs: [create_release]
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: download artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: PKGBUILD
 
-      - name: publish AUR package
-        uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
-        with:
-          pkgname: ${{ github.event.repository.name }}-bin
-          pkgbuild: PKGBUILD
-          commit_username: ${{ secrets.AUR_USERNAME }}
-          commit_email: ${{ secrets.AUR_EMAIL }}
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: Update AUR package
-          ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
+  #     - name: publish AUR package
+  #       uses: KSXGitHub/github-actions-deploy-aur@v2.7.1
+  #       with:
+  #         pkgname: ${{ github.event.repository.name }}-bin
+  #         pkgbuild: PKGBUILD
+  #         commit_username: ${{ secrets.AUR_USERNAME }}
+  #         commit_email: ${{ secrets.AUR_EMAIL }}
+  #         ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+  #         commit_message: Update AUR package
+  #         ssh_keyscan_types: rsa,dsa,ecdsa,ed25519
 
   cargo_publish:
     name: publish to crates.io
