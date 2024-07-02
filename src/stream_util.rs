@@ -37,13 +37,12 @@ pub fn seek_forward<R: Read>(r: &mut R, len: u64, stop_on_eof: bool) -> io::Resu
         if read_len == 0 {
             break;
         }
-        let read = r.read(&mut buffer[..read_len]).map_err(|err| {
+        let read = r.read(&mut buffer[..read_len]).inspect_err(|err| {
             error!(
-                "error reading from file pos {} len {}",
+                "error reading from file pos {} len {} {err}",
                 pos.to_formatted_string(&Locale::en),
                 read_len.to_formatted_string(&Locale::en)
             );
-            err
         })?;
         pos += read as u64;
         if pos == len {
@@ -80,21 +79,19 @@ pub fn copy(r: &mut impl Read, w: &mut impl Write, len: u64, stop_on_eof: bool) 
     loop {
         #[allow(clippy::cast_possible_truncation)]
         let buf_len = min(buffer.len(), (len - read_pos) as usize);
-        let read = r.read(&mut buffer[..buf_len]).map_err(|err| {
+        let read = r.read(&mut buffer[..buf_len]).inspect_err(|err| {
             error!(
-                "error reading from file pos {} len {}",
+                "error reading from file pos {} len {} {err}",
                 read_pos.to_formatted_string(&Locale::en),
                 buf_len.to_formatted_string(&Locale::en)
             );
-            err
         })?;
-        w.write_all(&buffer[..read]).map_err(|err| {
+        w.write_all(&buffer[..read]).inspect_err(|err| {
             error!(
-                "error writing to file pos {} len {}",
+                "error writing to file pos {} len {} {err}",
                 read_pos.to_formatted_string(&Locale::en),
                 buf_len.to_formatted_string(&Locale::en)
             );
-            err
         })?;
         read_pos += read as u64;
         if read_pos == len {
@@ -123,13 +120,12 @@ pub fn fill_zeros(w: &mut impl Write, len: u64) -> io::Result<()> {
     loop {
         #[allow(clippy::cast_possible_truncation)]
         let buf_len = min(buffer.len(), (len - written) as usize);
-        w.write_all(&buffer[..buf_len]).map_err(|err| {
+        w.write_all(&buffer[..buf_len]).inspect_err(|err| {
             error!(
-                "error writing to file pos {} len {}",
+                "error writing to file pos {} len {} {err}",
                 written.to_formatted_string(&Locale::en),
                 buf_len.to_formatted_string(&Locale::en)
             );
-            err
         })?;
         written += buf_len as u64;
         if written == len {
