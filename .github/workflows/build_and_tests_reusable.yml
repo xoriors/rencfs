@@ -18,7 +18,7 @@ jobs:
         run: cargo fmt --check --all
   
       - name: check
-        run: cargo check --all --release
+        run: cargo check --all
       
       - name: tests
         run: cargo test --all --release
