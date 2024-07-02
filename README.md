@@ -134,8 +134,9 @@ echo "test" > 1/test
 cat 1/test
 ```
 
-You can use it as a command line tool to mount an encrypted file system, or directly use the library to build your own
-binary (for the library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/)).
+## As a libraty
+
+For the library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/)
 
 ## Command Line Tool
 
