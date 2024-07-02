@@ -49,7 +49,7 @@ jobs:
             path: ./target/cargo-aur/${{ github.event.repository.name }}-${{ inputs.version }}-x86_64.tar.gz
 
   docker:
-    name: docker build
+    name: docker
     permissions:
       id-token: write
       packages: write
