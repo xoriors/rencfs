@@ -29,7 +29,7 @@ You can use it as CLI or build your custom FUSE implementation with it.
 
 - Security,using well known audited AEAD cryptography primitives
 - Data integrity, data is written with WAL to ensure integrity even on crash or power loss
-- All metadata and content are encrypted 
+- All metadata and content are encrypted
 - Safe manage of credentials in memory with mlock(2) and zeroize
 - Encryption key generated based on password
 - Password saved in OS's keyring
@@ -393,7 +393,8 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
 
 # Security
 
-- Phantom reads: reading older content from a file, this is not possible. Data is written with WAL and periodically flushed to file. This ensures data integrity and maintain changes order. 
+- Phantom reads: reading older content from a file, this is not possible. Data is written with WAL and periodically
+  flushed to file. This ensures data integrity and maintain changes order.
   One problem that may occur is if we do a truncate we change the content of the file, but the process is killed before
   we write the metadata with the new filesize. In this case, next time we mount the system, we are still seeing the old
   filesize. However, the content of the file could be bigger, and we read until the old size offset, se we would not
@@ -433,7 +434,9 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
   want close to bulletproof solutions, then maybe this is not the ideal one for you. But is trying to offer a simple use
   of an encryption solution that should be used taking into consideration all the security concerns from above
 - It started as a learning project of Rust programming language, and I feel like keep building more on it
-- It's a fairly simple and standard implementation that tries to respect all security standards, use secure and robust primitives so that it can be extended from this. Indeed, it doesn't have the maturity yet to "fight" other well-known implementations.
+- It's a fairly simple and standard implementation that tries to respect all security standards, use secure and robust
+  primitives so that it can be extended from this. Indeed, it doesn't have the maturity yet to "fight" other well-known
+  implementations.
   But it can be a project from which others can learn or build upon or why not for some to actually use it keeping in
   mind all the above
 
@@ -446,20 +449,17 @@ If you build something interesting and feel like sharing pull requests are alway
 
 1. Fork the repo
 2. Make the changes in your fork
-3. If you add new `.rs` files in `examples` member add `#![cfg_attr(not(debug_assertions), deny(warnings))]` as first line.
-4. If you add new members to the workspace add `#![cfg_attr(not(debug_assertions), deny(warnings))]` to it's `lib.rs` and to any `bin` files (
+3. If you add new `.rs` files in `examples` member add `#![cfg_attr(not(debug_assertions), deny(warnings))]` as first
+   line.
+4. If you add new members to the workspace add `#![cfg_attr(not(debug_assertions), deny(warnings))]` to it's `lib.rs`
+   and to any `bin` files (
    like `main.rs` or other files declared as `[[bin]]`).
 5. Add tests for your changes, if applicable
-6. `cargo build --all --all-features` and fix any issues
-7. `cargo build --release --all --all-features` and fix any issues. This will enforce `deny(warnings)` as it's not active in debug builds
-8. `cargo fmt --all`, you can cnofigure your IDE to do this on
-   save [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html)
+6. `cargo fmt --all`, you can configure your IDE to do this on
+   save, [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html)
    and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
-9. `cargo check --all --all-features` and fix any errors and warnings
-10. `cargo clippy --all --all-features` and fix any errors
-11. `cargo test --all --all-features` and fix any issues
-12. `cargo bench --all --all-features` and fix any issues
-13. Create a PR
-14. Monitor the checks (GitHub actions runned)
-15. Respond to any comments
-16. In the end ideally it will be merged to `main`
+6. `./check-before-push.sh` or `cmd /c check-before-push.bat` and fix any errors
+7. Create a PR back to main repo
+8. Monitor the checks (GitHub actions run)
+9. Respond to any comments
+10. In the end, ideally, it will be merged to `main`

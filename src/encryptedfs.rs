@@ -1771,7 +1771,7 @@ impl EncryptedFs {
                         OpenOptions::new()
                             .read(true)
                             .write(true)
-                            .open(&self.contents_path(ino))?,
+                            .open(self.contents_path(ino))?,
                     )
                     .await?;
                 ctx.writer = Some(Box::new(writer));

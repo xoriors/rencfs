@@ -1040,7 +1040,7 @@ fn compare(
 ) -> io::Cursor<Vec<u8>> {
     plaintext.seek(SeekFrom::Start(0)).unwrap();
     ciphertext.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = crypto::create_read(ciphertext, cipher, &key);
+    let mut reader = crypto::create_read(ciphertext, cipher, key);
     let hash1 = crypto::hash_reader(&mut plaintext).unwrap();
     let hash2 = crypto::hash_reader(&mut reader).unwrap();
     assert_eq!(hash1, hash2);

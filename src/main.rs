@@ -468,8 +468,7 @@ fn umount(mountpoint: &str) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Other,
             format!("cannot umount {}", mountpoint),
-        )
-        .into())
+        ))
     }
 }
 

@@ -172,7 +172,7 @@ struct RandomNonceSequenceWrapper {
 }
 
 impl RandomNonceSequenceWrapper {
-    pub fn new(inner: Arc<Mutex<RandomNonceSequence>>) -> Self {
+    pub const fn new(inner: Arc<Mutex<RandomNonceSequence>>) -> Self {
         Self { inner }
     }
 }

@@ -58,7 +58,7 @@ impl<K: Eq + Hash, V> ArcHashMap<K, V> {
             return Some(Holder {
                 val: v.clone(),
                 rc: rc.clone(),
-                map: &self,
+                map: self,
             });
         }
         None

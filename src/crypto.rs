@@ -243,7 +243,7 @@ pub fn encrypt_file_name(
         Ok(format!("${}", name.expose_secret()))
     } else {
         let normalized_name = SecretString::new(name.expose_secret().replace(['/', '\\'], " "));
-        let mut encrypted = encrypt(&normalized_name, cipher, &key)?;
+        let mut encrypted = encrypt(&normalized_name, cipher, key)?;
         encrypted = encrypted.replace('/', "|");
         Ok(encrypted)
     }
@@ -317,7 +317,7 @@ pub fn copy_from_file(
         return Ok(0);
     }
     // create a new reader by reading from the beginning of the file
-    let mut reader = create_read(OpenOptions::new().read(true).open(file)?, cipher, &key);
+    let mut reader = create_read(OpenOptions::new().read(true).open(file)?, cipher, key);
     // move read position to the write position
     let pos2 = stream_util::seek_forward(&mut reader, pos, stop_on_eof)?;
     if pos2 < pos {

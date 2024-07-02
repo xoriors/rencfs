@@ -5,7 +5,6 @@ use std::env::args;
 use std::fs::File;
 use std::io;
 use std::path::Path;
-use std::sync::Arc;
 
 use secrecy::SecretVec;
 use tracing::info;

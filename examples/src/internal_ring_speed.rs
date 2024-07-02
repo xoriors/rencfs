@@ -100,19 +100,15 @@ fn main() -> io::Result<()> {
             println!("len = {}", len);
         }
         // Data to be encrypted
-        let mut data = &mut buffer[..len];
-        //         let mut data = buffer[..len].to_vec();
-
-        // Create a mutable copy of the data that will be encrypted in place
-        //         let mut in_out = data.clone();
+        let data = &mut buffer[..len];
 
         // Encrypt the data with AEAD using the AES_256_GCM algorithm
         let tag = sealing_key
-            .seal_in_place_separate_tag(Aad::empty(), &mut data)
+            .seal_in_place_separate_tag(Aad::empty(), data)
             .unwrap();
 
-        let _ = out.write_all(&data).unwrap();
-        let _ = out.write_all(tag.as_ref()).unwrap();
+        out.write_all(data).unwrap();
+        out.write_all(tag.as_ref()).unwrap();
     }
     out.flush().unwrap();
     let end = std::time::Instant::now();
@@ -163,17 +159,13 @@ fn main() -> io::Result<()> {
             println!("len = {}", len);
         }
         // Data to be encrypted
-        let mut ciphertext = &mut buffer[..len];
-
-        // Create a mutable copy of the data that will be encrypted in place
-        //         let mut in_out = data.clone();
+        let ciphertext = &mut buffer[..len];
 
         let plaintext = opening_key
-            .open_within(Aad::empty(), &mut ciphertext, 0..)
+            .open_within(Aad::empty(), ciphertext, 0..)
             .unwrap();
-        // let dec = opening_key.open_in_place(Aad::empty(), &mut data).unwrap();
 
-        let _ = out.write(&plaintext).unwrap();
+        let _ = out.write(plaintext).unwrap();
     }
     out.flush().unwrap();
     let end = std::time::Instant::now();

@@ -15,7 +15,7 @@ pub struct BufMut {
 
 impl BufMut {
     #[must_use]
-    pub fn new(from: Vec<u8>) -> Self {
+    pub const fn new(from: Vec<u8>) -> Self {
         Self {
             buf: from,
             pos_write: 0,

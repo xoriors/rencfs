@@ -133,7 +133,7 @@ pub(crate) struct ExistingNonceSequence {
 }
 
 impl ExistingNonceSequence {
-    pub fn new(last_nonce: Arc<Mutex<Option<Vec<u8>>>>) -> Self {
+    pub const fn new(last_nonce: Arc<Mutex<Option<Vec<u8>>>>) -> Self {
         Self { last_nonce }
     }
 }
@@ -159,7 +159,7 @@ pub trait CryptoReadSeek<R: Read + Seek + Send + Sync>:
 
 impl<R: Read + Seek> RingCryptoRead<R> {
     pub fn new_seek(reader: R, algorithm: &'static Algorithm, key: &SecretVec<u8>) -> Self {
-        Self::new(reader, algorithm, &key)
+        Self::new(reader, algorithm, key)
     }
 
     const fn pos(&self) -> u64 {
