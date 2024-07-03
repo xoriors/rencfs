@@ -3,9 +3,9 @@
 set -e
 
 cargo build --all --all-features
-cargo build --all --all-features --release
+cargo build --release --all --all-features
 cargo fmt --all -- --check
 cargo check --all
 cargo clippy --all
-cargo test --all --all-features --release
+cargo test --release --all --all-features
 cargo publish --dry-run --allow-dirty
