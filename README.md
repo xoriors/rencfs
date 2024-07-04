@@ -33,7 +33,7 @@ You can use it as CLI or build your custom FUSE implementation with it.
 - Safe manage of credentials in memory with mlock(2) and zeroize
 - Encryption key generated based on password
 - Password saved in OS's keyring
-- Change password / encryption key without re-encrypting all data
+- Change password without re-encrypting all data
 - Fast seek on both reads and writes
 - Writes in parallel
 - Expose with FUSE
