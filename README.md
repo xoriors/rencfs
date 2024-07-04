@@ -37,7 +37,7 @@ You can use it as CLI or build your custom FUSE implementation with it.
 - Fast seek on both reads and writes
 - Writes in parallel
 - Expose with FUSE
-- Fully concurrency for all operations
+- Fully concurrent for all operations
 - In future, support for macOS, Windows and mobile
 
 # Functionality
