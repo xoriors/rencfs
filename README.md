@@ -134,7 +134,7 @@ echo "test" > 1/test
 cat 1/test
 ```
 
-## As a libraty
+## As a library
 
 For the library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/)
 
