@@ -1290,6 +1290,7 @@ async fn test_create() {
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_rename() {
+
     run_test(TestSetup { key: "test_rename" }, async {
         let fs = get_fs().await;
 

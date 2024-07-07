@@ -38,7 +38,7 @@ fn bench_create(b: &mut Bencher) {
                         .unwrap();
                 });
                 *i += 1;
-                i.clone()
+                *i
             })
         });
     });
