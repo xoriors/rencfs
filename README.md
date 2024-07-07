@@ -456,7 +456,7 @@ If you build something interesting and feel like sharing pull requests are alway
    and to any `bin` files (
    like `main.rs` or other files declared as `[[bin]]`).
 5. Add tests for your changes, if applicable
-6. `cargo fmt --all`, you can configure your IDE to do this on
+6. `cargo fmt --workspace`, you can configure your IDE to do this on
    save, [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html)
    and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
 6. `./check-before-push.sh` or `cmd /c check-before-push.bat` and fix any errors

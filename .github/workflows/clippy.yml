@@ -22,13 +22,13 @@ jobs:
       run: rustup update
 
     - name: build
-      run: cargo build --all --release
+      run: cargo build --workspace --all-targets --release
 
     - name: fmt check
-      run: cargo fmt --all -- --check
+      run: cargo fmt --workspace -- --check
 
     - name: check
-      run: cargo check --all --release
+      run: cargo check --workspace --release
 
     - name: clippy
-      run: cargo clippy --all
+      run: cargo clippy --all-targets

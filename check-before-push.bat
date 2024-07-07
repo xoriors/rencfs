@@ -1,16 +1,16 @@
-cargo build --all --all-features
+cargo build --workspace --all-targets --all-features
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-cargo build --release --all --all-features
+cargo build --release --workspace --all-targets --all-features
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-cargo fmt --all -- --check
+cargo fmt --workspace -- --check
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-cargo check --all
+cargo check --workspace
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-cargo clippy --all
+cargo clippy --all-targets
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 cargo test --release --all --all-features

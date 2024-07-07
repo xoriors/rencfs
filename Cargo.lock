@@ -779,22 +779,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "examples"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "okaywal",
- "rand_core",
- "rencfs",
- "ring",
- "rpassword",
- "secrecy",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "fastrand"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1614,7 +1598,7 @@ checksum = "7a66a03ae7c801facd77a29370b4faec201768915ac14a721ba36f20bc9c209b"
 
 [[package]]
 name = "rencfs"
-version = "0.13.55"
+version = "0.13.56"
 dependencies = [
  "anyhow",
  "argon2",

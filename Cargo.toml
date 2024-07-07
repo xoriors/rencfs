@@ -13,9 +13,6 @@ categories = ["cryptography", "filesystem"]
 documentation = "https://docs.rs/rencfs"
 exclude = [".github/"]
 
-[workspace]
-members = [".", "examples"]
-
 [dependencies]
 clap = { version = "4.5.4", features = ["derive", "cargo"] }
 libc = "0.2.153"
