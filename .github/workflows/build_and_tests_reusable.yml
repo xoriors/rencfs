@@ -13,6 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: setup Rust
+        run: rustup update
+
       - name: build
         run: |
           cargo build --all-targets --all-features
