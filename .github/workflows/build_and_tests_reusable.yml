@@ -25,7 +25,7 @@ jobs:
         run: cargo check --all-targets
 
       - name: tests
-        run: cargo test --release --all --all-features
+        run: cargo test --release --all-features
 
       - name: tests
         run: cargo publish --dry-run --allow-dirty
