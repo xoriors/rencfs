@@ -61,7 +61,7 @@ You can use it as CLI or build your custom FUSE implementation with it.
 In progress:
 
 - ensure file integrity by saving each change to WAL, so on crash or power loss on next start we apply the pending
-  changes. This makes the write operations atomic.
+  changes. This makes the write operations atomic
 - multiple writes in parallel to the same file, ideal for torrent like applications
 
 # Stack
