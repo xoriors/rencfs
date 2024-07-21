@@ -14,8 +14,8 @@
 > [!WARNING]  
 > **This crate hasn't been audited, it's using `ring` crate which is a well-known audited library, so in principle at
 least the primitives should offer similar level of security.  
-> This is still under development. Please do not use it with sensitive data just yet. For producrion or usage with sensitove data please wait for a
-stable release and maybe an audit.  
+> This is still under development. Please do not use it with sensitive data just yet, please wait for a
+stable release.  
 > It's mostly ideal for experimental and learning projects.**
 
 An encrypted file system that is mounted with FUSE on Linux. It can be used to create encrypted directories.
