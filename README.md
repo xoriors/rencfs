@@ -357,7 +357,7 @@ and run the app.
 
 # Performance
 
-- `Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of `1.66` on average. This is because of the
+- `Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of **1.28** on average. This is because of the
   hardware acceleration of AES on most CPUs via AES-NI. But where hardware acceleration is not
   available `ChaCha20Poly1305` is
   faster
