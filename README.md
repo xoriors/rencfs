@@ -136,7 +136,7 @@ cat 1/test
 
 ## As a library
 
-For the library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/)
+For the library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/).
 
 ## Command Line Tool
 
