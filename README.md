@@ -1,4 +1,4 @@
-# [![](website/resources/rencfs-logo-20p.png)](https://github.com/radumarias/rencfs) rencfs
+# [![](website/resources/rencfs-logo-32p.png)](https://github.com/radumarias/rencfs) rencfs
 
 [![rencfs-bin](https://img.shields.io/aur/version/rencfs-bin?color=1793d1&label=rencfs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/rencfs-bin/)
 [![crates.io](https://img.shields.io/crates/v/rencfs.svg)](https://crates.io/crates/rencfs)
