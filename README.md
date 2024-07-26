@@ -450,4 +450,4 @@ If you build something interesting and feel like sharing pull requests are alway
 
 ## How to contribute
 
-Please follow the steps [here](CONTRIBUTING.md).
+Please see [CONTRIBUTING.md](CONTRIBUTING.md).
