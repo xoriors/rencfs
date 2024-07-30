@@ -67,7 +67,8 @@ impl<
     }
 
     async fn get_from_ref_or_cache(&self) -> Option<Arc<T>> {
-        if let Some(ref weak) = *self.weak.read().await {
+        let lock = self.weak.read().await;
+        if let Some(ref weak) = *lock {
             // try to take it from weak ref
             if let Some(ref v) = weak.upgrade() {
                 return Some(v.clone());

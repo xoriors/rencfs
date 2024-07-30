@@ -1242,7 +1242,8 @@ impl EncryptedFs {
             let fhs = self.opened_files_for_read.read().await.get(&ino).cloned();
             if let Some(fhs) = fhs {
                 for fh in fhs {
-                    if let Some(ctx) = self.read_handles.read().await.get(&fh) {
+                    let lock = self.read_handles.read().await;
+                    if let Some(ctx) = lock.get(&fh) {
                         let set_atr: SetFileAttr = ctx.lock().await.attr.clone().into();
                         merge_attr(&mut attr, &set_atr, false);
                     }
@@ -1255,7 +1256,8 @@ impl EncryptedFs {
         if open_writes {
             let fh = self.opened_files_for_write.read().await.get(&ino).copied();
             if let Some(fh) = fh {
-                if let Some(ctx) = self.write_handles.read().await.get(&fh) {
+                let lock = self.write_handles.read().await;
+                if let Some(ctx) = lock.get(&fh) {
                     let ctx = ctx.lock().await;
                     merge_attr(&mut attr, &ctx.attr.clone().into(), false);
                 }
@@ -1552,8 +1554,10 @@ impl EncryptedFs {
             // in the case of directory or if the file was crated without being opened we don't use a handle
             return Ok(());
         }
-        let mut valid_fh = self.read_handles.read().await.get(&handle).is_some();
-        if let Some(ctx) = self.write_handles.read().await.get(&handle) {
+        let lock = self.read_handles.read().await;
+        let mut valid_fh = lock.get(&handle).is_some();
+        let lock = self.write_handles.read().await;
+        if let Some(ctx) = lock.get(&handle) {
             let mut ctx = ctx.lock().await;
             let lock = self
                 .read_write_locks
@@ -1970,7 +1974,8 @@ impl EncryptedFs {
         let path = self.contents_path(ino);
 
         // read
-        if let Some(set) = self.opened_files_for_read.read().await.get(&ino) {
+        let lock = self.opened_files_for_read.read().await;
+        if let Some(set) = lock.get(&ino) {
             for handle in set
                 .iter()
                 .filter(|h| skip_write_fh.map_or(true, |fh| **h != fh))
@@ -1989,13 +1994,15 @@ impl EncryptedFs {
         }
 
         // write
-        if let Some(fh) = self.opened_files_for_write.read().await.get(&ino) {
+        let lock = self.opened_files_for_write.read().await;
+        if let Some(fh) = lock.get(&ino) {
             if let Some(handle) = skip_write_fh {
                 if *fh == handle {
                     return Ok(());
                 }
             }
-            if let Some(lock) = self.write_handles.read().await.get(fh) {
+            let lock = self.write_handles.read().await;
+            if let Some(lock) = lock.get(fh) {
                 let mut ctx = lock.lock().await;
                 let writer = ctx.writer.as_mut().unwrap();
                 let file = writer.finish()?;

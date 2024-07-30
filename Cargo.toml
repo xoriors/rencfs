@@ -66,7 +66,7 @@ depends = ["fuse3"]
 files = [
     ["LICENSE-Apache-2.0", "/usr/share/licenses/$pkgname/LICENSE-Apache-2.0"],
     ["LICENSE-MIT", "/usr/share/licenses/$pkgname/LICENSE-MIT"],
-    #    ["LICENSE-BSD-3-Clause", "/usr/share/licenses/$pkgname/LICENSE-BSD-3-Clause"]
+    ["LICENSE-BSD-3-Clause", "/usr/share/licenses/$pkgname/LICENSE-BSD-3-Clause"]
 ]
 
 [package.metadata.generate-rpm]

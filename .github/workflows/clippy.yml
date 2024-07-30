@@ -7,7 +7,7 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-  
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0 # TODO: remove this when we cache the builds
@@ -16,19 +16,19 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Rust
-      run: rustup update
+      - name: Setup Rust
+        run: rustup update
 
-    - name: build
-      run: cargo build --all --release
+      - name: build
+        run: cargo build --all --release --target x86_64-unknown-linux-gnu
 
-    - name: fmt check
-      run: cargo fmt --all -- --check
+      - name: fmt check
+        run: cargo fmt --all -- --check
 
-    - name: check
-      run: cargo check --all --release
+      - name: check
+        run: cargo check --all --release
 
-    - name: clippy
-      run: cargo clippy --all
+      - name: clippy
+        run: cargo clippy --all
