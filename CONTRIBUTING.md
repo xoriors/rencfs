@@ -3,7 +3,7 @@
 1. Fork the repo
 2. Make sure there is an open issue or a task in the [project](https://github.com/users/radumarias/projects/1)
 3. **Ask the owner of the project to add your GitHub username to the project**
-4. **Assign the issues you are woeking to you and move them in the corresponding status column as you are working on it. If the taks is not an issue yet, convert it to an issue first**
+4. **Assign the issues you are woeking to you and move them in the corresponding status column as you are working on it. If the taks is not an issue yet, convert it to issue first**
 5. Make the changes in your fork
 6. If you add new `.rs` files in `examples` member add all these [lines](https://github.com/radumarias/rencfs/blob/main/src/lib.rs#L1-L16) as first ones
 7. If you add new packages to the workspace add all these [lines](https://github.com/radumarias/rencfs/blob/main/src/lib.rs#L1-L16) to it's `lib.rs`
