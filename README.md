@@ -283,6 +283,11 @@ In that case please add it to the `PATH` manually.
 
 Project is setup to use `nightly` toolchain in `rust-toolchain.toml`, on first build you will see it fetch the nightly.
 
+```bash
+cargo install cargo-aur
+cargo install cargo-generate-rpm
+```
+
 ### Other dependencies
 
 Also, these deps are required (or based on your distribution):
@@ -320,7 +325,7 @@ cargo build --release
 ### Run
 
 ```bash
-cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
+cargo run --release -- mount --mount-point MOUNT_POINT --data-dir DATA_DIR
 ```
 
 ### Build local RPM for Fedora
