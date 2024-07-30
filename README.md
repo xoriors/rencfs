@@ -281,7 +281,7 @@ logged out, or it may not succeed at all.
 If, after installation, running `rustc --version` in the console fails, this is the most likely reason.
 In that case please add it to the `PATH` manually.
 
-Project is setup to use `nighlty` toolchain in `rust-toolchain.toml`, on first build you will see it fetch the nightly.
+Project is setup to use `nightly` toolchain in `rust-toolchain.toml`, on first build you will see it fetch the nightly.
 
 ### Other dependencies
 
