@@ -20,7 +20,7 @@ use crate::{crypto, test_common};
 
 static ROOT_INODE_STR: &str = "1";
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_write() {
@@ -162,7 +162,7 @@ async fn test_write() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 // #[ignore]
@@ -337,7 +337,7 @@ async fn test_read() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 // #[ignore]
@@ -412,7 +412,7 @@ async fn test_set_len() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_copy_file_range() {
@@ -498,7 +498,7 @@ async fn test_copy_file_range() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_read_dir() {
@@ -676,7 +676,7 @@ async fn test_read_dir() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_read_dir_plus() {
@@ -879,7 +879,7 @@ async fn test_read_dir_plus() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_find_by_name() {
@@ -917,7 +917,7 @@ async fn test_find_by_name() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_exists_by_name() {
@@ -950,7 +950,7 @@ async fn test_exists_by_name() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_remove_dir() {
@@ -992,7 +992,7 @@ async fn test_remove_dir() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_remove_file() {
@@ -1034,7 +1034,7 @@ async fn test_remove_file() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_find_by_name_exists_by_name100files() {
@@ -1071,7 +1071,7 @@ async fn test_find_by_name_exists_by_name100files() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_create_structure_and_root() {
@@ -1101,7 +1101,7 @@ async fn test_create_structure_and_root() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_create() {
@@ -1286,7 +1286,7 @@ async fn test_create() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_rename() {
@@ -2198,7 +2198,7 @@ async fn test_rename() {
     .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[traced_test]
 async fn test_open() {
     run_test(TestSetup { key: "test_open" }, async {
@@ -2232,7 +2232,7 @@ async fn test_open() {
     .await;
 }
 
-// #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// #[tokio::test]
 // #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn _test_sample() {
