@@ -10,17 +10,19 @@
 [![Discord](https://img.shields.io/discord/1236855443486277653?label=Discord)](https://discord.com/channels/1236855443486277653/1236855448515252306)
 [![Matrix](https://img.shields.io/matrix/rencfs%3Amatrix.org?label=Matrix)](https://matrix.to/#/#rencfs:matrix.org)
 [![Zulip](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg?label=Zulip)](https://rencfs.zulipchat.com)
+[![Open Source Helpers](https://www.codetriage.com/radumarias/rencfs/badges/users.svg)](https://www.codetriage.com/radumarias/rencfs)
+[![first-timers-only](https://img.shields.io/badge/first--timers--only-friendly-blue.svg?style=flat-square)](https://www.firsttimersonly.com/)
 
 > [!WARNING]  
 > **This crate hasn't been audited, it's using `ring` crate which is a well-known audited library, so in principle at
-least the primitives should offer as similar level of security.  
-> This is still under development. Please do not use it with sensitive data just yet. Please wait for a
-stable release and maybe an audit.  
+least the primitives should offer similar level of security.  
+> This is still under development. Please do not use it with sensitive data just yet, please wait for a
+stable release.  
 > It's mostly ideal for experimental and learning projects.**
 
-An encrypted file system that is mounted with FUSE on Linux. It can be used to create encrypted directories.
+An encrypted file system written in Rust that is mounted with FUSE on Linux. It can be used to create encrypted directories.
 
-You can then safely backup the encrypted folder on an untrusted server without worrying about the data being exposed.
+You can then safely backup the encrypted directory to an untrusted server without worrying about the data being exposed.
 You can also store it in any cloud storage like Google Drive, Dropbox, etc. and have it synced across multiple devices.
 
 You can use it as CLI or build your custom FUSE implementation with it.
@@ -136,7 +138,7 @@ cat 1/test
 
 ## As a library
 
-For the library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/)
+For the library, you can follow the [documentation](https://docs.rs/rencfs/latest/rencfs/).
 
 ## Command Line Tool
 
@@ -279,7 +281,12 @@ logged out, or it may not succeed at all.
 If, after installation, running `rustc --version` in the console fails, this is the most likely reason.
 In that case please add it to the `PATH` manually.
 
-Project is setup to use `nighlty` toolchain in `rust-toolchain.toml`, on first build you will see it fetch the nightly.
+Project is setup to use `nightly` toolchain in `rust-toolchain.toml`, on first build you will see it fetch the nightly.
+
+```bash
+cargo install cargo-aur
+cargo install cargo-generate-rpm
+```
 
 ### Other dependencies
 
@@ -318,7 +325,7 @@ cargo build --release
 ### Run
 
 ```bash
-cargo run -- --mount-point MOUNT_POINT --data-dir DATA_DIR
+cargo run --release -- mount --mount-point MOUNT_POINT --data-dir DATA_DIR
 ```
 
 ### Build local RPM for Fedora
@@ -357,7 +364,7 @@ and run the app.
 
 # Performance
 
-- `Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of `1.66` on average. This is because of the
+- `Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of **1.28** on average. This is because of the
   hardware acceleration of AES on most CPUs via AES-NI. But where hardware acceleration is not
   available `ChaCha20Poly1305` is
   faster
@@ -448,19 +455,4 @@ If you build something interesting and feel like sharing pull requests are alway
 
 ## How to contribute
 
-1. Fork the repo
-2. Make the changes in your fork
-3. If you add new `.rs` files in `examples` member add `#![cfg_attr(not(debug_assertions), deny(warnings))]` as first
-   line.
-4. If you add new members to the workspace add `#![cfg_attr(not(debug_assertions), deny(warnings))]` to it's `lib.rs`
-   and to any `bin` files (
-   like `main.rs` or other files declared as `[[bin]]`).
-5. Add tests for your changes, if applicable
-6. `cargo fmt --workspace`, you can configure your IDE to do this on
-   save, [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html)
-   and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
-6. `./check-before-push.sh` or `cmd /c check-before-push.bat` and fix any errors
-7. Create a PR back to main repo
-8. Monitor the checks (GitHub actions run)
-9. Respond to any comments
-10. In the end, ideally, it will be merged to `main`
+Please see [CONTRIBUTING.md](CONTRIBUTING.md).

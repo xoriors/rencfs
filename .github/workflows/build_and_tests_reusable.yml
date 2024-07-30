@@ -13,21 +13,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: setup Rust
+        run: rustup update
+
       - name: build
         run: |
-          cargo build --workspace --all-targets --all-features
-          cargo build --release --workspace --all-targets --all-features
-          cargo build --examples --all --all-features
-          cargo build --release --examples --all --all-features
+          cargo build --all-targets --all-features --target x86_64-unknown-linux-gnu
+          cargo build --release --all-targets --all-features --target x86_64-unknown-linux-gnu
 
       - name: fmt check
-        run: cargo fmt --workspace -- --check
+        run: cargo fmt --all --check
 
       - name: check
-        run: cargo check --workspace
+        run: cargo check --all-targets
 
       - name: tests
-        run: cargo test --release --all --all-features -- nocapture
+        run: cargo test --release --all-features --target x86_64-unknown-linux-gnu
 
-      - name: tests
-        run: cargo publish --dry-run --allow-dirty
+      - name: test publish
+        run: cargo publish --dry-run --allow-dirty --target x86_64-unknown-linux-gnu
+
+      - name: test publish
+        run: cargo publish --dry-run --allow-dirty --target x86_64-unknown-linux-gnu
+
+      - name: test package
+        run: |
+          cargo aur
+          cargo generate-rpm
