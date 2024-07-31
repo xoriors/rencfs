@@ -328,6 +328,20 @@ cargo build --release
 cargo run --release -- mount --mount-point MOUNT_POINT --data-dir DATA_DIR
 ```
 
+#### Dev settings
+
+If you don't want to be prompted for password you can set this env var and run like this:
+
+```bash
+RENCFS_PASSWORD=PASS cargo run --release -- mount --mount-point MOUNT_POINT --data-dir DATA_DIR
+```
+
+For dev mode is recommended to run with `DEBUG` log level:
+
+```bash
+cargo run --release -- --log-level DEBUG mount --mount-point MOUNT_POINT --data-dir DATA_DIR
+```
+
 ### Build local RPM for Fedora
 
 This is using [cargo-generate-rpm](https://crates.io/crates/cargo-generate-rpm)
