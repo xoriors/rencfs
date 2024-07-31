@@ -4,7 +4,7 @@
 2. [Setup](https://github.com/radumarias/rencfs?tab=readme-ov-file#locally) dev env localy, replace url repo with your fork url
 3. Make sure there is an open issue or a task in the [project](https://github.com/users/radumarias/projects/1)
 4. **Ask the owner of the project to add your GitHub username to the project**
-5. **Assign the issues you are woeking to you and move them in the corresponding status column as you are working on it. If the taks is not an issue yet, convert it to issue first**
+5. **Assign the issues you are working to you and move them in the corresponding status column as you are working on it. If the taks is not an issue yet, convert it to issue first**
 6. Make the changes in your fork
 7. If you add new `.rs` files in `examples` member add all these [lines](https://github.com/radumarias/rencfs/blob/main/src/lib.rs#L1-L16) as first ones
 8. If you add new packages to the workspace add all these [lines](https://github.com/radumarias/rencfs/blob/main/src/lib.rs#L1-L16) to it's `lib.rs`
