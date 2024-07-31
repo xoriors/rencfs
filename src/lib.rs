@@ -316,8 +316,6 @@ pub static GID: LazyLock<u32> = LazyLock::new(|| unsafe { libc::getgid() });
 #[must_use]
 pub const fn is_debug() -> bool {
     #[cfg(debug_assertions)]
-    {
-        return true;
-    }
+    true;
     false
 }

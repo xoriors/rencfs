@@ -474,6 +474,9 @@ fn umount(mountpoint: &str) -> io::Result<()> {
 
 #[allow(clippy::missing_panics_doc)]
 pub fn log_init(level: Level) -> WorkerGuard {
+    // Set the RUST_LOG environment variable to include debug logs
+    env::set_var("RUST_LOG", "debug");
+
     let directive = format!("rencfs={}", level.as_str())
         .parse()
         .expect("cannot parse log directive");
