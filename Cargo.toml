@@ -26,7 +26,7 @@ tokio = { version = "1.36", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["fs"] }
 futures-util = "0.3.30"
 bytes = "1.5"
-tracing = { version = "0.1.40", features = ["max_level_trace", "release_max_level_info"] }
+tracing = { version = "0.1.40", features = ["max_level_trace", "release_max_level_debug"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2.3"
 tracing-test = "0.2.4"
