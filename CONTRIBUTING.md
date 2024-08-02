@@ -13,7 +13,7 @@
    save, [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html)
    and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
 11. `./check-before-push.sh` or `cmd /c check-before-push.bat` and fix any errors
-12. Create a **PR** back to **main** repo to the `main` branch
+12. Create a **PR** back to the **parent** repo to the `main` branch
 13. Monitor the checks (GitHub actions run)
 14. Respond to any comments
 15. In the end, ideally, it will be merged to `main`
