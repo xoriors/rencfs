@@ -138,7 +138,7 @@ pub fn umount(mountpoint: &str) -> io::Result<()> {
     } else {
         Err(io::Error::new(
             io::ErrorKind::Other,
-            format!("cannot umount {}", mountpoint),
+            format!("cannot umount {mountpoint}"),
         ))
     }
 }

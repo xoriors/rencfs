@@ -87,7 +87,9 @@
 //! You need to specify several parameters to create an encrypted file system:
 //! - `data_dir`: The directory where the file system will be mounted.
 //! - `password`: The password to encrypt/decrypt the data.
-//! - `cipher`: The encryption algorithm to use. Currently, it supports these ciphers [Cipher](Cipher).
+//! - `cipher`: The encryption algorithm to use.
+//!
+//! Currently, it supports these ciphers [Cipher](crypto::Cipher).
 //!
 //! ### Example
 //!
@@ -317,6 +319,6 @@ pub static GID: LazyLock<u32> = LazyLock::new(|| unsafe { libc::getgid() });
 #[must_use]
 pub const fn is_debug() -> bool {
     #[cfg(debug_assertions)]
-    true;
+    return true;
     false
 }

@@ -25,7 +25,6 @@ use tokio_stream::wrappers::ReadDirStream;
 use tracing::{debug, error, info, instrument, warn, Level};
 
 use crate::arc_hashmap::ArcHashMap;
-use crate::async_util::call_async;
 use crate::crypto::read::{CryptoRead, CryptoReadSeek};
 use crate::crypto::write::{CryptoWrite, CryptoWriteSeek};
 use crate::crypto::Cipher;
@@ -1346,7 +1345,7 @@ impl EncryptedFs {
             return Err(FsError::InvalidFileHandle);
         }
 
-        let size = self.get_attr(ino).await?.size;
+        let _size = self.get_attr(ino).await?.size;
 
         let lock = self
             .read_write_locks
@@ -1368,7 +1367,7 @@ impl EncryptedFs {
         }
 
         // read data
-        let (buf, len) = {
+        let (_buf, len) = {
             let reader = ctx.reader.as_mut().unwrap();
 
             reader.seek(SeekFrom::Start(offset)).map_err(|err| {
@@ -1402,34 +1401,34 @@ impl EncryptedFs {
         ctx.attr.atime = SystemTime::now();
         drop(ctx);
 
-        self.sizes_read
-            .lock()
-            .await
-            .get_mut(&ino)
-            .unwrap()
-            .fetch_add(len as u64, Ordering::SeqCst);
-        self.requested_read
-            .lock()
-            .await
-            .get_mut(&ino)
-            .unwrap()
-            .fetch_add(buf.len() as u64, Ordering::SeqCst);
+        // self.sizes_read
+        //     .lock()
+        //     .await
+        //     .get_mut(&ino)
+        //     .unwrap()
+        //     .fetch_add(len as u64, Ordering::SeqCst);
+        // self.requested_read
+        //     .lock()
+        //     .await
+        //     .get_mut(&ino)
+        //     .unwrap()
+        //     .fetch_add(buf.len() as u64, Ordering::SeqCst);
 
-        if buf.len() != len {
-            error!(
-                "size mismatch in read(), size {size} offset {offset} buf_len {} len {len}",
-                buf.len()
-            );
-            let lock = self.write_handles.read().await;
-            lock.iter().for_each(|(_, lock2)| {
-                call_async(async {
-                    let ctx = lock2.lock().await;
-                    if ctx.ino == ino && size != ctx.attr.size {
-                        error!("trying to read from a file which is not commited yet, ctx size {} actual size {size}", ctx.attr.size);
-                    }
-                });
-            });
-        }
+        // if buf.len() != len {
+        //     error!(
+        //         "size mismatch in read(), size {size} offset {offset} buf_len {} len {len}",
+        //         buf.len()
+        //     );
+        //     let lock = self.write_handles.read().await;
+        //     lock.iter().for_each(|(_, lock2)| {
+        //         call_async(async {
+        //             let ctx = lock2.lock().await;
+        //             if ctx.ino == ino && size != ctx.attr.size {
+        //                 error!("trying to read from a file which is not commited yet, ctx size {} actual size {size}", ctx.attr.size);
+        //             }
+        //         });
+        //     });
+        // }
 
         Ok(len)
     }

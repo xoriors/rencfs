@@ -32,6 +32,11 @@ cargo doc --workspace --all-features
 if %errorlevel% neq 0 exit /b %errorlevel%
 cd ..
 
+cd java-bridge
+make
+if %errorlevel% neq 0 exit /b %errorlevel%
+cd ..
+
 cargo publish --dry-run --allow-dirty --target x86_64-unknown-linux-gnu
 if %errorlevel% neq 0 exit /b %errorlevel%
 

@@ -6,6 +6,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
 #[allow(clippy::missing_panics_doc)]
+#[allow(clippy::module_name_repetitions)]
 pub fn log_init(level: Level) -> WorkerGuard {
     let directive = format!("rencfs={}", level.as_str())
         .parse()

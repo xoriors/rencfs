@@ -14,15 +14,12 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::{fs, task};
-use tracing::level_filters::LevelFilter;
 use tracing::{error, info, warn, Level};
-use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::EnvFilter;
 
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
-use rencfs::{is_debug, log, mount};
+use rencfs::{log, mount};
 
 mod keyring;
 
