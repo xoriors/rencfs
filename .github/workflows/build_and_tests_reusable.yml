@@ -24,6 +24,11 @@ jobs:
           cargo build --all-targets --all-features --target x86_64-unknown-linux-gnu
           cargo build --release --all-targets --all-features --target x86_64-unknown-linux-gnu
 
+      - name: build java-bridge
+        run: |
+          cd java bridge
+          make
+
       - name: fmt check
         run: cargo fmt --all --check
 
