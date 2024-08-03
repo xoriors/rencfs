@@ -25,5 +25,5 @@ Example Kotlin app that uses [kotlin-bridge](../kotlin-bridge) to interact with 
 Change in [build.gradle.kts](build.gradle.kts) in `applicationDefaultJvmArgs` the path of the dir where `librust_jni.so` is, and in `tasks.named<JavaExec>("run")` `args` the paths in this order `mnt`, `data_dir`, `password`.
 
 ```bash
-java -Djava.library.path=../kotlin-bridge/target/release/ -classpath build/classes/kotlin/main:/home/gnome/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/2.0.0/b48df2c4aede9586cc931ead433bc02d6fd7879e/kotlin-stdlib-2.0.0.jar:/home/gnome/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations/13.0/919f0dfe192fb4e063e7dacadee7f8bb9a2672a9/annotations-13.0.jar MainKt /home/gnome/rencfs /home/gnome/rencfs_data a
+JAVA_OPTS="-Djava.library.path=../kotlin-bridge/target/release/" ./gradlew run --args="/home/gnome/rencfs /home/gnome/rencfs_data a"
 ```
