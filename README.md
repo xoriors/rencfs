@@ -363,8 +363,7 @@ sudo dnf localinstall rencfs-xxx.x86_64.rpm
 
 ## Developing inside a Container
 
-See here how to configure for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers)  
-And here for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html)
+See here how to configure for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html) and here for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers).
 
 You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build
 and run the app.
