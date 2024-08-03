@@ -22,7 +22,7 @@ use tracing_subscriber::EnvFilter;
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
-use rencfs::{is_debug, mount};
+use rencfs::{is_debug, log, mount};
 
 mod keyring;
 
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
         panic!("Invalid log level");
     }
     let log_level = log_level.unwrap();
-    let guard = log_init(log_level);
+    let guard = log::log_init(log_level);
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
             }
             error!("{err}");
             if let Some(mount_point) = mount_point {
-                let _ = umount(mount_point).map_err(|err| {
+                let _ = mount::umount(mount_point).map_err(|err| {
                     warn!("Cannot umount, maybe it was not mounted: {err}");
                     err
                 });
@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
         Ok(Err(err)) => {
             error!("{err:#?}");
             if let Some(mount_point) = mount_point {
-                let _ = umount(mount_point).map_err(|err| {
+                let _ = mount::umount(mount_point).map_err(|err| {
                     warn!("Cannot umount, maybe it was not mounted: {err}");
                     err
                 });
@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
         Err(err) => {
             error!("{err}");
             if let Some(mount_point) = mount_point {
-                let _ = umount(mount_point).map_err(|err| {
+                let _ = mount::umount(mount_point).map_err(|err| {
                     warn!("Cannot umount, maybe it was not mounted: {err}");
                     err
                 });
@@ -327,7 +327,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     }
 
     if matches.get_flag("umount-on-start") {
-        let _ = umount(mountpoint.as_str()).map_err(|err| {
+        let _ = mount::umount(mountpoint.as_str()).map_err(|err| {
             warn!("Cannot umount, maybe it was not mounted: {err}");
             err
         });
@@ -393,7 +393,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
                     .umount()
                     .await;
                 if res.is_err() {
-                    umount(mountpoint.as_str())?;
+                    mount::umount(mountpoint.as_str())?;
                 }
                 Ok::<(), io::Error>(())
             })
@@ -433,66 +433,4 @@ fn remove_pass() {
             PASS = None;
         }
     }
-}
-
-fn umount(mountpoint: &str) -> io::Result<()> {
-    // try normal umount
-    if process::Command::new("umount")
-        .arg(mountpoint)
-        .output()?
-        .status
-        .success()
-    {
-        return Ok(());
-    }
-    // force umount
-    if process::Command::new("umount")
-        .arg("-f")
-        .arg(mountpoint)
-        .output()?
-        .status
-        .success()
-    {
-        return Ok(());
-    }
-    // lazy umount
-    if process::Command::new("umount")
-        .arg("-l")
-        .arg(mountpoint)
-        .output()?
-        .status
-        .success()
-    {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("cannot umount {}", mountpoint),
-        ))
-    }
-}
-
-#[allow(clippy::missing_panics_doc)]
-pub fn log_init(level: Level) -> WorkerGuard {
-    let directive = format!("rencfs={}", level.as_str())
-        .parse()
-        .expect("cannot parse log directive");
-    let filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
-        .from_env()
-        .unwrap()
-        .add_directive(directive);
-
-    let (writer, guard) = tracing_appender::non_blocking(io::stdout());
-    let builder = tracing_subscriber::fmt()
-        .with_writer(writer)
-        .with_env_filter(filter);
-    // .with_max_level(level);
-    if is_debug() {
-        builder.pretty().init();
-    } else {
-        builder.init();
-    }
-
-    guard
 }

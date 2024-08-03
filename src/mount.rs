@@ -3,10 +3,10 @@ use crate::encryptedfs::{FsResult, PasswordProvider};
 use async_trait::async_trait;
 use futures_util::FutureExt;
 use std::future::Future;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::{io, process};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -104,4 +104,41 @@ pub fn create_mount_point(
         direct_io,
         suid_support,
     )
+}
+
+pub fn umount(mountpoint: &str) -> io::Result<()> {
+    // try normal umount
+    if process::Command::new("umount")
+        .arg(mountpoint)
+        .output()?
+        .status
+        .success()
+    {
+        return Ok(());
+    }
+    // force umount
+    if process::Command::new("umount")
+        .arg("-f")
+        .arg(mountpoint)
+        .output()?
+        .status
+        .success()
+    {
+        return Ok(());
+    }
+    // lazy umount
+    if process::Command::new("umount")
+        .arg("-l")
+        .arg(mountpoint)
+        .output()?
+        .status
+        .success()
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("cannot umount {}", mountpoint),
+        ))
+    }
 }
