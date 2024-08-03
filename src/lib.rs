@@ -305,6 +305,7 @@ pub mod crypto;
 pub mod encryptedfs;
 pub mod expire_value;
 pub mod fs_util;
+pub mod log;
 pub mod mount;
 pub mod stream_util;
 pub(crate) mod test_common;

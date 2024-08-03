@@ -5,7 +5,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::{NonZeroUsize, ParseIntError};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Weak};
 use std::time::{Duration, SystemTime};
 use std::{fs, io};
@@ -22,9 +22,10 @@ use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::{JoinError, JoinSet};
 use tokio_stream::wrappers::ReadDirStream;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn, Level};
 
 use crate::arc_hashmap::ArcHashMap;
+use crate::async_util::call_async;
 use crate::crypto::read::{CryptoRead, CryptoReadSeek};
 use crate::crypto::write::{CryptoWrite, CryptoWriteSeek};
 use crate::crypto::Cipher;
@@ -567,6 +568,9 @@ pub struct EncryptedFs {
         ExpireValue<Mutex<LruCache<String, SecretString>>, FsError, DirEntryNameCacheProvider>,
     dir_entries_meta_cache:
         ExpireValue<Mutex<DirEntryMetaCache>, FsError, DirEntryMetaCacheProvider>,
+    sizes_write: Mutex<HashMap<u64, AtomicU64>>,
+    sizes_read: Mutex<HashMap<u64, AtomicU64>>,
+    requested_read: Mutex<HashMap<u64, AtomicU64>>,
 }
 
 impl EncryptedFs {
@@ -615,6 +619,9 @@ impl EncryptedFs {
                 DirEntryMetaCacheProvider {},
                 Duration::from_secs(10 * 60),
             ),
+            sizes_write: Mutex::default(),
+            sizes_read: Mutex::default(),
+            requested_read: Mutex::default(),
         };
 
         let arc = Arc::new(fs);
@@ -1315,9 +1322,11 @@ impl EncryptedFs {
         Ok(())
     }
 
-    /// Read the contents from an 'offset'. If we try to read outside of file size, we return 0 bytes.
-    /// If the file is not opened for read, it will return an error of type ['FsError::InvalidFileHandle'].
-    #[instrument(skip(self, buf))]
+    /// Read the contents from an `offset`.
+    ///
+    /// If we try to read outside of file size, we return zero bytes.
+    /// If the file is not opened for read, it will return an error of type [FsError::InvalidFileHandle].
+    #[instrument(skip(self, buf), fields(len = %buf.len()), ret(level = Level::DEBUG))]
     #[allow(clippy::missing_errors_doc)]
     #[allow(clippy::cast_possible_truncation)]
     pub async fn read(
@@ -1336,6 +1345,8 @@ impl EncryptedFs {
         if !self.read_handles.read().await.contains_key(&handle) {
             return Err(FsError::InvalidFileHandle);
         }
+
+        let size = self.get_attr(ino).await?.size;
 
         let lock = self
             .read_write_locks
@@ -1357,7 +1368,7 @@ impl EncryptedFs {
         }
 
         // read data
-        let len = {
+        let (buf, len) = {
             let reader = ctx.reader.as_mut().unwrap();
 
             reader.seek(SeekFrom::Start(offset)).map_err(|err| {
@@ -1372,22 +1383,63 @@ impl EncryptedFs {
                 // we would need to seek after filesize
                 return Ok(0);
             }
-            stream_util::read(reader, buf).map_err(|err| {
+            // keep block size to max the cipher can handle
+            #[allow(clippy::cast_possible_truncation)]
+            let buf = if offset + buf.len() as u64 > self.cipher.max_plaintext_len() as u64 {
+                warn!("reading more than max block size, truncating");
+                buf.split_at_mut(self.cipher.max_plaintext_len() - offset as usize)
+                    .0
+            } else {
+                buf
+            };
+            let len = stream_util::read(reader, buf).map_err(|err| {
                 error!(err = %err, "reading");
                 err
-            })?
+            })?;
+            (buf, len)
         };
 
         ctx.attr.atime = SystemTime::now();
         drop(ctx);
 
+        self.sizes_read
+            .lock()
+            .await
+            .get_mut(&ino)
+            .unwrap()
+            .fetch_add(len as u64, Ordering::SeqCst);
+        self.requested_read
+            .lock()
+            .await
+            .get_mut(&ino)
+            .unwrap()
+            .fetch_add(buf.len() as u64, Ordering::SeqCst);
+
+        if buf.len() != len {
+            error!(
+                "size mismatch in read(), size {size} offset {offset} buf_len {} len {len}",
+                buf.len()
+            );
+            let lock = self.write_handles.read().await;
+            lock.iter().for_each(|(_, lock2)| {
+                call_async(async {
+                    let ctx = lock2.lock().await;
+                    if ctx.ino == ino && size != ctx.attr.size {
+                        error!("trying to read from a file which is not commited yet, ctx size {} actual size {size}", ctx.attr.size);
+                    }
+                });
+            });
+        }
+
         Ok(len)
     }
 
     #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::too_many_lines)]
     pub async fn release(&self, handle: u64) -> FsResult<()> {
         if handle == 0 {
-            // in case of directory or if the file was crated without being opened we don't use handle
+            // in the case of directory or if the file was crated
+            // without being opened we don't use a handle
             return Ok(());
         }
         let mut valid_fh = false;
@@ -1441,6 +1493,43 @@ impl EncryptedFs {
             let attr = ctx.attr.clone();
             drop(ctx);
             self.set_attr(ino, attr.into()).await?;
+            let attr = self.get_attr(ino).await?;
+            {
+                let write_size = self
+                    .sizes_write
+                    .lock()
+                    .await
+                    .get(&ino)
+                    .unwrap()
+                    .load(Ordering::SeqCst);
+                info!("written for {ino} {write_size}");
+                if attr.size != write_size {
+                    error!("size mismatch write {} {}", write_size, attr.size);
+                }
+                let requested_read = self
+                    .requested_read
+                    .lock()
+                    .await
+                    .get(&ino)
+                    .unwrap()
+                    .load(Ordering::SeqCst);
+                let read = self
+                    .sizes_read
+                    .lock()
+                    .await
+                    .get(&ino)
+                    .unwrap()
+                    .load(Ordering::SeqCst);
+                if requested_read != read {
+                    error!(
+                        "size mismatch read, size {} requested {} read {}",
+                        attr.size, requested_read, read
+                    );
+                }
+            }
+            self.sizes_write.lock().await.remove(&ino);
+            self.sizes_read.lock().await.remove(&ino);
+            self.requested_read.lock().await.remove(&ino);
             drop(write_guard);
             self.opened_files_for_write.write().await.remove(&ino);
             self.reset_handles(ino, Some(handle), true).await?;
@@ -1454,20 +1543,22 @@ impl EncryptedFs {
         Ok(())
     }
 
-    /// Check if a file is opened for read with this handle.
+    /// Check if a file is opened for reading with this handle.
     pub async fn is_read_handle(&self, fh: u64) -> bool {
         self.read_handles.read().await.contains_key(&fh)
     }
 
-    /// Check if a file is opened for write with this handle.
+    /// Check if a file is opened for writing with this handle.
     pub async fn is_write_handle(&self, fh: u64) -> bool {
         self.write_handles.read().await.contains_key(&fh)
     }
 
-    /// Writes the contents of `buf` to the file at `ino` starting at `offset`.
-    /// If we write outside of file size, we fill up with zeros until offset.  
-    /// If the file is not opened for writing, it will return an error of type ['FsError::InvalidFileHandle'].
-    #[instrument(skip(self, buf))]
+    /// Writes the contents of `buf` to the file with `ino` starting at `offset`.
+    ///
+    /// If we write outside file size, we fill up with zeros until the `offset`.  
+    /// If the file is not opened for writing,
+    /// it will return an error of type [FsError::InvalidFileHandle].
+    #[instrument(skip(self, buf), fields(len = %buf.len()), ret(level = Level::DEBUG))]
     pub async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
         if !self.exists(ino) {
             return Err(FsError::InodeNotFound);
@@ -1516,9 +1607,10 @@ impl EncryptedFs {
                 // we could not seek to the desired position
                 return Ok(0);
             }
-            // keep filesize to max the cipher can handle
+            // keep block size to max the cipher can handle
             #[allow(clippy::cast_possible_truncation)]
             let buf = if offset + buf.len() as u64 > self.cipher.max_plaintext_len() as u64 {
+                warn!("writing more than max block size, truncating");
                 &buf[..(self.cipher.max_plaintext_len() - offset as usize)]
             } else {
                 buf
@@ -1530,6 +1622,7 @@ impl EncryptedFs {
             (writer.stream_position()?, len)
         };
 
+        let size = ctx.attr.size;
         if pos > ctx.attr.size {
             // if we write pass file size set the new size
             debug!("setting new file size {}", pos);
@@ -1543,6 +1636,28 @@ impl EncryptedFs {
 
         drop(write_guard);
         self.reset_handles(ino, Some(handle), true).await?;
+
+        self.sizes_write
+            .lock()
+            .await
+            .get_mut(&ino)
+            .unwrap()
+            .fetch_add(len as u64, Ordering::SeqCst);
+        if buf.len() != len {
+            error!(
+                "size mismatch in write(), size {size} offset {offset} buf_len {} len {len}",
+                buf.len()
+            );
+        }
+        info!(
+            "written uncommited for {ino} size {}",
+            self.sizes_write
+                .lock()
+                .await
+                .get(&ino)
+                .unwrap()
+                .load(Ordering::SeqCst)
+        );
 
         Ok(len)
     }
@@ -1649,7 +1764,7 @@ impl EncryptedFs {
                 )
                 .await;
             if res.is_err() && read {
-                // on error remove the read handle if it was added above
+                // on error remove the read handle if it was added above,
                 // remove the read handle if it was added above
                 self.read_handles
                     .write()
@@ -1658,13 +1773,30 @@ impl EncryptedFs {
             }
             res?;
         }
-        Ok(handle.unwrap())
+        let fh = handle.unwrap();
+        self.sizes_write
+            .lock()
+            .await
+            .entry(ino)
+            .or_insert(AtomicU64::new(0));
+        self.sizes_read
+            .lock()
+            .await
+            .entry(ino)
+            .or_insert(AtomicU64::new(0));
+        self.requested_read
+            .lock()
+            .await
+            .entry(ino)
+            .or_insert(AtomicU64::new(0));
+        Ok(fh)
     }
 
     /// Truncates or extends the underlying file, updating the size of this file to become size.
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::too_many_lines)]
     pub async fn set_len(&self, ino: u64, size: u64) -> FsResult<()> {
+        info!("truncate {ino} to {size}");
         let attr = self.get_attr(ino).await?;
         if matches!(attr.kind, FileType::Directory) {
             return Err(FsError::InvalidInodeType);
@@ -1738,6 +1870,10 @@ impl EncryptedFs {
         println!("attr 2: {:?}", attr.size);
         let attr = self.get_attr(ino).await?;
         println!("attr 2: {:?}", attr.size);
+
+        if size != attr.size {
+            error!("error truncating file expected {size} actual {}", attr.size);
+        }
 
         Ok(())
     }
