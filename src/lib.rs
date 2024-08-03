@@ -89,7 +89,7 @@
 //! - `password`: The password to encrypt/decrypt the data.
 //! - `cipher`: The encryption algorithm to use.
 //!
-//! Currently, it supports these ciphers [Cipher](crypto::Cipher).
+//!   Currently, it supports these ciphers [Cipher](crypto::Cipher).
 //!
 //! ### Example
 //!

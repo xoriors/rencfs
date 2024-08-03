@@ -3,7 +3,9 @@ set CARGO_TERM_COLOR=always
 set RUSTFLAGS=-Dwarnings
 set RUSTDOCFLAGS=-Dwarnings
 
-cargo build --all --all-features
+cargo fmt --all
+
+cargo build --all --all-features --target x86_64-unknown-linux-gnu
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 cargo build --all --all-features --target x86_64-unknown-linux-gnu
@@ -24,11 +26,11 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-cargo doc --workspace --all-features
+cargo doc --workspace --all-features --target x86_64-unknown-linux-gnu
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 cd examples
-cargo doc --workspace --all-features
+cargo doc --workspace --all-features --target x86_64-unknown-linux-gnu
 if %errorlevel% neq 0 exit /b %errorlevel%
 cd ..
 
