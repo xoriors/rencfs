@@ -255,6 +255,8 @@ cat test.txt
 
 ## Locally
 
+For now the `FUSE` (`fuse3` crate)  only works on `Linux`, so in order to start the project you will need to be on Linux. Alternativelly you can [Develop inside a Container](#developing-inside-a-container), which will start a local Linux container, the IDE will connect to it, you can build and start the app in there and also use terminal to test it.
+
 ### Getting the sources
 
 ```bash
