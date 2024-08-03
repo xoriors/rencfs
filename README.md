@@ -255,6 +255,8 @@ cat test.txt
 
 ## Locally
 
+For now the `FUSE` (`fuse3` crate)  only works on `Linux`, so in order to start the project you will need to be on Linux. Alternativelly you can [Develop inside a Container](#developing-inside-a-container), which will start a local Linux container, the IDE will connect to it, you can build and start the app in there and also use terminal to test it.
+
 ### Getting the sources
 
 ```bash
@@ -328,6 +330,20 @@ cargo build --release
 cargo run --release -- mount --mount-point MOUNT_POINT --data-dir DATA_DIR
 ```
 
+#### Dev settings
+
+If you don't want to be prompted for password you can set this env var and run like this:
+
+```bash
+RENCFS_PASSWORD=PASS cargo run --release -- mount --mount-point MOUNT_POINT --data-dir DATA_DIR
+```
+
+For dev mode is recommended to run with `DEBUG` log level:
+
+```bash
+cargo run --release -- --log-level DEBUG mount --mount-point MOUNT_POINT --data-dir DATA_DIR
+```
+
 ### Build local RPM for Fedora
 
 This is using [cargo-generate-rpm](https://crates.io/crates/cargo-generate-rpm)
@@ -349,8 +365,7 @@ sudo dnf localinstall rencfs-xxx.x86_64.rpm
 
 ## Developing inside a Container
 
-See here how to configure for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers)  
-And here for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html)
+See here how to configure for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html) and for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers).
 
 You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build
 and run the app.
