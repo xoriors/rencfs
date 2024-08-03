@@ -17,11 +17,10 @@ fun main(args: Array<String>) {
 
     try {
         println("Mounting...")
-        val handle = mount(mnt, dataDir, password)
-        println("Mounted, press any key to umount...")
-        Thread.sleep(Long.MAX_VALUE) // Sleep for 10 seconds
-        println("Umounting...")
-        umount(handle)
+        val handle = mount(mnt, dataDir, password, true)
+        println("Mounted, press Ctrl+C to umount...")
+        Thread.sleep(Long.MAX_VALUE)
+        umountAll()
     } catch (e: Exception) {
         println(e)
         exitProcess(1)

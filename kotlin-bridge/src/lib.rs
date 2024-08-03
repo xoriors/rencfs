@@ -7,7 +7,7 @@ extern crate tracing;
 use crate::rencfs::mount::MountPoint;
 use ctrlc::set_handler;
 use jni::objects::{JClass, JString};
-use jni::sys::{jint, jstring};
+use jni::sys::{jboolean, jint, jstring};
 use jni::JNIEnv;
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::PasswordProvider;
@@ -18,10 +18,11 @@ use std::collections::BTreeMap;
 use std::ops::{Add, Deref};
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::{LazyLock, Mutex};
+use std::sync::LazyLock;
 use std::{io, process};
 use tokio::runtime::Runtime;
-use tracing::{error, info, Level};
+use tokio::sync::Mutex;
+use tracing::{error, info, warn, Level};
 use tracing_appender::non_blocking::WorkerGuard;
 
 fn hello(name: &str) -> String {
@@ -73,6 +74,7 @@ pub extern "system" fn Java_RustLibrary_mount(
     mnt: JString,
     data_dir: JString,
     password: JString,
+    umount_first: jboolean,
 ) -> jint {
     let _guard = LOG_GUARD.deref();
     let mount_path: String = env.get_string(&mnt).unwrap().into();
@@ -81,6 +83,13 @@ pub extern "system" fn Java_RustLibrary_mount(
 
     info!("mount_path: {}", mount_path);
     info!("data_dir_path: {}", data_dir_path);
+
+    if umount_first == 1 {
+        let _ = umount(mount_path.as_str()).map_err(|err| {
+            warn!("Cannot umount, maybe it was not mounted: {err}");
+            err
+        });
+    }
 
     struct PasswordProviderImpl(String);
     impl PasswordProvider for PasswordProviderImpl {
@@ -111,7 +120,7 @@ pub extern "system" fn Java_RustLibrary_mount(
                 .unwrap();
             let _ = rt
                 .block_on(async {
-                    for (_, (mnt, handle)) in HANDLES.lock().unwrap().take().unwrap().into_iter() {
+                    for (_, (mnt, handle)) in HANDLES.lock().await.take().unwrap().into_iter() {
                         let res = handle.umount().await;
                         if res.is_err() {
                             umount(&mnt)?;
@@ -145,17 +154,19 @@ pub extern "system" fn Java_RustLibrary_mount(
         }
     };
     let next_handle = NEXT_HANDLE_ID.add(1);
-    HANDLES
-        .lock()
-        .unwrap()
-        .as_mut()
-        .unwrap()
-        .insert(next_handle, (mount_path, handle));
+    RT.block_on(async {
+        HANDLES
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .insert(next_handle, (mount_path.clone(), handle));
+    });
 
     next_handle as jint
 }
 
-/// Unmounts the filesystem at `mount` handle returned by `mount`.
+/// Unmounts the filesystem at `mount handle` returned by [mount].
 #[allow(non_snake_case)]
 #[no_mangle]
 pub extern "system" fn Java_RustLibrary_umount(
@@ -166,29 +177,62 @@ pub extern "system" fn Java_RustLibrary_umount(
     handle: jint,
 ) {
     let handle = handle as u32;
-    let (mnt, handle) = HANDLES
-        .lock()
-        .unwrap()
-        .as_mut()
-        .unwrap()
-        .remove(&handle)
-        .unwrap();
+
     match RT.block_on(async {
-        handle
+        let (mnt, handle) = HANDLES
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .remove(&handle)
+            .unwrap();
+        match handle
             .umount()
             .await
             .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+        {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                error!("Cannot umount, force: {}", err);
+                match umount(&mnt) {
+                    Ok(_) => {
+                        info!("Umounted");
+                        Ok(())
+                    }
+                    Err(err) => Err(err),
+                }
+            }
+        }
     }) {
         Ok(_) => {}
         Err(err) => {
-            error!("Cannot umount, force: {}", err);
-            match umount(&mnt) {
-                Ok(_) => info!("Umounted"),
-                Err(err) => {
-                    error!("Cannot umount: {}", err);
-                    let _ = env.throw_new("java/io/IOException", format!("Cannot umount: {}", err));
-                }
+            error!("Cannot umount: {}", err);
+            let _ = env.throw_new("java/io/IOException", format!("Cannot umount: {}", err));
+        }
+    }
+}
+
+/// Unmounts all mounted filesystems.
+#[allow(non_snake_case)]
+#[no_mangle]
+pub extern "system" fn Java_RustLibrary_umountAll(
+    // Java environment.
+    mut env: JNIEnv,
+    // Static class which owns this method.
+    _class: JClass,
+) {
+    match RT.block_on(async {
+        for (_, (mnt, handle)) in HANDLES.lock().await.take().unwrap().into_iter() {
+            let res = handle.umount().await;
+            if res.is_err() {
+                umount(&mnt)?;
             }
+        }
+        Ok::<(), io::Error>(())
+    }) {
+        Ok(_) => info!("Umounted"),
+        Err(err) => {
+            let _ = env.throw_new("java/io/IOException", format!("Cannot umount: {}", err));
         }
     }
 }

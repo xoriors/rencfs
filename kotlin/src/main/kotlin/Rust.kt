@@ -8,10 +8,17 @@ external fun hello(str: String): String;
 
 /***
  * Mounts a filesystem at `mnt` with `data_dir` and `password`, returning the mount handle.
+ *
+ * @param umountFirst: If `true`, unmounts the filesystem at `mnt` before mounting.
  */
-external fun mount(mnt: String, data_dir: String, password: String): Int;
+external fun mount(mnt: String, dataDir: String, password: String, umountFirst: Boolean): Int;
 
 /***
  * Unmounts the filesystem at `mount` handle returned by `mount`.
  */
 external fun umount(handle: Int);
+
+/***
+ * Unmounts all mounted filesystems.
+ */
+external fun umountAll();
