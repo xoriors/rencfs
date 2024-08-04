@@ -1,0 +1,360 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'rencfs'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "rencfs",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'rencfs'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=rencfs",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "rencfs",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'rencfs'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=rencfs",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "rencfs",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'change_password'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=change_password",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "change_password",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'change_password'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=change_password",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "change_password",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'change_password_cli'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=change_password_cli",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "change_password_cli",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'change_password_cli'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=change_password_cli",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "change_password_cli",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'crypto_speed'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=crypto_speed",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "crypto_speed",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'crypto_speed'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=crypto_speed",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "crypto_speed",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'crypto_write_read'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=crypto_write_read",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "crypto_write_read",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'crypto_write_read'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=crypto_write_read",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "crypto_write_read",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'encryptedfs'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=encryptedfs",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "encryptedfs",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'encryptedfs'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=encryptedfs",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "encryptedfs",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'internal_ring'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=internal_ring",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "internal_ring",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'internal_ring'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=internal_ring",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "internal_ring",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'internal_ring_speed'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=internal_ring_speed",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "internal_ring_speed",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'internal_ring_speed'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=internal_ring_speed",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "internal_ring_speed",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug example 'mount'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--example=mount",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "mount",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in example 'mount'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--example=mount",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "mount",
+                    "kind": "example"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
