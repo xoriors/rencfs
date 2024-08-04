@@ -5,7 +5,7 @@ Bridge between the Rust code and Kotlin/Java code.
 Build:
 
 ```bash
-make
+cargo build --release
 ```
 
 This will create `librust_jni.so` in `target/release`. You will need to provide that to Kotlin/Java app like:
