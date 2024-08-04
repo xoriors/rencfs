@@ -4,6 +4,8 @@ Bridge between the Rust code and Kotlin/Java code.
 
 # Build
 
+This will build for the current target.
+
 ```bash
 cargo build --release
 ```
