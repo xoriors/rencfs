@@ -7,6 +7,27 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug executable 'rencfs' in user.home",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=rencfs",
+                    "--package=rencfs"
+                ],
+                "filter": {
+                    "name": "rencfs",
+                    "kind": "bin"
+                }
+            },
+            "args": ["mount", "-m", "${env:HOME}/rencfs/mnt", "-d", "${env:HOME}/rencfs/data", "-u"],
+            "env": {
+                "RENCFS_PASSWORD": "a"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug unit tests in library 'rencfs'",
             "cargo": {
                 "args": [
@@ -21,27 +42,6 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug executable 'rencfs' in /tmp",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=rencfs",
-                    "--package=rencfs"
-                ],
-                "filter": {
-                    "name": "rencfs",
-                    "kind": "bin"
-                }
-            },
-            "args": ["mount", "-m", "/tmp/rencfs", "-d", "/tmp/rencfs_data", "-u"],
-            "env": {
-                "RENCFS_PASSWORD": "a"
-            },
             "cwd": "${workspaceFolder}"
         },
         {

@@ -4,10 +4,10 @@
             "type": "cargo",
             "name": "run",
             "cargoArgs": ["run"],
-            "executableArgs": ["mount", "-m", "$USER_HOME$/rencfs", "-d", "$USER_HOME$/rencfs_data", "-t", "$USER_HOME$/tmp"],
+            "executableArgs": ["mount", "-m", "$USER_HOME$/rencfs/mnt", "-d", "$USER_HOME$/rencfs/data", "-u"],
             "environment": {
-                "RENCFS_PASSWORD": "pass42",
-                "RUST_LOG": "none,rencfs=trace",
+                "RENCFS_PASSWORD": "a",
+                "RUST_LOG": "none,rencfs=info",
             },
             "workingDir": "$PROJECT_DIR$",
         },
