@@ -25,6 +25,7 @@ use futures_util::stream::Iter;
 use futures_util::{stream, FutureExt};
 use libc::{EACCES, EEXIST, EFBIG, EIO, EISDIR, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use secrecy::{ExposeSecret, SecretString};
+use tokio::fs;
 use tracing::{debug, error, instrument, trace, warn};
 use tracing::{info, Level};
 
@@ -1459,9 +1460,12 @@ async fn mount_fuse(
     direct_io: bool,
     suid_support: bool,
 ) -> FsResult<MountHandle> {
+    // create mount point if it doesn't exist
+    if !mountpoint.exists() {
+        fs::create_dir_all(&mountpoint).await?;
+    }
     let mut mount_options = &mut MountOptions::default();
     {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
         unsafe {
             mount_options = mount_options.uid(libc::getuid()).gid(libc::getgid());
         }
