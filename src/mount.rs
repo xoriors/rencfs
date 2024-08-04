@@ -29,6 +29,13 @@ use windows::MountHandleInnerImpl;
 #[cfg(target_os = "windows")]
 use windows::MountPointImpl;
 
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+mod dummy;
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+use dummy::MountHandleInnerImpl;
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+use dummy::MountPointImpl;
+
 #[async_trait]
 #[allow(clippy::module_name_repetitions)]
 #[allow(clippy::struct_excessive_bools)]

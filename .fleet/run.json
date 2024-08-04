@@ -2,7 +2,7 @@
     "configurations": [
         {
             "type": "cargo",
-            "name": "run",
+            "name": "rencfs",
             "cargoArgs": ["run"],
             "executableArgs": ["mount", "-m", "$USER_HOME$/rencfs/mnt", "-d", "$USER_HOME$/rencfs/data", "-u"],
             "environment": {
