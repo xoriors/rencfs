@@ -370,6 +370,10 @@ See here how to configure for [RustRover](https://www.jetbrains.com/help/rust/co
 You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build
 and run the app.
 
+# Minimum Supported Rust Version (MSRV)
+
+The minimum supported version is `1.75`.
+
 # Future
 
 - Plan is to implement it also on macOS and Windows
