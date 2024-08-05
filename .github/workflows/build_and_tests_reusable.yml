@@ -27,7 +27,7 @@ jobs:
       - name: build java-bridge
         run: |
           cd java bridge
-          make
+          cargo build --release
 
       - name: fmt check
         run: cargo fmt --all --check
