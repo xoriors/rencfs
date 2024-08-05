@@ -35,7 +35,7 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 cd ..
 
 cd java-bridge
-make
+cargo build --release
 if %errorlevel% neq 0 exit /b %errorlevel%
 cd ..
 

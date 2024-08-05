@@ -18,7 +18,7 @@ cd examples
 cargo doc --workspace --all-features --target x86_64-unknown-linux-gnu
 cd ..
 cd java-bridge
-make
+cargo build --release
 cd ..
 cargo publish --dry-run --allow-dirty --target x86_64-unknown-linux-gnu
 cargo aur

@@ -15,25 +15,11 @@ use linux::MountHandleInnerImpl;
 #[cfg(target_os = "linux")]
 use linux::MountPointImpl;
 
-#[cfg(target_os = "macos")]
-mod macos;
-#[cfg(target_os = "macos")]
-use macos::MountHandleInnerImpl;
-#[cfg(target_os = "macos")]
-use macos::MountPointImpl;
-
-#[cfg(target_os = "windows")]
-mod windows;
-#[cfg(target_os = "windows")]
-use windows::MountHandleInnerImpl;
-#[cfg(target_os = "windows")]
-use windows::MountPointImpl;
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "linux"))]
 mod dummy;
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "linux"))]
 use dummy::MountHandleInnerImpl;
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[cfg(not(target_os = "linux"))]
 use dummy::MountPointImpl;
 
 #[async_trait]
