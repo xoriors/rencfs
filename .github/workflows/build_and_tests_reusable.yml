@@ -24,19 +24,17 @@ jobs:
           cargo build --all-targets --all-features --target x86_64-unknown-linux-gnu
           cargo build --release --all-targets --all-features --target x86_64-unknown-linux-gnu
 
-      - name: build java-bridge
-        run: |
-          cd java bridge
-          cargo build --release
-
       - name: fmt check
-        run: cargo fmt --all --check
+        run: cargo fmt --all -- --check
 
       - name: check
-        run: cargo check --all-targets
+        run: cargo check --all --target x86_64-unknown-linux-gnu
 
       - name: tests
-        run: cargo test --release --all-features --target x86_64-unknown-linux-gnu
+        run: cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
+
+      - name: doc
+        run: cargo doc --workspace --all-features --no-deps --target x86_64-unknown-linux-gnu
 
       - name: test publish
         run: cargo publish --dry-run --allow-dirty --target x86_64-unknown-linux-gnu
@@ -48,3 +46,23 @@ jobs:
         run: |
           cargo aur
           cargo generate-rpm
+
+      - name: java-bridge build
+        run: |
+          cd java bridge
+          cargo build --release --all --all-features --target x86_64-unknown-linux-gnu
+
+      - name: java-bridge fmt check
+        run: |
+          cd java bridge
+          cargo fmt --all -- --check
+
+      - name: check
+        run: |
+          cd java bridge
+          cargo check --all --target x86_64-unknown-linux-gnu
+
+      - name: tests
+        run: |
+          cd java bridge
+          cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
