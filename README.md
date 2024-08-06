@@ -469,8 +469,7 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
 
 # Contribute
 
-Feel free to fork it, change and use it in any way that you want.
-If you build something interesting and feel like sharing pull requests are always appreciated.
+Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing pull requests are always appreciated.
 
 ## How to contribute
 
