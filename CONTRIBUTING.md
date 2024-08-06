@@ -14,7 +14,7 @@
    and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
 11. `cargo clippy --all --release` and fix any erorrs
 12. **MAKE SURE YOU RUN THIS BEFORE PUSHING TO THE REPO `./check-before-push.sh` or `cmd /c check-before-push.bat` and fix any errors**
-13. Create a **PR** back to the **parent** repo to the `main` branch
+13. Create a **PR** back to the **parent** repo targeting the `main` branch
 14. Monitor the checks (GitHub actions run) and fix the code if they are failing
 15. Respond to any comments
 16. In the end, ideally, it will be merged to `main`
