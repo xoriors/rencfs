@@ -1,5 +1,7 @@
 ## How to contribute
 
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you, as defined in the Apache License, shall be dual-licensed as above, without any additional terms or conditions.
+
 1. Fork the repo
 2. [Setup](https://github.com/radumarias/rencfs?tab=readme-ov-file#locally) dev env localy, replace URL repo with your fork URL
 3. Read the [docs](https://github.com/radumarias/rencfs) and [lib docs](https://docs.rs/rencfs/latest/rencfs), then become familiar with the code and run tests, benchmarks and examples. You can write some examples yourself and maybe some tests to help you understand the flow better. If you do, you can add these later on to the repo for the the community
