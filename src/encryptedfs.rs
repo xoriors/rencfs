@@ -54,8 +54,8 @@ fn spawn_runtime() -> Runtime {
     runtime
 }
 
-static DIR_ENTRIES_RT: LazyLock<Runtime> = LazyLock::new(|| spawn_runtime());
-static NOD_RT: LazyLock<Runtime> = LazyLock::new(|| spawn_runtime());
+static DIR_ENTRIES_RT: LazyLock<Runtime> = LazyLock::new(spawn_runtime);
+static NOD_RT: LazyLock<Runtime> = LazyLock::new(spawn_runtime);
 
 /// File attributes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -2190,7 +2190,7 @@ impl EncryptedFs {
                     .write()
                     .await
                     .entry(ino)
-                    .or_insert_with(|| HashSet::new())
+                    .or_insert_with(HashSet::new)
                     .insert(handle);
             }
         }

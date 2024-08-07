@@ -1,19 +1,3 @@
-#![cfg_attr(not(debug_assertions), deny(warnings))]
-#![feature(test)]
-// #![feature(error_generic_member_access)]
-#![feature(seek_stream_len)]
-#![feature(const_refs_to_cell)]
-#![doc(html_playground_url = "https://play.rust-lang.org")]
-#![deny(clippy::all)]
-#![deny(clippy::pedantic)]
-#![deny(clippy::nursery)]
-#![deny(clippy::cargo)]
-// #![deny(missing_docs)]
-#![allow(clippy::similar_names)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::significant_drop_tightening)]
-#![allow(clippy::redundant_closure)]
-#![allow(clippy::missing_errors_doc)]
 extern crate jni;
 extern crate rencfs;
 extern crate secrecy;
@@ -31,7 +15,7 @@ use rencfs::log::log_init;
 use rencfs::mount::{create_mount_point, umount, MountHandle};
 use secrecy::SecretString;
 use std::collections::BTreeMap;
-use std::ops::{Add, Deref};
+use std::ops::Add;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -52,22 +36,22 @@ pub struct State {
 }
 
 impl State {
-    fn dry_run(mut self, dry_run: bool) -> State {
+    const fn dry_run(mut self, dry_run: bool) -> Self {
         self.dry_run = dry_run;
         self
     }
 
-    fn simulate_mount_error(mut self, simulate_mount_error: bool) -> State {
+    const fn simulate_mount_error(mut self, simulate_mount_error: bool) -> Self {
         self.simulate_mount_error = simulate_mount_error;
         self
     }
 
-    fn simulate_umount_error(mut self, simulate_umount_error: bool) -> State {
+    const fn simulate_umount_error(mut self, simulate_umount_error: bool) -> Self {
         self.simulate_umount_error = simulate_umount_error;
         self
     }
 
-    fn simulate_umount_all_error(mut self, simulate_umount_all_error: bool) -> State {
+    const fn simulate_umount_all_error(mut self, simulate_umount_all_error: bool) -> Self {
         self.simulate_umount_all_error = simulate_umount_all_error;
         self
     }
@@ -130,7 +114,7 @@ pub extern "system" fn Java_RustLibrary_mount(
     password: JString,
     umount_first: jboolean,
 ) -> jint {
-    let _guard = LOG_GUARD.deref();
+    let _guard = &*LOG_GUARD;
     let mount_path: String = env.get_string(&mnt).unwrap().into();
     let data_dir_path: String = env.get_string(&data_dir).unwrap().into();
     let password: String = env.get_string(&password).unwrap().into();
@@ -158,7 +142,7 @@ pub extern "system" fn Java_RustLibrary_mount(
                     .unwrap();
                 let _ = rt
                     .block_on(async {
-                        for (_, (mnt, handle)) in HANDLES.lock().await.take().unwrap().into_iter() {
+                        for (_, (mnt, handle)) in HANDLES.lock().await.take().unwrap() {
                             let res = handle.umount().await;
                             if res.is_err() {
                                 umount(&mnt)?;
@@ -167,7 +151,7 @@ pub extern "system" fn Java_RustLibrary_mount(
                         Ok::<(), io::Error>(())
                     })
                     .map_err(|err| {
-                        eprintln!("Error: {}", err);
+                        eprintln!("Error: {err}");
                         process::exit(1);
                     });
                 eprintln!("Umounted");
@@ -212,7 +196,7 @@ pub extern "system" fn Java_RustLibrary_mount(
         Ok(handle) => handle,
         Err(err) => {
             error!("Cannot mount: {}", err);
-            let _ = env.throw_new("java/io/IOException", format!("cannot mount: {}", err));
+            let _ = env.throw_new("java/io/IOException", format!("cannot mount: {err}"));
             return -1;
         }
     };
@@ -262,11 +246,11 @@ pub extern "system" fn Java_RustLibrary_umount(
             .await
             .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
         {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(err) => {
                 error!("Cannot umount, force: {}", err);
                 match umount(&mnt) {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Umounted");
                         Ok(())
                     }
@@ -275,10 +259,10 @@ pub extern "system" fn Java_RustLibrary_umount(
             }
         }
     }) {
-        Ok(_) => {}
+        Ok(()) => {}
         Err(err) => {
             error!("Cannot umount: {}", err);
-            let _ = env.throw_new("java/io/IOException", format!("cannot umount: {}", err));
+            let _ = env.throw_new("java/io/IOException", format!("cannot umount: {err}"));
         }
     }
 }
@@ -298,7 +282,7 @@ pub extern "system" fn Java_RustLibrary_umountAll(
     }
 
     match RT.block_on(async {
-        for (_, (mnt, handle)) in HANDLES.lock().await.take().unwrap().into_iter() {
+        for (_, (mnt, handle)) in HANDLES.lock().await.take().unwrap() {
             let res = handle.umount().await;
             if res.is_err() {
                 umount(&mnt)?;
@@ -306,9 +290,9 @@ pub extern "system" fn Java_RustLibrary_umountAll(
         }
         Ok::<(), io::Error>(())
     }) {
-        Ok(_) => info!("Umounted"),
+        Ok(()) => info!("Umounted"),
         Err(err) => {
-            let _ = env.throw_new("java/io/IOException", format!("cannot umount: {}", err));
+            let _ = env.throw_new("java/io/IOException", format!("cannot umount: {err}"));
         }
     }
 }

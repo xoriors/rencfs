@@ -1,19 +1,3 @@
-#![cfg_attr(not(debug_assertions), deny(warnings))]
-#![feature(test)]
-// #![feature(error_generic_member_access)]
-#![feature(seek_stream_len)]
-#![feature(const_refs_to_cell)]
-#![doc(html_playground_url = "https://play.rust-lang.org")]
-#![deny(clippy::all)]
-#![deny(clippy::pedantic)]
-#![deny(clippy::nursery)]
-#![deny(clippy::cargo)]
-// #![deny(missing_docs)]
-#![allow(clippy::similar_names)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::significant_drop_tightening)]
-#![allow(clippy::redundant_closure)]
-#![allow(clippy::missing_errors_doc)]
 use std::env::args;
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter, Read, Write};
@@ -52,7 +36,7 @@ fn main() -> io::Result<()> {
     let mut args = args();
     let _ = args.next(); // skip the program name
     let in_path = args.next().expect("in_path is missing");
-    println!("in_path = {}", in_path);
+    println!("in_path = {in_path}");
     let input = OpenOptions::new().read(true).open(in_path.clone()).unwrap();
     let out_path = format!(
         "/tmp/{}.enc",
@@ -112,7 +96,7 @@ fn main() -> io::Result<()> {
             break;
         }
         if len != buffer.len() {
-            println!("len = {}", len);
+            println!("len = {len}");
         }
         // Data to be encrypted
         let data = &mut buffer[..len];
@@ -128,7 +112,7 @@ fn main() -> io::Result<()> {
     out.flush().unwrap();
     let end = std::time::Instant::now();
     let duration = end.duration_since(start);
-    println!("duration = {:?}", duration);
+    println!("duration = {duration:?}");
     println!(
         "speed MB/s {}",
         (file_size as f64 / duration.as_secs_f64()) / 1024.0 / 1024.0
@@ -171,7 +155,7 @@ fn main() -> io::Result<()> {
             break;
         }
         if len != buffer.len() {
-            println!("len = {}", len);
+            println!("len = {len}");
         }
         // Data to be encrypted
         let ciphertext = &mut buffer[..len];
@@ -185,7 +169,7 @@ fn main() -> io::Result<()> {
     out.flush().unwrap();
     let end = std::time::Instant::now();
     let duration = end.duration_since(start);
-    println!("duration = {:?}", duration);
+    println!("duration = {duration:?}");
     println!(
         "speed MB/s {}",
         (file_size as f64 / duration.as_secs_f64()) / 1024.0 / 1024.0

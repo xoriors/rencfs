@@ -32,7 +32,6 @@ pub trait CryptoWrite<W: Write + Send + Sync>: Write + Send + Sync {
 }
 
 /// ring
-
 #[allow(clippy::module_name_repetitions)]
 pub struct RingCryptoWrite<W: Write> {
     out: Option<W>,
@@ -184,7 +183,6 @@ impl NonceSequence for RandomNonceSequenceWrapper {
 }
 
 /// Write with Seek
-
 pub trait CryptoWriteSeek<W: Write + Seek + Send + Sync>: CryptoWrite<W> + Seek {}
 
 pub struct RingCryptoWriteSeek<W: Write + Seek + Read> {

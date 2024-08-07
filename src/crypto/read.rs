@@ -24,7 +24,6 @@ pub trait CryptoRead<R: Read + Send + Sync>: Read + Send + Sync {
 }
 
 /// ring
-
 #[macro_export]
 macro_rules! decrypt_block {
     ($block_index:expr, $buf:expr, $input:expr, $last_nonce:expr, $opening_key:expr) => {{
@@ -151,7 +150,6 @@ impl<R: Read + Send + Sync> CryptoRead<R> for RingCryptoRead<R> {
 }
 
 /// Read with Seek
-
 pub trait CryptoReadSeek<R: Read + Seek + Send + Sync>:
     CryptoRead<R> + Read + Seek + Send + Sync
 {

@@ -34,9 +34,7 @@ pub(super) async fn run() -> Result<()> {
 
     let str = matches.get_one::<String>("log-level").unwrap().as_str();
     let log_level = Level::from_str(str);
-    if log_level.is_err() {
-        panic!("Invalid log level");
-    }
+    assert!(log_level.is_ok(), "Invalid log level");
     let log_level = log_level.unwrap();
     let guard = log::log_init(log_level);
 
@@ -109,6 +107,7 @@ fn get_cli_args() -> ArgMatches {
                 .short('l')
                 .value_name("log-level")
                 .default_value("INFO")
+                .global(true)
                 .help("Log level, possible values: TRACE, DEBUG, INFO, WARN, ERROR"),
         )
         .arg(
@@ -117,6 +116,7 @@ fn get_cli_args() -> ArgMatches {
                 .short('c')
                 .value_name("cipher")
                 .default_value("ChaCha20Poly1305")
+                .global(true)
                 .help(format!("Cipher used for encryption, possible values: {}",
                               Cipher::iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ")),
                 )
@@ -357,7 +357,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         eprintln!("Received signal to exit");
         let mut status: Option<ExitStatusError> = None;
         remove_pass();
-        eprintln!("Unmounting {}", mountpoint);
+        eprintln!("Unmounting {mountpoint}");
         // create new tokio runtime
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -379,7 +379,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
                 Ok::<(), io::Error>(())
             })
             .map_err(|err| {
-                eprintln!("Error: {}", err);
+                eprintln!("Error: {err}");
                 status.replace(ExitStatusError::Failure(1));
                 err
             });
@@ -393,7 +393,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(async {
             tokio::time::sleep(tokio::time::Duration::from_secs(u64::MAX)).await;
-        })
+        });
     })
     .await?;
 

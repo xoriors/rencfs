@@ -1,3 +1,5 @@
+cargo-features = ["profile-rustflags"]
+
 [package]
 name = "rencfs"
 description = "An encrypted file system that is mounted with FUSE on Linux. It can be used to create encrypted directories."
@@ -57,6 +59,8 @@ fuse3 = { version = "0.7.2", features = ["tokio-runtime", "unprivileged"] }
 
 [profile.release]
 panic = "abort"
+# Treat warnings as errors in release builds
+rustflags = ["-Dwarnings"]
 
 [package.metadata.aur]
 depends = ["fuse3"]
@@ -75,3 +79,15 @@ assets = [
 ]
 [package.metadata.generate-rpm.requires]
 fuse3 = "*"
+
+[lints.clippy]
+#all = "deny"
+#correctness = "deny"
+#suspicious = "deny"
+#style = "deny"
+#complexity = "deny"
+#perf = "deny"
+#pedantic = "deny"
+#restriction = "deny"
+#nursery = "deny"
+#cargo = "deny"
