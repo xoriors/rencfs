@@ -61,6 +61,7 @@ fuse3 = { version = "0.7.2", features = ["tokio-runtime", "unprivileged"] }
 panic = "abort"
 # Treat warnings as errors in release builds
 rustflags = ["-Dwarnings"]
+lto = true
 
 [package.metadata.aur]
 depends = ["fuse3"]
