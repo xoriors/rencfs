@@ -15,8 +15,9 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
    save, [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html)
    and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
 11. `cargo clippy --all --release` and fix any erorrs
-12. **MAKE SURE YOU RUN THIS BEFORE PUSHING TO THE REPO `./check-before-push.sh` or `cmd /c check-before-push.bat` and fix any errors**
-13. Create a **PR** back to the **parent** repo targeting the `main` branch
-14. Monitor the checks (GitHub actions run) and fix the code if they are failing
-15. Respond to any comments
-16. In the end, ideally, it will be merged to `main`
+12. **DON'T INCREASE THE VERSION NUMBER IN `Cargo.toml`, WE WILL DO THAN WHEN RELEASING**
+13. **MAKE SURE YOU RUN THIS BEFORE PUSHING TO THE REPO `./check-before-push.sh` or `cmd /c check-before-push.bat` and fix any errors**
+14. Create a **PR** back to the **parent** repo targeting the `main` branch
+15. Monitor the checks (GitHub actions run) and fix the code if they are failing
+16. Respond to any comments
+17. In the end, ideally, it will be merged to `main`
