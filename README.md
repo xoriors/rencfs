@@ -75,7 +75,8 @@ In progress:
 - [secrecy](https://crates.io/crates/secrecy) for keeping pass and encryption keys safe in memory and zeroing them when
   not used. It keeps encryption keys in memory only while being used, and when not active it will release and zeroing
   them from memory
-- password can be saved in OS keyring using [keyring](https://crates.io/crates/keyring)
+- [blake3](https://crates.io/crates/blake3) for hashing
+- password saved in OS keyring using [keyring](https://crates.io/crates/keyring)
 - [tracing](https://crates.io/crates/tracing) for logs
 
 # Usage
