@@ -451,8 +451,7 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
 - Please note that this project is not audited by any security expert. It's built with security in mind and tries to
   follow all the best practices, but it's not guaranteed to be secure
 - **Also, please back up your data, the project is still in development, and there might be bugs that can lead to data
-  loss
-  **
+  loss**
 
 # Considerations
 
