@@ -420,7 +420,7 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
 
 # Security
 
-- Phantom reads: reading older content from a file, this is not possible. Data is written with WAL and periodically
+- **Phantom reads**: reading older content from a file, this is not possible. Data is written with WAL and periodically
   flushed to file. This ensures data integrity and maintain changes order.
   One problem that may occur is if we do a truncate we change the content of the file, but the process is killed before
   we write the metadata with the new filesize. In this case, next time we mount the system, we are still seeing the old
@@ -428,7 +428,7 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
   pick up
   the new zeros bytes written on truncating by increasing the size. If content is smaller the read would stop and
   end-of-file of the actual content, so this would not be such a big issue
-- What kind of metadata does it leak: close to none. The filename, actual file size and other file attrs (times,
+- **What kind of metadata does it leak**: close to none. The filename, actual file size and other file attrs (times,
   permissions, other flags) are kept encrypted. What it could possibly leak is the following
     - If a directory has children, we keep those children in a directory with name as inode number with encrypted names
       of children as files in it.
@@ -445,7 +445,7 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
 - To reduce the risk of encryption key to be exposed from memory, it's recommended to disable mem dumps on the
   OS level. Please see [here](https://www.cyberciti.biz/faq/disable-core-dumps-in-linux-with-systemd-sysctl/) how to do
   it on Linux
-- Cold boot attacks: to reduce the risk of this, we keep the encryption key in memory just as long as we really
+- **Cold boot attacks**: to reduce the risk of this, we keep the encryption key in memory just as long as we really
   need it to encrypt/decrypt data and we are zeroing it after that. We also remove it from memory after a period of
   inactivity
 - Please note that this project is not audited by any security expert. It's built with security in mind and tries to
