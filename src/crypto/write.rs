@@ -77,7 +77,7 @@ impl<W: Write> RingCryptoWrite<W> {
                 )
             })?;
         let nonce_sequence = self.nonce_sequence.lock().unwrap();
-        let nonce = nonce_sequence.last_nonce.as_ref().unwrap();
+        let nonce = &nonce_sequence.last_nonce;
         self.out.as_mut().unwrap().write_all(nonce)?;
         self.out.as_mut().unwrap().write_all(data)?;
         self.buf.clear();
@@ -142,14 +142,14 @@ impl<W: Write + Send + Sync> CryptoWrite<W> for RingCryptoWrite<W> {
 
 struct RandomNonceSequence {
     rng: Mutex<Box<dyn RngCore + Send + Sync>>,
-    last_nonce: Option<Vec<u8>>,
+    last_nonce: Vec<u8>,
 }
 
 impl Default for RandomNonceSequence {
     fn default() -> Self {
         Self {
             rng: Mutex::new(Box::new(crypto::create_rng())),
-            last_nonce: None,
+            last_nonce: vec![0; NONCE_LEN],
         }
     }
 }
@@ -157,12 +157,8 @@ impl Default for RandomNonceSequence {
 impl NonceSequence for RandomNonceSequence {
     // called once for each seal operation
     fn advance(&mut self) -> Result<Nonce, Unspecified> {
-        self.last_nonce = Some(vec![0; NONCE_LEN]);
-        self.rng
-            .lock()
-            .unwrap()
-            .fill_bytes(self.last_nonce.as_mut().unwrap());
-        Nonce::try_assume_unique_for_key(self.last_nonce.as_mut().unwrap())
+        self.rng.lock().unwrap().fill_bytes(&mut self.last_nonce);
+        Nonce::try_assume_unique_for_key(&self.last_nonce)
     }
 }
 
