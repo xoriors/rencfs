@@ -384,10 +384,8 @@ The minimum supported version is `1.75`.
 
 # Performance
 
-- `Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of **1.28** on average. This is because of the
-  hardware acceleration of AES on most CPUs via AES-NI. But where hardware acceleration is not
-  available `ChaCha20Poly1305` is
-  faster
+`Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of **1.28** on average. This is because of the hardware acceleration of AES 
+on most CPUs via AES-NI. But where hardware acceleration is not available `ChaCha20Poly1305` is faster. Also `ChaChaPoly1305` is better at `SIMD`.
 
 # Cipher comparison
 
@@ -415,6 +413,7 @@ The minimum supported version is `1.75`.
     - ChaCha20-Poly1305: ChaCha has an internal counter (32 bits in the standardized IETF variant, 64 bits in the
       original design). Max message length is `2^39 - 256 bits`, about `256 GB`
 - Neither algorithm is nonce misuse-resistant.
+- `ChaChaPoly1305` is better at `SIMD`
 
 Conclusion: Both are good options. AES-GCM can be faster with hardware support, but pure-software implementations of
 ChaCha20-Poly1305 are almost always fast and constant-time.
