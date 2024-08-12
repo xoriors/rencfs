@@ -38,9 +38,8 @@ You can use it as CLI or build your custom FUSE implementation with it.
 - Change password without re-encrypting all data
 - Fast seek on both reads and writes
 - Writes in parallel
-- Expose with FUSE
+- Exposed with FUSE
 - Fully concurrent for all operations
-- In future, support for macOS, Windows and mobile
 
 # Functionality
 
@@ -380,7 +379,7 @@ The minimum supported version is `1.75`.
 - Plan is to implement it also on macOS and Windows
 - A systemd service is being worked on [rencfs-daemon](https://github.com/radumarias/rencfs-daemon)
 - A GUI is on the way [rencfs-desktop](https://github.com/radumarias/rencfs-desktop) and [rencfs-kotlin](https://github.com/radumarias/rencfs-kotlin)
-- Mobile apps for Android and iOS are on the way [rencfs-kotlin](https://github.com/radumarias/rencfs-kotlin)
+- Mobile apps for Android and iOS are being worked on [rencfs-kotlin](https://github.com/radumarias/rencfs-kotlin)
 
 # Performance
 
@@ -391,26 +390,25 @@ on most CPUs via AES-NI. But where hardware acceleration is not available `ChaCh
 
 ## AES-GCM vs. ChaCha20-Poly1305
 
-- If you have hardware acceleration (e.g. AES-NI), then AES-GCM provides better performance. On my benchmarks, it was
+- If you have hardware acceleration (e.g. `AES-NI`), then `AES-GCM` provides better performance. On my benchmarks, it was
   faster by a factor of **1.28** on average.  
-  If you do not have a hardware acceleration, AES-GCM is either slower than ChaCha20-Poly1305, or it leaks your
+  If you do not have a hardware acceleration, `AES-GCM` is either slower than `ChaCha20-Poly1305`, or it leaks your
   encryption
   keys in cache timing.
-- AES-GCM can target multiple security levels (128-bit, 192-bit, 256-bit), whereas ChaCha20-Poly1305 is only defined at
-  the 256-bit security level.
+- `AES-GCM` can target multiple security levels (`128-bit`, `192-bit`, `256-bit`), whereas `ChaCha20-Poly1305` is only defined at
+  the `256-bit` security level.
 - Nonce size:
-    - AES-GCM: Varies, but the standard is 96 bits (12 bytes).
-      If you supply a longer nonce, this gets hashed down to 16
-      bytes.
-    - ChaCha20-Poly1305: The standardized version uses 96-bit nonce (12 bytes), but the original used 64-bit
-      nonce (8 bytes).
+    - `AES-GCM`: Varies, but the standard is `96 bits` (`12 bytes`).
+      If you supply a longer nonce, this gets hashed down to `16 bytes`.
+    - `ChaCha20-Poly1305`: The standardized version uses `96-bit` nonce (`12 bytes`), but the original used `64-bit`
+      nonce (`8 bytes`).
 - Wear-out of a single (key, nonce) pair:
-    - AES-GCM: Messages must be less than 2^32 – 2 blocks (a.k.a. `2^36 – 32 bytes`, a.k.a. `2^39 – 256 bits`), that's
+    - `AES-GCM`: Messages must be less than `2^32 – 2` blocks (a.k.a. `2^36 – 32 bytes`, a.k.a. `2^39 – 256 bits`), that's
       roughly `64GB`.
-      This also makes the security analysis of AES-GCM with long nonces complicated, since the hashed nonce doesn’t
+      This also makes the security analysis of `AES-GCM` with long nonces complicated, since the hashed nonce doesn’t
       start
-      with the lower 4 bytes set to 00 00 00 02.
-    - ChaCha20-Poly1305: ChaCha has an internal counter (32 bits in the standardized IETF variant, 64 bits in the
+      with the lower `4 bytes` set to `00 00 00 02`.
+    - `ChaCha20-Poly1305`: `ChaCha` has an internal counter (`32 bits` in the standardized IETF variant, `64 bits` in the
       original design). Max message length is `2^39 - 256 bits`, about `256 GB`
 - Neither algorithm is nonce misuse-resistant.
 - `ChaChaPoly1305` is better at `SIMD`
@@ -424,7 +422,7 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
   flushed to file. This ensures data integrity and maintain changes order.
   One problem that may occur is if we do a truncate we change the content of the file, but the process is killed before
   we write the metadata with the new filesize. In this case, next time we mount the system, we are still seeing the old
-  filesize. However, the content of the file could be bigger, and we read until the old size offset, se we would not
+  filesize. However, the content of the file could be bigger, and we read until the old size offset, so we would not
   pick up
   the new zeros bytes written on truncating by increasing the size. If content is smaller the read would stop and
   end-of-file of the actual content, so this would not be such a big issue
@@ -442,13 +440,13 @@ ChaCha20-Poly1305 are almost always fast and constant-time.
     - We can also see the last time the file was accessed
 - It's always recommended to use encrypted disks for at least your sensitive data, this project is not a replacement for
   that
-- To reduce the risk of encryption key to be exposed from memory, it's recommended to disable mem dumps on the
+- To reduce the risk of encryption key from being exposed from memory, it's recommended to disable memory dumps on the
   OS level. Please see [here](https://www.cyberciti.biz/faq/disable-core-dumps-in-linux-with-systemd-sysctl/) how to do
   it on Linux
 - **Cold boot attacks**: to reduce the risk of this, we keep the encryption key in memory just as long as we really
   need it to encrypt/decrypt data and we are zeroing it after that. We also remove it from memory after a period of
   inactivity
-- Please note that this project is not audited by any security expert. It's built with security in mind and tries to
+- Please note this project was not audited by any security expert. It's built with security in mind and tries to
   follow all the best practices, but it's not guaranteed to be secure
 - **Also, please back up your data, the project is still in development, and there might be bugs that can lead to data
   loss**
