@@ -413,7 +413,9 @@ on most CPUs via AES-NI. But where hardware acceleration is not available `ChaCh
 - Neither algorithm is **nonce misuse-resistant**.
 - `ChaChaPoly1305` is better at `SIMD`
 
-**Conclusion**: Both are good options. `AES-GCM` can be faster with **hardware support**, but **pure-software** implementations of
+### Conclusion
+
+Both are good options. `AES-GCM` can be faster with **hardware support**, but **pure-software** implementations of
 `ChaCha20-Poly1305` are almost always **fast** and **constant-time**.
 
 # Security
