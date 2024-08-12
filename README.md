@@ -377,9 +377,9 @@ The minimum supported version is `1.75`.
 # Future
 
 - Plan is to implement it also on macOS and Windows
-- A systemd service is being worked on [rencfs-daemon](https://github.com/radumarias/rencfs-daemon)
-- A GUI is being worked on [rencfs-desktop](https://github.com/radumarias/rencfs-desktop) and [rencfs-kotlin](https://github.com/radumarias/rencfs-kotlin)
-- Mobile apps for Android and iOS are being worked on [rencfs-kotlin](https://github.com/radumarias/rencfs-kotlin)
+- **Systemd service** is being worked on [rencfs-daemon](https://github.com/radumarias/rencfs-daemon)
+- **GUI** is being worked on [rencfs-desktop](https://github.com/radumarias/rencfs-desktop) and [rencfs-kotlin](https://github.com/radumarias/rencfs-kotlin)
+- **Mobile apps** for **Android** and **iOS** are being worked on [rencfs-kotlin](https://github.com/radumarias/rencfs-kotlin)
 
 # Performance
 
