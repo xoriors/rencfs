@@ -1554,7 +1554,7 @@ impl EncryptedFs {
 
     /// Writes the contents of `buf` to the file with `ino` starting at `offset`.
     ///
-    /// If we write outside file size, we fill up with zeros until the `offset`.  
+    /// If we write outside file size, we fill up with zeros until the `offset`.
     /// If the file is not opened for writing,
     /// it will return an error of type [FsError::InvalidFileHandle].
     #[instrument(skip(self, buf), fields(len = %buf.len()), ret(level = Level::DEBUG))]
@@ -2011,7 +2011,7 @@ impl EncryptedFs {
     }
 
     /// Create a crypto writer using internal encryption info.
-    pub async fn create_write<W: Write + Seek + Send + Sync>(
+    pub async fn create_write<W: Write + Seek + Send + Sync + 'static>(
         &self,
         file: W,
     ) -> FsResult<impl CryptoWrite<W>> {
@@ -2023,7 +2023,7 @@ impl EncryptedFs {
     }
 
     /// Create a crypto writer with seek using internal encryption info.
-    pub async fn create_write_seek<W: Write + Seek + Read + Send + Sync>(
+    pub async fn create_write_seek<W: Write + Seek + Read + Send + Sync + 'static>(
         &self,
         file: W,
     ) -> FsResult<impl CryptoWriteSeek<W>> {
@@ -2445,7 +2445,7 @@ fn read_or_create_key(
         );
         bincode::serialize_into(&mut writer, &key)?;
         let file = writer.finish()?;
-        file.sync_all()?;
+        file.do_with_write(|f| file.sync_all()?);
         File::open(key_path.parent().unwrap())?.sync_all()?;
         Ok(SecretVec::new(key))
     }

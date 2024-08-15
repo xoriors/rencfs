@@ -1,3 +1,4 @@
+use std::fs::File;
 use std::io;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
@@ -21,45 +22,102 @@ mod test;
 #[cfg(test)]
 pub(crate) const BLOCK_SIZE: usize = 100; // round value easier for debugging
 #[cfg(not(test))]
-pub(crate) const BLOCK_SIZE: usize = 16 * 1024; // 16 KB block size
+pub(crate) const BLOCK_SIZE: usize = 256 * 1024; // 256 KB block size
+
+pub enum Writer<W: Write + Send + Sync, WS: Write + Seek + Read + Send + Sync> {
+    Write(W),
+    WriteSeekRead(WS),
+}
+
+impl<W: Write + Send + Sync, WS: Write + Seek + Read + Send + Sync> Writer<W, WS> {
+    pub fn do_with_write<R, F>(&mut self, f: F) -> io::Result<R>
+    where
+        F: FnOnce(&mut W) -> io::Result<R>,
+    {
+        match self {
+            Writer::Write(writer) => f(writer),
+            Writer::WriteSeekRead(_) => Err(io::Error::other("not Write"))?,
+        }
+    }
+
+    pub fn do_with_seek<R, F>(&mut self, f: F) -> io::Result<R>
+    where
+        F: FnOnce(&mut WS) -> io::Result<R>,
+    {
+        match self {
+            Writer::Write(_) => Err(io::Error::other("not Seek"))?,
+            Writer::WriteSeekRead(writer) => f(writer),
+        }
+    }
+}
 
 /// Writes encrypted content to the wrapped Writer.
 #[allow(clippy::module_name_repetitions)]
-pub trait CryptoWrite<W: Write + Send + Sync>: Write + Send + Sync {
+pub trait CryptoWrite<W: Write + Send + Sync, WS: Write + Seek + Read + Send + Sync = File>:
+    Write + Send + Sync
+{
     /// You must call this after the last write to make sure we write the last block. This handles the flush also.
     #[allow(clippy::missing_errors_doc)]
-    fn finish(&mut self) -> io::Result<W>;
+    fn finish(&mut self) -> io::Result<Writer<W, WS>>;
+}
+
+/// Write with Seek
+pub trait CryptoWriteSeek<W: Write + Seek + Send + Sync, WS: Write + Seek + Read + Send + Sync>:
+    CryptoWrite<W, WS> + Seek
+{
 }
 
 /// ring
+
 #[allow(clippy::module_name_repetitions)]
-pub struct RingCryptoWrite<W: Write> {
-    out: Option<W>,
+pub struct RingCryptoWrite<W: Write + Send + Sync, WS: Write + Seek + Read + Send + Sync> {
+    writer: Option<Writer<W, WS>>,
     sealing_key: SealingKey<RandomNonceSequenceWrapper>,
     buf: BufMut,
     nonce_sequence: Arc<Mutex<RandomNonceSequence>>,
     ciphertext_block_size: usize,
     plaintext_block_size: usize,
     block_index: u64,
+    _marker: std::marker::PhantomData<W>,
+    opening_key: Option<OpeningKey<ExistingNonceSequence>>,
+    last_nonce: Option<Arc<Mutex<Option<Vec<u8>>>>>,
+    decrypt_buf: Option<BufMut>,
 }
 
-impl<W: Write> RingCryptoWrite<W> {
+impl<W: Write + Send + Sync, WS: Write + Seek + Read + Send + Sync> RingCryptoWrite<W, WS> {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::needless_pass_by_value)]
-    pub fn new(writer: W, algorithm: &'static Algorithm, key: &SecretVec<u8>) -> Self {
+    pub fn new(writer: Writer<W, WS>, algorithm: &'static Algorithm, key: &SecretVec<u8>) -> Self {
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).expect("unbound key");
         let nonce_sequence = Arc::new(Mutex::new(RandomNonceSequence::default()));
         let wrapping_nonce_sequence = RandomNonceSequenceWrapper::new(nonce_sequence.clone());
         let sealing_key = SealingKey::new(unbound_key, wrapping_nonce_sequence);
         let buf = BufMut::new(vec![0; BLOCK_SIZE]);
+
+        let (last_nonce, opening_key, decrypt_buf) = if let Writer::WriteSeekRead(_) = writer {
+            let last_nonce = Arc::new(Mutex::new(None));
+            let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).unwrap();
+            let nonce_sequence2 = ExistingNonceSequence::new(last_nonce.clone());
+            let opening_key = OpeningKey::new(unbound_key, nonce_sequence2);
+            let ciphertext_block_size = NONCE_LEN + BLOCK_SIZE + algorithm.tag_len();
+            let decrypt_buf = BufMut::new(vec![0; ciphertext_block_size]);
+
+            (Some(last_nonce), Some(opening_key), Some(decrypt_buf))
+        } else {
+            (None, None, None)
+        };
         Self {
-            out: Some(writer),
+            writer: Some(writer),
             sealing_key,
             buf,
             nonce_sequence,
             ciphertext_block_size: NONCE_LEN + BLOCK_SIZE + algorithm.tag_len(),
             plaintext_block_size: BLOCK_SIZE,
             block_index: 0,
+            _marker: std::marker::PhantomData,
+            opening_key,
+            last_nonce,
+            decrypt_buf,
         }
     }
 
@@ -78,23 +136,96 @@ impl<W: Write> RingCryptoWrite<W> {
             })?;
         let nonce_sequence = self.nonce_sequence.lock().unwrap();
         let nonce = &nonce_sequence.last_nonce;
-        self.out.as_mut().unwrap().write_all(nonce)?;
-        self.out.as_mut().unwrap().write_all(data)?;
-        self.buf.clear();
-        self.out.as_mut().unwrap().write_all(tag.as_ref())?;
-        self.out.as_mut().unwrap().flush()?;
+        match self.writer.as_mut().unwrap() {
+            Writer::Write(writer) => {
+                writer.write_all(nonce)?;
+                writer.write_all(data)?;
+                self.buf.clear();
+                writer.write_all(tag.as_ref())?;
+                writer.flush()?;
+            }
+            Writer::WriteSeekRead(writer) => {
+                writer.write_all(nonce)?;
+                writer.write_all(data)?;
+                self.buf.clear();
+                writer.write_all(tag.as_ref())?;
+                writer.flush()?;
+            }
+        }
         self.block_index += 1;
         Ok(())
     }
+
+    const fn pos(&self) -> u64 {
+        self.block_index * self.plaintext_block_size as u64 + self.buf.pos_write() as u64
+    }
+
+    fn decrypt_block(&mut self) -> io::Result<bool> {
+        let old_block_index = self.block_index;
+        self.writer.as_mut().unwrap().do_with_seek(|writer| {
+            decrypt_block!(
+                self.block_index,
+                self.decrypt_buf.as_mut().unwrap(),
+                writer,
+                self.last_nonce.as_ref().unwrap(),
+                self.opening_key.as_mut().unwrap()
+            );
+            Ok(())
+        });
+        if old_block_index == self.block_index {
+            // no decryption happened
+            Ok(false)
+        } else {
+            // a decryption happened
+            self.buf.clear();
+            // bring back block index to current block, it's incremented by decrypt_block if it can decrypt something
+            self.block_index -= 1;
+            // bring back file pos also so the next writing will write to the same block
+            self.writer.as_mut().unwrap().do_with_seek(|writer| {
+                writer.seek(SeekFrom::Start(
+                    self.block_index * self.ciphertext_block_size as u64,
+                ))
+            });
+            // copy plaintext
+            self.buf.seek_available(SeekFrom::Start(
+                self.decrypt_buf.as_ref().unwrap().available_read() as u64,
+            ))?;
+            self.decrypt_buf
+                .as_ref()
+                .unwrap()
+                .as_ref_read_available()
+                .copy_to_slice(
+                    &mut self.buf.as_mut()[..self.decrypt_buf.as_ref().unwrap().available_read()],
+                );
+            Ok(true)
+        }
+    }
 }
 
-impl<W: Write> Write for RingCryptoWrite<W> {
+impl<W: Write + Send + Sync, WS: Write + Seek + Read + Send + Sync> Write
+    for RingCryptoWrite<W, WS>
+{
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.out.is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "write called on already finished writer",
-            ));
+        if self.pos() == 0 && self.buf.available() == 0 {
+            // first write since we opened the writer, try to load the first block
+            self.writer
+                .as_mut()
+                .unwrap()
+                .do_with_seek(|writer| writer.seek(SeekFrom::Start(0)));
+            self.block_index = 0;
+            self.decrypt_block()?;
+        } else if self.buf.is_dirty() && self.buf.remaining() == 0 {
+            self.flush()?;
+            // try to decrypt the next block if we have any
+            let block_index = self.pos() / self.plaintext_block_size as u64;
+            let stream_len = self
+                .writer
+                .as_mut()
+                .unwrap()
+                .do_with_seek(io::Seek::stream_len)?;
+            if stream_len > block_index * self.ciphertext_block_size as u64 {
+                self.decrypt_block()?;
+            }
         }
         if self.buf.is_dirty() && self.buf.remaining() == 0 {
             self.flush()?;
@@ -104,12 +235,6 @@ impl<W: Write> Write for RingCryptoWrite<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        if self.out.is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "flush called on already finished writer",
-            ));
-        }
         if !self.buf.is_dirty() {
             return Ok(());
         }
@@ -122,21 +247,15 @@ impl<W: Write> Write for RingCryptoWrite<W> {
     }
 }
 
-impl<W: Write + Send + Sync> CryptoWrite<W> for RingCryptoWrite<W> {
-    fn finish(&mut self) -> io::Result<W> {
-        if self.out.is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "finish called on already finished writer",
-            ));
-        }
+impl<W: Write + Send + Sync, WS: Write + Seek + Read + Send + Sync> CryptoWrite<W, WS>
+    for RingCryptoWrite<W, WS>
+{
+    fn finish(&mut self) -> io::Result<Writer<W, WS>> {
         if self.buf.is_dirty() {
             // encrypt and write last block, use as many bytes as we have
             self.encrypt_and_write()?;
         }
-        let mut out = self.out.take().unwrap();
-        out.flush()?;
-        Ok(out)
+        Ok(self.writer.take().unwrap())
     }
 }
 
@@ -178,93 +297,34 @@ impl NonceSequence for RandomNonceSequenceWrapper {
     }
 }
 
-/// Write with Seek
-pub trait CryptoWriteSeek<W: Write + Seek + Send + Sync>: CryptoWrite<W> + Seek {}
-
-pub struct RingCryptoWriteSeek<W: Write + Seek + Read> {
-    inner: RingCryptoWrite<W>,
-    opening_key: OpeningKey<ExistingNonceSequence>,
-    last_nonce: Arc<Mutex<Option<Vec<u8>>>>,
-    decrypt_buf: BufMut,
-}
-
-impl<W: Write + Seek + Read> RingCryptoWriteSeek<W> {
-    pub(crate) fn new(writer: W, algorithm: &'static Algorithm, key: &SecretVec<u8>) -> Self {
-        let last_nonce = Arc::new(Mutex::new(None));
-        let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).unwrap();
-        let nonce_sequence = ExistingNonceSequence::new(last_nonce.clone());
-        let opening_key = OpeningKey::new(unbound_key, nonce_sequence);
-        let ciphertext_block_size = NONCE_LEN + BLOCK_SIZE + algorithm.tag_len();
-        let decrypt_buf = BufMut::new(vec![0; ciphertext_block_size]);
-        Self {
-            inner: RingCryptoWrite::new(writer, algorithm, key),
-            opening_key,
-            last_nonce,
-            decrypt_buf,
-        }
-    }
-
-    const fn pos(&self) -> u64 {
-        self.inner.block_index * self.inner.plaintext_block_size as u64
-            + self.inner.buf.pos_write() as u64
-    }
-
-    fn decrypt_block(&mut self) -> io::Result<bool> {
-        let old_block_index = self.inner.block_index;
-        decrypt_block!(
-            self.inner.block_index,
-            self.decrypt_buf,
-            self.inner.out.as_mut().unwrap(),
-            self.last_nonce,
-            self.opening_key
-        );
-        if old_block_index == self.inner.block_index {
-            // no decryption happened
-            Ok(false)
-        } else {
-            // a decryption happened
-            self.inner.buf.clear();
-            // bring back block index to current block, it's incremented by decrypt_block if it can decrypt something
-            self.inner.block_index -= 1;
-            // bring back file pos also so the next writing will write to the same block
-            self.inner.out.as_mut().unwrap().seek(SeekFrom::Start(
-                self.inner.block_index * self.inner.ciphertext_block_size as u64,
-            ))?;
-            // copy plaintext
-            self.inner
-                .buf
-                .seek_available(SeekFrom::Start(self.decrypt_buf.available_read() as u64))?;
-            self.decrypt_buf
-                .as_ref_read_available()
-                .copy_to_slice(&mut self.inner.buf.as_mut()[..self.decrypt_buf.available_read()]);
-            Ok(true)
-        }
-    }
-
+impl<W: Write + Send + Sync, WS: Write + Seek + Read + Send + Sync> RingCryptoWrite<W, WS> {
     fn get_plaintext_len(&mut self) -> io::Result<u64> {
-        let ciphertext_len = self.inner.out.as_mut().unwrap().stream_len()?;
-        if ciphertext_len == 0 && self.inner.buf.available() == 0 {
+        let stream_len = self
+            .writer
+            .as_mut()
+            .unwrap()
+            .do_with_seek(io::Seek::stream_len)?;
+        let ciphertext_len = stream_len;
+        if ciphertext_len == 0 && self.buf.available() == 0 {
             return Ok(0);
         }
-        let stream_last_block_index = self.inner.out.as_mut().unwrap().stream_len()?
-            / self.inner.ciphertext_block_size as u64;
-        let plaintext_len = if self.inner.block_index == stream_last_block_index
-            && self.inner.buf.is_dirty()
-        {
+        let stream_last_block_index = ciphertext_len / self.ciphertext_block_size as u64;
+        let plaintext_len = if self.block_index == stream_last_block_index && self.buf.is_dirty() {
             // we are at the last block, we consider what we have in buffer,
             // as we might have additional content that is not written yet
-            self.inner.block_index * self.inner.plaintext_block_size as u64
-                + self.inner.buf.available() as u64
+            self.block_index * self.plaintext_block_size as u64 + self.buf.available() as u64
         } else {
             ciphertext_len
-                - ((ciphertext_len / self.inner.ciphertext_block_size as u64) + 1)
-                    * (self.inner.ciphertext_block_size - self.inner.plaintext_block_size) as u64
+                - ((ciphertext_len / self.ciphertext_block_size as u64) + 1)
+                    * (self.ciphertext_block_size - self.plaintext_block_size) as u64
         };
         Ok(plaintext_len)
     }
 }
 
-impl<W: Write + Seek + Read> Seek for RingCryptoWriteSeek<W> {
+impl<W: Write + Send + Sync, WS: Write + Seek + Read + Send + Sync> Seek
+    for RingCryptoWrite<W, WS>
+{
     #[allow(clippy::cast_possible_wrap)]
     #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
@@ -280,104 +340,79 @@ impl<W: Write + Seek + Read> Seek for RingCryptoWriteSeek<W> {
         if new_pos == self.pos() {
             return Ok(new_pos);
         }
-        let current_block_index = self.pos() / self.inner.plaintext_block_size as u64;
-        let new_block_index = new_pos / self.inner.plaintext_block_size as u64;
+        let current_block_index = self.pos() / self.plaintext_block_size as u64;
+        let new_block_index = new_pos / self.plaintext_block_size as u64;
         if current_block_index == new_block_index {
-            if self.pos() == 0 && self.inner.buf.available() == 0 {
+            if self.pos() == 0 && self.buf.available() == 0 {
                 // first write since we opened the writer, try to load the first block
-                self.inner.out.as_mut().unwrap().seek(SeekFrom::Start(0))?;
-                self.inner.block_index = 0;
+                self.writer
+                    .as_mut()
+                    .unwrap()
+                    .do_with_seek(|writer| writer.seek(SeekFrom::Start(0)));
+                self.block_index = 0;
                 self.decrypt_block()?;
             }
-            let at_full_block_end = self.pos() % self.inner.plaintext_block_size as u64 == 0
-                && self.inner.buf.pos_write() == self.inner.buf.available();
-            if self.inner.buf.available() == 0
+            let at_full_block_end = self.pos() % self.plaintext_block_size as u64 == 0
+                && self.buf.pos_write() == self.buf.available();
+            if self.buf.available() == 0
                 // this checks if we are at the end of the current block,
                 // which is the start boundary of next block
                 // in that case we need to seek inside the next block
                 || at_full_block_end
             {
                 // write current block
-                if self.inner.buf.is_dirty() {
-                    self.inner.encrypt_and_write()?;
+                if self.buf.is_dirty() {
+                    self.encrypt_and_write()?;
                 }
                 // decrypt the next block
                 self.decrypt_block()?;
             }
             // seek inside the block as much as we can
-            let desired_offset = new_pos % self.inner.plaintext_block_size as u64;
-            self.inner.buf.seek_write(SeekFrom::Start(
-                desired_offset.min(self.inner.buf.available() as u64),
+            let desired_offset = new_pos % self.plaintext_block_size as u64;
+            self.buf.seek_write(SeekFrom::Start(
+                desired_offset.min(self.buf.available() as u64),
             ))?;
         } else {
             // we need to seek to a new block
 
             // write current block
-            if self.inner.buf.is_dirty() {
-                self.inner.encrypt_and_write()?;
+            if self.buf.is_dirty() {
+                self.encrypt_and_write()?;
             }
-
             // seek to new block, or until the last block in stream
-            let last_block_index = self.inner.out.as_mut().unwrap().stream_len()?
-                / self.inner.ciphertext_block_size as u64;
-            let target_block_index = new_block_index.min(last_block_index);
-            self.inner.out.as_mut().unwrap().seek(SeekFrom::Start(
-                target_block_index * self.inner.ciphertext_block_size as u64,
-            ))?;
+            let target_block_index = self.writer.as_mut().unwrap().do_with_seek(|writer| {
+                let last_block_index = writer.stream_len()? / self.ciphertext_block_size as u64;
+                let target_block_index = new_block_index.min(last_block_index);
+                writer.seek(SeekFrom::Start(
+                    target_block_index * self.ciphertext_block_size as u64,
+                ))?;
+                Ok(target_block_index)
+            })?;
             // try to decrypt target block
-            self.inner.block_index = target_block_index;
+            self.block_index = target_block_index;
             self.decrypt_block()?;
-            if self.inner.block_index == new_block_index {
+            if self.block_index == new_block_index {
                 // seek inside new block as much as we can
-                let desired_offset = new_pos % self.inner.plaintext_block_size as u64;
-                self.inner.buf.seek_write(SeekFrom::Start(
-                    desired_offset.min(self.inner.buf.available() as u64),
+                let desired_offset = new_pos % self.plaintext_block_size as u64;
+                self.buf.seek_write(SeekFrom::Start(
+                    desired_offset.min(self.buf.available() as u64),
                 ))?;
             } else {
                 // we don't have this block, seek as much in target block
-                self.inner
-                    .buf
-                    .seek_write(SeekFrom::Start(self.inner.buf.available() as u64))?;
+                self.buf
+                    .seek_write(SeekFrom::Start(self.buf.available() as u64))?;
             }
         }
         // if we couldn't seek until new pos, write zeros until new position
         if self.pos() < new_pos {
             let len = new_pos - self.pos();
-            stream_util::fill_zeros(&mut self.inner, len)?;
+            stream_util::fill_zeros(self, len)?;
         }
         Ok(self.pos())
     }
 }
 
-impl<W: Write + Seek + Read + Send + Sync> Write for RingCryptoWriteSeek<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.pos() == 0 && self.inner.buf.available() == 0 {
-            // first write since we opened the writer, try to load the first block
-            self.inner.out.as_mut().unwrap().seek(SeekFrom::Start(0))?;
-            self.inner.block_index = 0;
-            self.decrypt_block()?;
-        } else if self.inner.buf.is_dirty() && self.inner.buf.remaining() == 0 {
-            self.flush()?;
-            // try to decrypt the next block if we have any
-            let block_index = self.pos() / self.inner.plaintext_block_size as u64;
-            if self.inner.out.as_mut().unwrap().stream_len()?
-                > block_index * self.inner.ciphertext_block_size as u64
-            {
-                self.decrypt_block()?;
-            }
-        }
-        self.inner.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
+impl<W: Write + Seek + Read + Send + Sync, WS: Write + Seek + Read + Send + Sync>
+    CryptoWriteSeek<W, WS> for RingCryptoWrite<W, WS>
+{
 }
-
-impl<W: Write + Seek + Read + Send + Sync> CryptoWrite<W> for RingCryptoWriteSeek<W> {
-    fn finish(&mut self) -> io::Result<W> {
-        self.inner.finish()
-    }
-}
-
-impl<W: Write + Seek + Read + Send + Sync> CryptoWriteSeek<W> for RingCryptoWriteSeek<W> {}

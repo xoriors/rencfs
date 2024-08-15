@@ -22,7 +22,7 @@ use thiserror::Error;
 use tracing::{debug, error, instrument};
 
 use crate::crypto::read::{CryptoRead, CryptoReadSeek, RingCryptoRead};
-use crate::crypto::write::{CryptoWrite, CryptoWriteSeek, RingCryptoWrite, RingCryptoWriteSeek};
+use crate::crypto::write::{CryptoWrite, CryptoWriteSeek, RingCryptoWrite};
 use crate::encryptedfs::FsResult;
 use crate::{fs_util, stream_util};
 
@@ -109,7 +109,7 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Creates and encrypted writer
-pub fn create_write<W: Write + Send + Sync>(
+pub fn create_write<W: Write + Send + Sync + 'static>(
     writer: W,
     cipher: Cipher,
     key: &SecretVec<u8>,
@@ -118,7 +118,7 @@ pub fn create_write<W: Write + Send + Sync>(
 }
 
 /// Creates and encrypted writer with seek
-pub fn create_write_seek<W: Write + Seek + Read + Send + Sync>(
+pub fn create_write_seek<W: Write + Seek + Read + Send + Sync + 'static>(
     writer: W,
     cipher: Cipher,
     key: &SecretVec<u8>,
@@ -130,7 +130,7 @@ fn create_ring_write<W: Write + Send + Sync>(
     writer: W,
     cipher: Cipher,
     key: &SecretVec<u8>,
-) -> RingCryptoWrite<W> {
+) -> RingCryptoWrite<W, File> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
@@ -142,12 +142,12 @@ fn create_ring_write_seek<W: Write + Seek + Read + Send + Sync>(
     writer: W,
     cipher: Cipher,
     key: &SecretVec<u8>,
-) -> RingCryptoWriteSeek<W> {
+) -> RingCryptoWrite<W, W> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoWriteSeek::new(writer, algorithm, key)
+    RingCryptoWrite::new_seek(writer, algorithm, key)
 }
 
 fn create_ring_read<R: Read + Send + Sync>(
@@ -171,7 +171,7 @@ fn create_ring_read_seek<R: Read + Seek + Send + Sync>(
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoRead::new(reader, algorithm, key)
+    RingCryptoRead::new_seek(reader, algorithm, key)
 }
 
 /// Creates and encrypted reader
@@ -351,15 +351,14 @@ pub fn serialize_encrypt_into<W, T>(
     value: &T,
     cipher: Cipher,
     key: &SecretVec<u8>,
-) -> Result<()>
+) -> Result<W>
 where
-    W: Write + Send + Sync,
+    W: Write + Send + Sync + 'static,
     T: serde::Serialize + ?Sized,
 {
     let mut writer = create_write(writer, cipher, key);
     bincode::serialize_into(&mut writer, value)?;
-    writer.finish()?;
-    Ok(())
+    Ok(writer.finish()?)
 }
 
 pub fn atomic_serialize_encrypt_into<T>(
@@ -373,7 +372,7 @@ where
 {
     let parent = file.parent().ok_or(Error::Generic("file has no parent"))?;
     let mut file = fs_util::open_atomic_write(file)?;
-    serialize_encrypt_into(&mut file, value, cipher, key)?;
+    file = serialize_encrypt_into(file, value, cipher, key)?;
     file.commit()?;
     File::open(parent)?.sync_all()?;
     Ok(())
