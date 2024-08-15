@@ -91,8 +91,8 @@ fn bench_read_1mb_chacha_ram(b: &mut Bencher) {
     rand::thread_rng().fill_bytes(&mut key);
     let key = SecretVec::new(key);
 
-    let mut cursor_write = io::Cursor::new(vec![]);
-    let mut writer = crypto::create_write(&mut cursor_write, cipher, &key);
+    let cursor_write = io::Cursor::new(vec![]);
+    let mut writer = crypto::create_write(cursor_write, cipher, &key);
     let mut cursor_random = io::Cursor::new(vec![0; len]);
     rand::thread_rng().fill_bytes(cursor_random.get_mut());
     cursor_random.seek(io::SeekFrom::Start(0)).unwrap();
@@ -127,8 +127,8 @@ fn bench_read_1mb_aes_ram(b: &mut Bencher) {
     rand::thread_rng().fill_bytes(&mut key);
     let key = SecretVec::new(key);
 
-    let mut cursor_write = io::Cursor::new(vec![]);
-    let mut writer = crypto::create_write(&mut cursor_write, cipher, &key);
+    let cursor_write = io::Cursor::new(vec![]);
+    let mut writer = crypto::create_write(cursor_write, cipher, &key);
     let mut cursor_random = io::Cursor::new(vec![0; len]);
     rand::thread_rng().fill_bytes(cursor_random.get_mut());
     cursor_random.seek(io::SeekFrom::Start(0)).unwrap();

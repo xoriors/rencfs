@@ -1,5 +1,15 @@
 #[allow(unused_imports)]
+use std::io::{self, Seek};
+
+#[allow(unused_imports)]
+use ring::aead::AES_256_GCM;
+#[allow(unused_imports)]
+use secrecy::SecretVec;
+#[allow(unused_imports)]
 use tracing_test::traced_test;
+
+#[allow(unused_imports)]
+use crate::crypto::read::{CryptoRead, RingCryptoRead};
 
 #[test]
 #[traced_test]
@@ -21,13 +31,13 @@ fn test_ring_crypto_read_seek_chacha() {
     let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
+    let mut writer = RingCryptoWrite::new(cursor, algorithm, &key);
     writer.write_all(data.as_bytes()).unwrap();
-    writer.finish().unwrap();
+    cursor = writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new(&mut cursor, algorithm, &key);
+    let mut reader = RingCryptoRead::new(cursor, algorithm, &key);
 
     // Seek to the middle of the data
     reader.seek(SeekFrom::Start(7)).unwrap();
@@ -70,13 +80,13 @@ fn test_ring_crypto_read_seek_aes() {
     let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
+    let mut writer = RingCryptoWrite::new(cursor, algorithm, &key);
     writer.write_all(data.as_bytes()).unwrap();
-    writer.finish().unwrap();
+    cursor = writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
+    let mut reader = RingCryptoRead::new_seek(cursor, algorithm, &key);
 
     // Seek to the middle of the data
     reader.seek(SeekFrom::Start(7)).unwrap();
@@ -122,13 +132,13 @@ fn test_ring_crypto_read_seek_blocks_chacha() {
     let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
+    let mut writer = RingCryptoWrite::new(cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
-    writer.finish().unwrap();
+    cursor = writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
+    let mut reader = RingCryptoRead::new_seek(cursor, algorithm, &key);
 
     // Seek in the second block
     reader.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap();
@@ -174,13 +184,13 @@ fn test_ring_crypto_read_seek_blocks_aes() {
     let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
+    let mut writer = RingCryptoWrite::new(cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
-    writer.finish().unwrap();
+    cursor = writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
+    let mut reader = RingCryptoRead::new_seek(cursor, algorithm, &key);
 
     // Seek in the second block
     reader.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap();
@@ -226,13 +236,13 @@ fn test_ring_crypto_read_seek_blocks_boundary_chacha() {
     let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
+    let mut writer = RingCryptoWrite::new(cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
-    writer.finish().unwrap();
+    cursor = writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
+    let mut reader = RingCryptoRead::new_seek(cursor, algorithm, &key);
 
     reader.read_exact(&mut [0; 1]).unwrap();
     // Seek to the second block boundary
@@ -275,13 +285,13 @@ fn test_ring_crypto_read_seek_blocks_boundary_aes() {
     let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
+    let mut writer = RingCryptoWrite::new(cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
-    writer.finish().unwrap();
+    cursor = writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
+    let mut reader = RingCryptoRead::new_seek(cursor, algorithm, &key);
 
     reader.read_exact(&mut [0; 1]).unwrap();
     // Seek to the second block boundary
@@ -324,13 +334,13 @@ fn test_ring_crypto_read_seek_skip_blocks_chacha() {
     let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
+    let mut writer = RingCryptoWrite::new(cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
-    writer.finish().unwrap();
+    cursor = writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
+    let mut reader = RingCryptoRead::new_seek(cursor, algorithm, &key);
 
     reader.seek(SeekFrom::Start(2 * BLOCK_SIZE as u64)).unwrap();
     let mut buffer = vec![0; BLOCK_SIZE];
@@ -361,13 +371,13 @@ fn test_ring_crypto_read_seek_skip_blocks_aes() {
     let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
+    let mut writer = RingCryptoWrite::new(cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
-    writer.finish().unwrap();
+    cursor = writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
-    let mut reader = RingCryptoRead::new_seek(&mut cursor, algorithm, &key);
+    let mut reader = RingCryptoRead::new_seek(cursor, algorithm, &key);
 
     reader.seek(SeekFrom::Start(2 * BLOCK_SIZE as u64)).unwrap();
     let mut buffer = vec![0; BLOCK_SIZE];
@@ -398,9 +408,9 @@ fn test_ring_crypto_read_seek_in_second_block() {
     let key = SecretVec::new(vec![0; algorithm.key_len()]);
 
     // write the data
-    let mut writer = RingCryptoWrite::new(&mut cursor, algorithm, &key);
+    let mut writer = RingCryptoWrite::new(cursor, algorithm, &key);
     writer.write_all(&data).unwrap();
-    writer.finish().unwrap();
+    cursor = writer.finish().unwrap();
 
     // Create a RingCryptoReaderSeek
     cursor.seek(SeekFrom::Start(0)).unwrap();
@@ -410,4 +420,13 @@ fn test_ring_crypto_read_seek_in_second_block() {
         reader.seek(SeekFrom::Start(BLOCK_SIZE as u64)).unwrap(),
         BLOCK_SIZE as u64
     );
+}
+
+#[test]
+#[traced_test]
+fn finish_seek() {
+    let reader = io::Cursor::new(vec![0; 10]);
+    let mut reader = RingCryptoRead::new_seek(reader, &AES_256_GCM, &SecretVec::new(vec![0; 32]));
+    let mut reader = reader.into_inner();
+    let _ = reader.seek(io::SeekFrom::Start(0));
 }
