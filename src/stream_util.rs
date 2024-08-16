@@ -96,7 +96,9 @@ pub fn copy(r: &mut impl Read, w: &mut impl Write, len: u64, stop_on_eof: bool) 
         read_pos += read as u64;
         if read_pos == len {
             break;
-        } else if read == 0 {
+        }
+
+        if read == 0 {
             if stop_on_eof {
                 break;
             }
