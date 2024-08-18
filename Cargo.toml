@@ -28,7 +28,10 @@ tokio = { version = "1.36", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["fs"] }
 futures-util = "0.3.30"
 bytes = "1.5"
-tracing = { version = "0.1.40", features = ["max_level_trace", "release_max_level_debug"] }
+tracing = { version = "0.1.40", features = [
+    "max_level_trace",
+    "release_max_level_debug",
+] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2.3"
 tracing-test = "0.2.4"
@@ -66,8 +69,14 @@ lto = true
 [package.metadata.aur]
 depends = ["fuse3"]
 files = [
-    ["LICENSE-Apache-2.0", "/usr/share/licenses/$pkgname/LICENSE-Apache-2.0"],
-    ["LICENSE-MIT", "/usr/share/licenses/$pkgname/LICENSE-MIT"],
+    [
+        "LICENSE-Apache-2.0",
+        "/usr/share/licenses/$pkgname/LICENSE-Apache-2.0",
+    ],
+    [
+        "LICENSE-MIT",
+        "/usr/share/licenses/$pkgname/LICENSE-MIT",
+    ],
     #    ["LICENSE-BSD-3-Clause", "/usr/share/licenses/$pkgname/LICENSE-BSD-3-Clause"]
 ]
 
@@ -76,19 +85,7 @@ assets = [
     { source = "target/release/rencfs", dest = "/usr/bin/rencfs", mode = "755" },
     { source = "LICENSE-Apache-2.0", dest = "/usr/share/licenses/rencfs-bin/LICENSE-Apache-2.0", mode = "644" },
     { source = "LICENSE-MIT", dest = "/usr/share/licenses/rencfs-bin/LICENSE-MIT", mode = "644" },
-    { source = "LICENSE-BSD-3-Clause", dest = "/usr/share/licenses/rencfs-bin/LICENSE-BSD-3-Clause", mode = "644" }
+    { source = "LICENSE-BSD-3-Clause", dest = "/usr/share/licenses/rencfs-bin/LICENSE-BSD-3-Clause", mode = "644" },
 ]
 [package.metadata.generate-rpm.requires]
 fuse3 = "*"
-
-[lints.clippy]
-#all = "deny"
-#correctness = "deny"
-#suspicious = "deny"
-#style = "deny"
-#complexity = "deny"
-#perf = "deny"
-#pedantic = "deny"
-#restriction = "deny"
-#nursery = "deny"
-#cargo = "deny"
