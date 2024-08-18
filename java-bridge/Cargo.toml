@@ -1,3 +1,5 @@
+cargo-features = ["profile-rustflags"]
+
 [package]
 name = "java-bridge"
 version = "0.1.0"
@@ -9,6 +11,12 @@ edition = "2021"
 name = "java_bridge"
 crate-type = ["cdylib"]
 
+[profile.release]
+panic = "abort"
+# Treat warnings as errors in release builds
+rustflags = ["-Dwarnings"]
+lto = true
+
 [dependencies]
 rencfs = { path = "../" }
 jni = "0.21.1"
@@ -18,15 +26,3 @@ tracing-appender = "0.2.3"
 tokio = { version = "1.39.2", features = ["full"] }
 secrecy = "0.8.0"
 ctrlc = { version = "3.1.9", features = ["termination"] }
-
-[lints.clippy]
-#all = "deny"
-#correctness = "deny"
-#suspicious = "deny"
-#style = "deny"
-#complexity = "deny"
-#perf = "deny"
-#pedantic = "deny"
-#restriction = "deny"
-#nursery = "deny"
-#cargo = "deny"
