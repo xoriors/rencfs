@@ -2445,7 +2445,7 @@ fn read_or_create_key(
         );
         bincode::serialize_into(&mut writer, &key)?;
         let file = writer.finish()?;
-        file.do_with_write(|f| file.sync_all()?);
+        file.sync_all()?;
         File::open(key_path.parent().unwrap())?.sync_all()?;
         Ok(SecretVec::new(key))
     }
