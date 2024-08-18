@@ -31,4 +31,4 @@ jobs:
         run: cargo check --all --target x86_64-unknown-linux-gnu
 
       - name: clippy
-        run: cargo clippy --all --release --target x86_64-unknown-linux-gnu
+        run: cargo clippy --all-targets --release --target x86_64-unknown-linux-gnu
