@@ -3,7 +3,7 @@ cargo-features = ["profile-rustflags"]
 [package]
 name = "rencfs"
 description = "An encrypted file system that is mounted with FUSE on Linux. It can be used to create encrypted directories."
-version = "0.13.61"
+version = "0.13.63"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["Radu Marias <radumarias@gmail.com>"]
