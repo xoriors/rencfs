@@ -109,7 +109,7 @@ mkdir fsmnt && mkdir fsdata
 Start `rencfs`
 
 ```bash
-rencfs --mount-point fsmnt --data-dir fsdata
+rencfs mount --mount-point fsmnt --data-dir fsdata
 ```
 
 Enter a password for encryption.
