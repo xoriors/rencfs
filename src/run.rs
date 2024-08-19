@@ -155,7 +155,7 @@ fn get_cli_args() -> ArgMatches {
                 .arg(
                     Arg::new("allow-root")
                         .long("allow-root")
-                        .short('r')
+                        .short('s')
                         .action(ArgAction::SetTrue)
                         .requires("mount-point")
                         .requires("data-dir")
@@ -171,27 +171,9 @@ fn get_cli_args() -> ArgMatches {
                         .help("Allow other user to access filesystem"),
                 )
                 .arg(
-                    Arg::new("direct-io")
-                        .long("direct-io")
-                        .short('i')
-                        .action(ArgAction::SetTrue)
-                        .requires("mount-point")
-                        .requires("data-dir")
-                        .help("Use direct I/O (bypass page cache for an open file)"),
-                )
-                .arg(
-                    Arg::new("suid")
-                        .long("suid")
-                        .short('s')
-                        .action(ArgAction::SetTrue)
-                        .requires("mount-point")
-                        .requires("data-dir")
-                        .help("If it should allow setting SUID and SGID when files are created. Default is false and it will unset those flags when creating files"),
-                )
-                .arg(
                     Arg::new("read-only")
                         .long("read-only")
-                        .short('e')
+                        .short('r')
                         .action(ArgAction::SetTrue)
                         .requires("mount-point")
                         .requires("data-dir")

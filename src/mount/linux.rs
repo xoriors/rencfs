@@ -53,9 +53,6 @@ const FMODE_EXEC: i32 = 0x20;
 
 // const MAX_NAME_LENGTH: u32 = 255 - ENCRYPT_FILENAME_OVERHEAD_CHARS as u32;
 
-// Flags returned by the open request
-const FOPEN_DIRECT_IO: u32 = 1 << 0; // bypass page cache for this open file
-
 pub struct DirectoryEntryIterator(crate::encryptedfs::DirectoryEntryIterator, u64);
 
 impl Iterator for DirectoryEntryIterator {
@@ -133,8 +130,6 @@ impl Iterator for DirectoryEntryPlusIterator {
 
 pub struct EncryptedFsFuse3 {
     fs: Arc<EncryptedFs>,
-    direct_io: bool,
-    suid_support: bool,
 }
 
 impl EncryptedFsFuse3 {
@@ -142,25 +137,10 @@ impl EncryptedFsFuse3 {
         data_dir: PathBuf,
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
-        direct_io: bool,
-        #[allow(unused_variables)] suid_support: bool,
     ) -> FsResult<Self> {
-        // #[cfg(feature = "abi-7-26")]
-        // {
-        //     Ok(Self {
-        //         fs: EncryptedFs::new(data_dir, password_provider, cipher).await?,
-        //         direct_io,
-        //         suid_support,
-        //     })
-        // }
-        // #[cfg(not(feature = "abi-7-26"))]
-        // {
         Ok(Self {
             fs: EncryptedFs::new(data_dir, password_provider, cipher).await?,
-            direct_io,
-            suid_support,
         })
-        // }
     }
 
     fn get_fs(&self) -> Arc<EncryptedFs> {
@@ -169,11 +149,7 @@ impl EncryptedFsFuse3 {
 
     #[allow(clippy::cast_possible_truncation)]
     const fn creation_mode(&self, mode: u32) -> u16 {
-        if self.suid_support {
-            mode as u16
-        } else {
-            (mode & !(libc::S_ISUID | libc::S_ISGID)) as u16
-        }
+        (mode & !(libc::S_ISUID | libc::S_ISGID)) as u16
     }
 
     #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::WARN), ret(level = Level::DEBUG))]
@@ -933,7 +909,6 @@ impl Filesystem for EncryptedFsFuse3 {
                     EIO
                 })?;
             }
-            let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
             let fh = self
                 .get_fs()
                 .open(inode, read, write)
@@ -942,10 +917,7 @@ impl Filesystem for EncryptedFsFuse3 {
                     error!(err = %err);
                     EIO
                 })?;
-            Ok(ReplyOpen {
-                fh,
-                flags: open_flags,
-            })
+            Ok(ReplyOpen { fh, flags: 0 })
         } else {
             return Err(EACCES.into());
         }
@@ -1102,10 +1074,9 @@ impl Filesystem for EncryptedFsFuse3 {
         };
 
         if check_access(attr.uid, attr.gid, attr.perm, req.uid, req.gid, access_mask) {
-            let open_flags = if self.direct_io { FOPEN_DIRECT_IO } else { 0 };
             Ok(ReplyOpen {
                 fh: 0, // we don't use handles for directories
-                flags: open_flags,
+                flags: 0,
             })
         } else {
             return Err(EACCES.into());
@@ -1485,8 +1456,7 @@ async fn mount_fuse(
     info!("Checking password and mounting FUSE filesystem");
     Ok(Session::new(mount_options)
         .mount_with_unprivileged(
-            EncryptedFsFuse3::new(data_dir, password_provider, cipher, direct_io, suid_support)
-                .await?,
+            EncryptedFsFuse3::new(data_dir, password_provider, cipher).await?,
             mount_path,
         )
         .await?)
