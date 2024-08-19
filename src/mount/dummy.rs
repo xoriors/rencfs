@@ -22,6 +22,7 @@ pub struct MountPointImpl {
     allow_other: bool,
     direct_io: bool,
     suid_support: bool,
+    read_only: bool,
 }
 
 #[async_trait]
@@ -35,6 +36,7 @@ impl MountPoint for MountPointImpl {
         allow_other: bool,
         direct_io: bool,
         suid_support: bool,
+        read_only: bool,
     ) -> Self {
         Self {
             mountpoint,
@@ -45,6 +47,7 @@ impl MountPoint for MountPointImpl {
             allow_other,
             direct_io,
             suid_support,
+            read_only,
         }
     }
 

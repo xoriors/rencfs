@@ -43,7 +43,6 @@
 //!     args.next(); // skip program name
 //!     let mount_path = args.next().expect("mount_path expected");
 //!     let data_path = args.next().expect("data_path expected");
-//!
 //!     struct PasswordProviderImpl {}
 //!     impl PasswordProvider for PasswordProviderImpl {
 //!         fn get_password(&self) -> Option<SecretString> {
@@ -56,6 +55,7 @@
 //!         Path::new(&data_path),
 //!         Box::new(PasswordProviderImpl {}),
 //!         Cipher::ChaCha20Poly1305,
+//!         false,
 //!         false,
 //!         false,
 //!         false,
