@@ -183,6 +183,7 @@ fn get_cli_args() -> ArgMatches {
                         .short('e')
                         .action(ArgAction::SetTrue)
                         .requires("mount-point")
+                        .requires("data-dir")
                         .help("Set fuse filesystem read-only mount option, default is disabled.")
                 )
         ).subcommand(
