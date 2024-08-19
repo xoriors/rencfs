@@ -49,23 +49,23 @@ jobs:
 
       - name: java-bridge build
         run: |
-          cd java bridge
+          cd java-bridge
           cargo build --all-targets --all-features --target x86_64-unknown-linux-gnu
           cargo build --release --all-targets --all-features --target x86_64-unknown-linux-gnu
 
       - name: java-bridge fmt check
         run: |
-          cd java bridge
+          cd java-bridge
           cargo fmt --all -- --check
 
       - name: java-bridge check
         run: |
-          cd java bridge
+          cd java-bridge
           cargo check --all --target x86_64-unknown-linux-gnu
 
       - name: java-bridge tests
         run: |
-          cd java bridge
+          cd java-bridge
           cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
 
       - name: java-bridge doc
