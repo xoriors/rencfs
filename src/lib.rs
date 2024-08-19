@@ -1,5 +1,5 @@
 #![feature(test)]
-// #![feature(error_generic_member_access)]
+#![feature(error_generic_member_access)]
 #![feature(seek_stream_len)]
 #![feature(const_refs_to_cell)]
 #![feature(box_into_inner)]
@@ -11,10 +11,10 @@
 //!
 //! It can be used a library to create an encrypted file system or mount it with FUSE.
 //!
-//! This crate also contains **main.rs** file that can be used as an example on how to run the encrypted file system from the command line.
+//! This crate also contains examples and a `main.rs` file that can be used as examples on how to run the encrypted file system from the command line.
 //! Documentation for that can be found [here](https://github.com/radumarias/rencfs#command-line-tool).
 //!
-//! In the following example, we will see how we can use the library.
+//! In the following example, we will see how we can use it as a library.
 //!
 //! ## Using [`mount::create_mount_point`] on Linux
 //!

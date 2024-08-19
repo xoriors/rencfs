@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::any::Any;
 use std::io;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex};
@@ -24,19 +24,28 @@ pub(crate) const BLOCK_SIZE: usize = 100; // round value easier for debugging
 #[cfg(not(test))]
 pub(crate) const BLOCK_SIZE: usize = 256 * 1024; // 256 KB block size
 
+/// If you have your custom [Write] + [Seek] you want to pass to [CryptoWrite] it needs to implement this trait.  
+/// It has a blanket implementation for [Write] + [Seek] + [Read].
 pub trait WriteSeekRead: Write + Seek + Read {}
 
 impl<T: Write + Seek + Read> WriteSeekRead for T {}
 
-trait InnerWriter: Write {
+/// If you have your custom implementation for [Write] you want to pass to [CryptoWrite] it needs to implement this trait.  
+/// It has a blanket implementation for [Write] + [Seek] + [Read] + [`'static`] but in case your implementation is only [Write] it needs to implement this.
+pub trait CryptoInnerWriter: Write + Any {
+    fn into_any(self) -> Box<dyn Any>;
     fn as_write(&mut self) -> Option<&mut dyn Write>;
     fn as_write_seek_read(&mut self) -> Option<&mut dyn WriteSeekRead>;
 }
 
-impl<T: Write + Seek + Read> InnerWriter for T {
+impl<T: Write + Seek + Read + 'static> CryptoInnerWriter for T {
+    fn into_any(self) -> Box<dyn Any> {
+        Box::new(self)
+    }
     fn as_write(&mut self) -> Option<&mut dyn Write> {
         Some(self)
     }
+
     fn as_write_seek_read(&mut self) -> Option<&mut dyn WriteSeekRead> {
         Some(self)
     }
@@ -44,19 +53,19 @@ impl<T: Write + Seek + Read> InnerWriter for T {
 
 /// Writes encrypted content to the wrapped Writer.
 #[allow(clippy::module_name_repetitions)]
-pub trait CryptoWrite<W: Send + Sync>: Write + Send + Sync {
-    /// You must call this after the last write to make sure we write the last block. This handles the flush also.
+pub trait CryptoWrite<W: CryptoInnerWriter + Send + Sync>: Write + Send + Sync {
+    /// You must call this after the last writing to make sure we write the last block.
+    /// This handles the flush also.
     #[allow(clippy::missing_errors_doc)]
     fn finish(&mut self) -> io::Result<W>;
 }
 
 /// Write with Seek
-pub trait CryptoWriteSeek<W: InnerWriter + Send + Sync>: CryptoWrite<W> + Seek {}
+pub trait CryptoWriteSeek<W: CryptoInnerWriter + Send + Sync>: CryptoWrite<W> + Seek {}
 
 /// ring
-
 #[allow(clippy::module_name_repetitions)]
-pub struct RingCryptoWrite<W: InnerWriter + Send + Sync> {
+pub struct RingCryptoWrite<W: CryptoInnerWriter + Send + Sync> {
     writer: Option<W>,
     sealing_key: SealingKey<RandomNonceSequenceWrapper>,
     buf: BufMut,
@@ -69,7 +78,7 @@ pub struct RingCryptoWrite<W: InnerWriter + Send + Sync> {
     decrypt_buf: Option<BufMut>,
 }
 
-impl<W: InnerWriter + Send + Sync> RingCryptoWrite<W> {
+impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(mut writer: W, algorithm: &'static Algorithm, key: &SecretVec<u8>) -> Self {
@@ -79,7 +88,7 @@ impl<W: InnerWriter + Send + Sync> RingCryptoWrite<W> {
         let sealing_key = SealingKey::new(unbound_key, wrapping_nonce_sequence);
         let buf = BufMut::new(vec![0; BLOCK_SIZE]);
 
-        let (last_nonce, opening_key, decrypt_buf) = if let Some(_) = writer.as_write_seek_read() {
+        let (last_nonce, opening_key, decrypt_buf) = if writer.as_write_seek_read().is_some() {
             let last_nonce = Arc::new(Mutex::new(None));
             let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).unwrap();
             let nonce_sequence2 = ExistingNonceSequence::new(last_nonce.clone());
@@ -142,9 +151,12 @@ impl<W: InnerWriter + Send + Sync> RingCryptoWrite<W> {
         let writer = self
             .writer
             .as_mut()
-            .unwrap()
+            .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
             .as_write_seek_read()
-            .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
+            .ok_or(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "downcast failed",
+            ))?;
         decrypt_block!(
             self.block_index,
             self.decrypt_buf.as_mut().unwrap(),
@@ -156,7 +168,7 @@ impl<W: InnerWriter + Send + Sync> RingCryptoWrite<W> {
             // no decryption happened
             Ok(false)
         } else {
-            // a decryption happened
+            // decryption happened
             self.buf.clear();
             // bring back block index to current block, it's incremented by decrypt_block if it can decrypt something
             self.block_index -= 1;
@@ -164,9 +176,12 @@ impl<W: InnerWriter + Send + Sync> RingCryptoWrite<W> {
             let writer = self
                 .writer
                 .as_mut()
-                .unwrap()
+                .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
                 .as_write_seek_read()
-                .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
+                .ok_or(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "downcast failed",
+                ))?;
             writer.seek(SeekFrom::Start(
                 self.block_index * self.ciphertext_block_size as u64,
             ))?;
@@ -186,16 +201,25 @@ impl<W: InnerWriter + Send + Sync> RingCryptoWrite<W> {
     }
 }
 
-impl<W: InnerWriter + Send + Sync> Write for RingCryptoWrite<W> {
+impl<W: CryptoInnerWriter + Send + Sync> Write for RingCryptoWrite<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.writer.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "write called on already finished writer",
+            ));
+        }
         if self.pos() == 0 && self.buf.available() == 0 {
             // first write since we opened the writer, try to load the first block
             let writer = self
                 .writer
                 .as_mut()
-                .unwrap()
+                .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
                 .as_write_seek_read()
-                .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
+                .ok_or(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "downcast failed",
+                ))?;
             writer.seek(SeekFrom::Start(0))?;
             self.block_index = 0;
             self.decrypt_block()?;
@@ -206,9 +230,12 @@ impl<W: InnerWriter + Send + Sync> Write for RingCryptoWrite<W> {
             let writer = self
                 .writer
                 .as_mut()
-                .unwrap()
+                .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
                 .as_write_seek_read()
-                .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
+                .ok_or(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "downcast failed",
+                ))?;
             let stream_len = writer.stream_len()?;
             if stream_len > block_index * self.ciphertext_block_size as u64 {
                 self.decrypt_block()?;
@@ -234,13 +261,20 @@ impl<W: InnerWriter + Send + Sync> Write for RingCryptoWrite<W> {
     }
 }
 
-impl<W: Send + Sync> CryptoWrite<W> for RingCryptoWrite<W> {
+impl<W: CryptoInnerWriter + Send + Sync> CryptoWrite<W> for RingCryptoWrite<W> {
     fn finish(&mut self) -> io::Result<W> {
         if self.buf.is_dirty() {
             // encrypt and write last block, use as many bytes as we have
             self.encrypt_and_write()?;
         }
-        Ok(self.writer.take().unwrap())
+        let boxed = self
+            .writer
+            .take()
+            .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
+            .into_any()
+            .downcast::<W>()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "downcast failed"))?;
+        Ok(Box::into_inner(boxed))
     }
 }
 
@@ -282,14 +316,17 @@ impl NonceSequence for RandomNonceSequenceWrapper {
     }
 }
 
-impl<W: InnerWriter + Send + Sync> RingCryptoWrite<W> {
+impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
     fn get_plaintext_len(&mut self) -> io::Result<u64> {
         let writer = self
             .writer
             .as_mut()
-            .unwrap()
+            .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
             .as_write_seek_read()
-            .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
+            .ok_or(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "downcast failed",
+            ))?;
         let ciphertext_len = writer.stream_len()?;
         if ciphertext_len == 0 && self.buf.available() == 0 {
             return Ok(0);
@@ -308,7 +345,7 @@ impl<W: InnerWriter + Send + Sync> RingCryptoWrite<W> {
     }
 }
 
-impl<W: InnerWriter + Send + Sync> Seek for RingCryptoWrite<W> {
+impl<W: CryptoInnerWriter + Send + Sync> Seek for RingCryptoWrite<W> {
     #[allow(clippy::cast_possible_wrap)]
     #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
@@ -332,9 +369,12 @@ impl<W: InnerWriter + Send + Sync> Seek for RingCryptoWrite<W> {
                 let writer = self
                     .writer
                     .as_mut()
-                    .unwrap()
+                    .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
                     .as_write_seek_read()
-                    .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
+                    .ok_or(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "downcast failed",
+                    ))?;
                 writer.seek(SeekFrom::Start(0))?;
                 self.block_index = 0;
                 self.decrypt_block()?;
@@ -370,9 +410,12 @@ impl<W: InnerWriter + Send + Sync> Seek for RingCryptoWrite<W> {
             let writer = self
                 .writer
                 .as_mut()
-                .unwrap()
+                .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
                 .as_write_seek_read()
-                .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
+                .ok_or(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "downcast failed",
+                ))?;
             let last_block_index = writer.stream_len()? / self.ciphertext_block_size as u64;
             let target_block_index = new_block_index.min(last_block_index);
             writer.seek(SeekFrom::Start(
@@ -402,4 +445,4 @@ impl<W: InnerWriter + Send + Sync> Seek for RingCryptoWrite<W> {
     }
 }
 
-impl<W: InnerWriter + Send + Sync> CryptoWriteSeek<W> for RingCryptoWrite<W> {}
+impl<W: CryptoInnerWriter + Send + Sync> CryptoWriteSeek<W> for RingCryptoWrite<W> {}

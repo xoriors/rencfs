@@ -11,6 +11,34 @@ use crate::crypto::Cipher;
 
 #[test]
 #[traced_test]
+fn writer_1mb_aes256gcm_mem() {
+    use std::io;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+    use crate::stream_util::RandomReader;
+
+    let cipher = Cipher::Aes256Gcm;
+    let len = 1024 * 1024;
+
+    let mut key: Vec<u8> = vec![0; cipher.key_len()];
+    rand::thread_rng().fill_bytes(&mut key);
+    let key = SecretVec::new(key);
+
+    let rnd_reader = RandomReader::new(len);
+    let mut reader = rnd_reader.clone();
+    let cursor_write = io::Cursor::new(vec![]);
+    let mut writer = crypto::create_write(cursor_write, cipher, &key);
+    io::copy(&mut reader, &mut writer).unwrap();
+    writer.finish().unwrap();
+}
+
+#[test]
+#[traced_test]
 fn test_reader_writer_chacha() {
     use std::io;
     use std::io::{Read, Seek};

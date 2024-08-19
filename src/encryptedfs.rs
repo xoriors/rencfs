@@ -1,3 +1,11 @@
+use argon2::password_hash::rand_core::RngCore;
+use async_trait::async_trait;
+use futures_util::TryStreamExt;
+use lru::LruCache;
+use num_format::{Locale, ToFormattedString};
+use secrecy::{ExposeSecret, SecretString, SecretVec};
+use serde::{Deserialize, Serialize};
+use std::backtrace::Backtrace;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::fs::{DirEntry, File, OpenOptions, ReadDir};
@@ -9,14 +17,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Weak};
 use std::time::{Duration, SystemTime};
 use std::{fs, io};
-
-use argon2::password_hash::rand_core::RngCore;
-use async_trait::async_trait;
-use futures_util::TryStreamExt;
-use lru::LruCache;
-use num_format::{Locale, ToFormattedString};
-use secrecy::{ExposeSecret, SecretString, SecretVec};
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock};
@@ -26,7 +26,7 @@ use tracing::{debug, error, info, instrument, warn, Level};
 
 use crate::arc_hashmap::ArcHashMap;
 use crate::crypto::read::{CryptoRead, CryptoReadSeek};
-use crate::crypto::write::{CryptoWrite, CryptoWriteSeek};
+use crate::crypto::write::{CryptoInnerWriter, CryptoWrite, CryptoWriteSeek};
 use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
 use crate::{crypto, fs_util, stream_util};
@@ -246,13 +246,13 @@ pub enum FsError {
     Io {
         #[from]
         source: io::Error,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("serialize error: {source}")]
     SerializeError {
         #[from]
         source: bincode::Error,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("item not found: {0}")]
     NotFound(&'static str),
@@ -280,25 +280,25 @@ pub enum FsError {
     Crypto {
         #[from]
         source: crypto::Error,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("keyring error: {source}")]
     Keyring {
         #[from]
         source: keyring::Error,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("parse int error: {source}")]
     ParseIntError {
         #[from]
         source: ParseIntError,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("tokio join error: {source}")]
     JoinError {
         #[from]
         source: JoinError,
-        // backtrace: Backtrace,
+        backtrace: Backtrace,
     },
     #[error("max filesize exceeded, max allowed {0}")]
     MaxFilesizeExceeded(usize),
@@ -2011,7 +2011,7 @@ impl EncryptedFs {
     }
 
     /// Create a crypto writer using internal encryption info.
-    pub async fn create_write<W: Write + Seek + Send + Sync + 'static>(
+    pub async fn create_write<W: CryptoInnerWriter + Seek + Send + Sync + 'static>(
         &self,
         file: W,
     ) -> FsResult<impl CryptoWrite<W>> {

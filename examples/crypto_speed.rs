@@ -11,7 +11,7 @@ use rand_core::RngCore;
 use secrecy::SecretVec;
 
 use rencfs::crypto;
-use rencfs::crypto::write::CryptoWrite;
+use rencfs::crypto::write::{CryptoInnerWriter, CryptoWrite};
 use rencfs::crypto::Cipher;
 
 #[tokio::main]
@@ -115,7 +115,7 @@ fn file_speed(path_in: &str, path_out: &str, cipher: Cipher, key: &SecretVec<u8>
     Ok(())
 }
 
-fn test_speed<W: Write + Send + Sync, R: Read + Send + Sync, FR>(
+fn test_speed<W: CryptoInnerWriter + Send + Sync, R: Read + Send + Sync, FR>(
     r: &mut impl Read,
     w: &mut (impl CryptoWrite<W> + ?Sized),
     w2: &mut impl Write,
