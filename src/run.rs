@@ -131,6 +131,7 @@ fn get_cli_args() -> ArgMatches {
                         .short('m')
                         .required(true)
                         .value_name("MOUNT_POINT")
+                        .requires("data-dir")
                         .help("Act as a client, and mount FUSE at given path"),
                 )
                 .arg(
@@ -139,6 +140,7 @@ fn get_cli_args() -> ArgMatches {
                         .short('d')
                         .required(true)
                         .value_name("DATA_DIR")
+                        .requires("mount-point")
                         .help("Where to store the encrypted data"),
                 )
                 .arg(
@@ -146,6 +148,8 @@ fn get_cli_args() -> ArgMatches {
                         .long("umount-on-start")
                         .short('u')
                         .action(ArgAction::SetTrue)
+                        .requires("mount-point")
+                        .requires("data-dir")
                         .help("If we should try to umount the mountpoint before starting the FUSE server. This can be useful when the previous run crashed or was forced kll and the mountpoint is still mounted."),
                 )
                 .arg(
@@ -153,6 +157,8 @@ fn get_cli_args() -> ArgMatches {
                         .long("allow-root")
                         .short('r')
                         .action(ArgAction::SetTrue)
+                        .requires("mount-point")
+                        .requires("data-dir")
                         .help("Allow root user to access filesystem"),
                 )
                 .arg(
@@ -160,6 +166,8 @@ fn get_cli_args() -> ArgMatches {
                         .long("allow-other")
                         .short('o')
                         .action(ArgAction::SetTrue)
+                        .requires("mount-point")
+                        .requires("data-dir")
                         .help("Allow other user to access filesystem"),
                 )
                 .arg(
@@ -168,6 +176,7 @@ fn get_cli_args() -> ArgMatches {
                         .short('i')
                         .action(ArgAction::SetTrue)
                         .requires("mount-point")
+                        .requires("data-dir")
                         .help("Use direct I/O (bypass page cache for an open file)"),
                 )
                 .arg(
@@ -175,6 +184,8 @@ fn get_cli_args() -> ArgMatches {
                         .long("suid")
                         .short('s')
                         .action(ArgAction::SetTrue)
+                        .requires("mount-point")
+                        .requires("data-dir")
                         .help("If it should allow setting SUID and SGID when files are created. Default is false and it will unset those flags when creating files"),
                 )
         ).subcommand(
