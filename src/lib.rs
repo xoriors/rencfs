@@ -24,6 +24,7 @@
 //! use std::path::Path;
 //! use std::str::FromStr;
 //! use std::io;
+//! use tracing::info;
 //!
 //! use anyhow::Result;
 //! use secrecy::SecretString;
@@ -42,7 +43,6 @@
 //!     args.next(); // skip program name
 //!     let mount_path = args.next().expect("mount_path expected");
 //!     let data_path = args.next().expect("data_path expected");
-//!     use tracing::info;
 //!     struct PasswordProviderImpl {}
 //!     impl PasswordProvider for PasswordProviderImpl {
 //!         fn get_password(&self) -> Option<SecretString> {
