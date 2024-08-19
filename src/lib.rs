@@ -24,7 +24,6 @@
 //! use std::path::Path;
 //! use std::str::FromStr;
 //! use std::io;
-//! use tracing::info;
 //!
 //! use anyhow::Result;
 //! use secrecy::SecretString;
@@ -43,8 +42,7 @@
 //!     args.next(); // skip program name
 //!     let mount_path = args.next().expect("mount_path expected");
 //!     let data_path = args.next().expect("data_path expected");
-//!
-//!     struct PasswordProviderImpl {}
+//!     use tracing::info;struct PasswordProviderImpl {}
 //!     impl PasswordProvider for PasswordProviderImpl {
 //!         fn get_password(&self) -> Option<SecretString> {
 //!             // dummy password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
@@ -56,6 +54,7 @@
 //!         Path::new(&data_path),
 //!         Box::new(PasswordProviderImpl {}),
 //!         Cipher::ChaCha20Poly1305,
+//!         false,
 //!         false,
 //!         false,
 //!         false,

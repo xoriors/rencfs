@@ -177,6 +177,14 @@ fn get_cli_args() -> ArgMatches {
                         .action(ArgAction::SetTrue)
                         .help("If it should allow setting SUID and SGID when files are created. Default is false and it will unset those flags when creating files"),
                 )
+                .arg(
+                    Arg::new("read-only")
+                        .long("read-only")
+                        .short('e')
+                        .action(ArgAction::SetTrue)
+                        .requires("mount-point")
+                        .help("Set fuse filesystem read-only mount option, default is disabled.")
+                )
         ).subcommand(
         Command::new("passwd")
             .about("Change password for the master key used to encrypt the data")
@@ -344,6 +352,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         matches.get_flag("allow-other"),
         matches.get_flag("direct-io"),
         matches.get_flag("suid"),
+        matches.get_flag("read-only"),
     );
     let mount_handle = mount_point.mount().await.map_err(|err| {
         error!(err = %err);

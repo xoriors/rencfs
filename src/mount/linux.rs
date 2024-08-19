@@ -1386,6 +1386,7 @@ pub struct MountPointImpl {
     allow_other: bool,
     direct_io: bool,
     suid_support: bool,
+    read_only: bool,
 }
 
 #[async_trait]
@@ -1399,6 +1400,7 @@ impl MountPoint for MountPointImpl {
         allow_other: bool,
         direct_io: bool,
         suid_support: bool,
+        read_only: bool,
     ) -> Self {
         Self {
             mountpoint,
@@ -1409,6 +1411,7 @@ impl MountPoint for MountPointImpl {
             allow_other,
             direct_io,
             suid_support,
+            read_only,
         }
     }
 
@@ -1422,6 +1425,7 @@ impl MountPoint for MountPointImpl {
             self.allow_other,
             self.direct_io,
             self.suid_support,
+            self.read_only,
         )
         .await?;
         Ok(mount::MountHandle {
@@ -1459,6 +1463,7 @@ async fn mount_fuse(
     allow_other: bool,
     direct_io: bool,
     suid_support: bool,
+    read_only: bool,
 ) -> FsResult<MountHandle> {
     // create mount point if it doesn't exist
     if !mountpoint.exists() {
@@ -1471,7 +1476,7 @@ async fn mount_fuse(
         }
     }
     let mount_options = mount_options
-        .read_only(false)
+        .read_only(read_only)
         .allow_root(allow_root)
         .allow_other(allow_other)
         .clone();
