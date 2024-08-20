@@ -1,6 +1,6 @@
 ################
 ##### Builder
-FROM alpine:3.19.1 as builder
+FROM alpine:3.19.1 AS builder
 
 RUN apk update && apk upgrade && apk add binutils build-base ca-certificates curl file g++ gcc make patch
 
@@ -37,15 +37,15 @@ RUN apk upgrade busybox --repository=http://dl-cdn.alpinelinux.org/alpine/edge/m
 COPY --from=builder /usr/src/rencfs/target/x86_64-unknown-linux-musl/release/rencfs /usr/local/bin
 
 ARG USER=rencfs
-ENV HOME /home/$USER
+ENV HOME=/home/$USER
 
 # install sudo as rootdocker
 RUN apk add --update sudo
 
 # add new user
 RUN adduser -D $USER \
-        && echo "$USER ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USER \
-        && chmod 0440 /etc/sudoers.d/$USER
+    && echo "$USER ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USER \
+    && chmod 0440 /etc/sudoers.d/$USER
 
 USER $USER
 WORKDIR $HOME
