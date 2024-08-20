@@ -374,7 +374,7 @@ where
 {
     let parent = file.parent().ok_or(Error::Generic("file has no parent"))?;
     let mut file = fs_util::open_atomic_write(file)?;
-    println!("file: {:#?}", file.as_file_mut().metadata()?);
+    // println!("file: {:#?}", file.as_file_mut().metadata()?);
     file = serialize_encrypt_into(file, value, cipher, key)?;
     file.commit()?;
     File::open(parent)?.sync_all()?;

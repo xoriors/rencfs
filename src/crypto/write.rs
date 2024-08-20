@@ -24,13 +24,13 @@ pub(crate) const BLOCK_SIZE: usize = 100; // round value easier for debugging
 #[cfg(not(test))]
 pub(crate) const BLOCK_SIZE: usize = 256 * 1024; // 256 KB block size
 
-/// If you have your custom [Write] + [Seek] you want to pass to [CryptoWrite] it needs to implement this trait.  
+/// If you have your custom [Write] + [Seek] you want to pass to [CryptoWrite] it needs to implement this trait.
 /// It has a blanket implementation for [Write] + [Seek] + [Read].
 pub trait WriteSeekRead: Write + Seek + Read {}
 
 impl<T: Write + Seek + Read> WriteSeekRead for T {}
 
-/// If you have your custom implementation for [Write] you want to pass to [CryptoWrite] it needs to implement this trait.  
+/// If you have your custom implementation for [Write] you want to pass to [CryptoWrite] it needs to implement this trait.
 /// It has a blanket implementation for [Write] + [Seek] + [Read] + [`'static`] but in case your implementation is only [Write] it needs to implement this.
 pub trait CryptoInnerWriter: Write + Any {
     fn into_any(self) -> Box<dyn Any>;

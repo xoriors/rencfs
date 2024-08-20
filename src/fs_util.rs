@@ -38,6 +38,7 @@ pub async fn rename_dir_content(src: &Path, dst: &Path) -> io::Result<()> {
 
 pub fn open_atomic_write(file: &Path) -> io::Result<AtomicWriteFile> {
     let mut opt = AtomicWriteFile::options();
+    opt.read(true);
     #[cfg(unix)]
     opt.preserve_mode(true).preserve_owner(true);
     opt.open(file)
