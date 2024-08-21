@@ -65,7 +65,7 @@ In progress:
   changes. This makes the write operations atomic.
 - multiple writes in parallel to the same file, ideal for torrent like applications
 
-[![rencfs](website/resources/layers.png)](website/resources/layers.png)
+[![rencfs](website/resources/layers2.png)](website/resources/layers2.png)
 
 # Stack
 
