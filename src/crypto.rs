@@ -136,7 +136,7 @@ fn create_ring_write<W: CryptoInnerWriter + Send + Sync>(
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoWrite::new(writer, algorithm, key)
+    RingCryptoWrite::new(writer, false, algorithm, key)
 }
 
 fn create_ring_write_seek<W: CryptoInnerWriter + Seek + Read + Send + Sync>(
@@ -148,7 +148,7 @@ fn create_ring_write_seek<W: CryptoInnerWriter + Seek + Read + Send + Sync>(
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoWrite::new(writer, algorithm, key)
+    RingCryptoWrite::new(writer, true, algorithm, key)
 }
 
 fn create_ring_read<R: Read + Send + Sync>(

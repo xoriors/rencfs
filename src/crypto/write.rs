@@ -67,6 +67,7 @@ pub trait CryptoWriteSeek<W: CryptoInnerWriter + Send + Sync>: CryptoWrite<W> + 
 #[allow(clippy::module_name_repetitions)]
 pub struct RingCryptoWrite<W: CryptoInnerWriter + Send + Sync> {
     writer: Option<W>,
+    seek: bool,
     sealing_key: SealingKey<RandomNonceSequenceWrapper>,
     buf: BufMut,
     nonce_sequence: Arc<Mutex<RandomNonceSequence>>,
@@ -81,7 +82,12 @@ pub struct RingCryptoWrite<W: CryptoInnerWriter + Send + Sync> {
 impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::needless_pass_by_value)]
-    pub fn new(mut writer: W, algorithm: &'static Algorithm, key: &SecretVec<u8>) -> Self {
+    pub fn new(
+        mut writer: W,
+        seek: bool,
+        algorithm: &'static Algorithm,
+        key: &SecretVec<u8>,
+    ) -> Self {
         let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).expect("unbound key");
         let nonce_sequence = Arc::new(Mutex::new(RandomNonceSequence::default()));
         let wrapping_nonce_sequence = RandomNonceSequenceWrapper::new(nonce_sequence.clone());
@@ -102,6 +108,7 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
         };
         Self {
             writer: Some(writer),
+            seek,
             sealing_key,
             buf,
             nonce_sequence,
@@ -210,19 +217,21 @@ impl<W: CryptoInnerWriter + Send + Sync> Write for RingCryptoWrite<W> {
             ));
         }
         if self.pos() == 0 && self.buf.available() == 0 {
-            // first write since we opened the writer, try to load the first block
-            let writer = self
-                .writer
-                .as_mut()
-                .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
-                .as_write_seek_read()
-                .ok_or(io::Error::new(
-                    io::ErrorKind::NotConnected,
-                    "downcast failed",
-                ))?;
-            writer.seek(SeekFrom::Start(0))?;
-            self.block_index = 0;
-            self.decrypt_block()?;
+            if self.seek {
+                // first write since we opened the writer, try to load the first block
+                let writer = self
+                    .writer
+                    .as_mut()
+                    .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
+                    .as_write_seek_read()
+                    .ok_or(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "downcast failed",
+                    ))?;
+                writer.seek(SeekFrom::Start(0))?;
+                self.block_index = 0;
+                self.decrypt_block()?;
+            }
         } else if self.buf.is_dirty() && self.buf.remaining() == 0 {
             self.flush()?;
             // try to decrypt the next block if we have any
