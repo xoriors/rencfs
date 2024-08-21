@@ -430,3 +430,65 @@ fn finish_seek() {
     let mut reader = reader.into_inner();
     let _ = reader.seek(io::SeekFrom::Start(0));
 }
+
+#[test]
+#[traced_test]
+fn reader_only_read() {
+    use std::io::Read;
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::Cipher;
+
+    struct ReadOnly {}
+    impl Read for ReadOnly {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+    }
+
+    let cipher = Cipher::Aes256Gcm;
+    let mut key: Vec<u8> = vec![0; cipher.key_len()];
+    rand::thread_rng().fill_bytes(&mut key);
+    let key = SecretVec::new(key);
+
+    let reader = ReadOnly {};
+    let _reader = crypto::create_read(reader, cipher, &key);
+    // we are not Seek, this would fail compilation
+    // _reader.seek(io::SeekFrom::Start(0)).unwrap();
+}
+
+#[test]
+#[traced_test]
+fn reader_with_seeks() {
+    use std::io::{self, Seek, SeekFrom};
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::read::BLOCK_SIZE;
+    use crate::crypto::write::CryptoWrite;
+    use crate::crypto::Cipher;
+
+    let cipher = Cipher::Aes256Gcm;
+    let mut key: Vec<u8> = vec![0; cipher.key_len()];
+    rand::thread_rng().fill_bytes(&mut key);
+    let key = SecretVec::new(key);
+
+    let len = BLOCK_SIZE * 3 + 42;
+
+    let cursor = io::Cursor::new(vec![0; 0]);
+    let mut writer = crypto::create_write(cursor, cipher, &key);
+    let mut cursor_random = io::Cursor::new(vec![0; len]);
+    rand::thread_rng().fill_bytes(cursor_random.get_mut());
+    io::copy(&mut cursor_random, &mut writer).unwrap();
+    let mut cursor = writer.finish().unwrap();
+    cursor.seek(SeekFrom::Start(0)).unwrap();
+
+    let mut reader = crypto::create_read_seek(cursor, cipher, &key);
+    reader.seek(SeekFrom::Start(42)).unwrap();
+    assert_eq!(reader.stream_position().unwrap(), 42);
+}

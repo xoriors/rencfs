@@ -1077,3 +1077,77 @@ fn compare(
     ciphertext.seek(SeekFrom::Start(0)).unwrap();
     ciphertext
 }
+
+#[test]
+#[traced_test]
+fn writer_only_write() {
+    use std::any::Any;
+    use std::io::{self, Write};
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::{CryptoInnerWriter, WriteSeekRead};
+    use crate::crypto::Cipher;
+
+    struct WriteOnly {}
+    impl Write for WriteOnly {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    impl CryptoInnerWriter for WriteOnly {
+        fn into_any(self) -> Box<dyn Any> {
+            Box::new(self)
+        }
+        fn as_write(&mut self) -> Option<&mut dyn Write> {
+            Some(self)
+        }
+        fn as_write_seek_read(&mut self) -> Option<&mut dyn WriteSeekRead> {
+            None
+        }
+    }
+
+    let cipher = Cipher::Aes256Gcm;
+    let mut key: Vec<u8> = vec![0; cipher.key_len()];
+    rand::thread_rng().fill_bytes(&mut key);
+    let key = SecretVec::new(key);
+
+    let writer = WriteOnly {};
+    let _writer = crypto::create_write(writer, cipher, &key);
+    // we are not Seek, this would fail compilation
+    // _writer.seek(io::SeekFrom::Start(0)).unwrap();
+}
+
+#[test]
+#[traced_test]
+fn writer_with_seeks() {
+    use std::io::{self, Cursor, Seek, SeekFrom};
+
+    use rand::RngCore;
+    use secrecy::SecretVec;
+
+    use crate::crypto;
+    use crate::crypto::write::BLOCK_SIZE;
+    use crate::crypto::Cipher;
+
+    let cipher = Cipher::Aes256Gcm;
+    let mut key: Vec<u8> = vec![0; cipher.key_len()];
+    rand::thread_rng().fill_bytes(&mut key);
+    let key = SecretVec::new(key);
+
+    let len = BLOCK_SIZE * 3 + 42;
+
+    let cursor = Cursor::new(vec![0; 0]);
+    let mut writer = crypto::create_write_seek(cursor, cipher, &key);
+    let mut cursor_random = io::Cursor::new(vec![0; len]);
+    rand::thread_rng().fill_bytes(cursor_random.get_mut());
+    io::copy(&mut cursor_random, &mut writer).unwrap();
+
+    writer.seek(SeekFrom::Start(42)).unwrap();
+    assert_eq!(writer.stream_position().unwrap(), 42);
+}
