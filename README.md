@@ -65,6 +65,8 @@ In progress:
   changes. This makes the write operations atomic.
 - multiple writes in parallel to the same file, ideal for torrent like applications
 
+[![rencfs](website/resources/rencfs.png](website/resources/rencfs.png)
+
 # Stack
 
 - it's fully async built upon [tokio](https://crates.io/crates/tokio) and [fuse3](https://crates.io/crates/fuse3)
