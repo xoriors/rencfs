@@ -605,7 +605,19 @@ async fn test_read_dir() {
                 .await
                 .unwrap();
 
-            let test_dir_2 = SecretString::from_str("test-dir-2").unwrap();
+            let test_file_3 = SecretString::from_str("test/file/3").unwrap();
+            let (_fh, file_attr_2) = fs
+                .create(
+                    parent,
+                    &test_file_3,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let test_dir_2 = SecretString::from_str("test\\dir//2").unwrap();
             let (_fh, dir_attr) = fs
                 .create(
                     parent,
@@ -663,13 +675,18 @@ async fn test_read_dir() {
                     kind: FileType::RegularFile,
                 },
                 DirectoryEntry {
+                    ino: file_attr_2.ino,
+                    name: test_file_3.clone(),
+                    kind: FileType::RegularFile,
+                },
+                DirectoryEntry {
                     ino: dir_attr.ino,
                     name: test_dir_2.clone(),
                     kind: FileType::Directory,
                 },
             ];
             sample.sort_by(|a, b| a.name.expose_secret().cmp(b.name.expose_secret()));
-            assert_eq!(entries.len(), 4);
+            assert_eq!(entries.len(), 5);
             assert_eq!(sample, entries);
         },
     )
@@ -928,23 +945,25 @@ async fn test_exists_by_name() {
         async {
             let fs = get_fs().await;
 
-            let test_file = SecretString::from_str("test-file").unwrap();
-            let _ = fs
-                .create(
-                    ROOT_INODE,
-                    &test_file,
-                    create_attr(FileType::RegularFile),
-                    false,
-                    false,
-                )
-                .await
-                .unwrap();
+            for file in ["test-file", "test//\\file"] {
+                let test_file = SecretString::from_str(file).unwrap();
+                let _ = fs
+                    .create(
+                        ROOT_INODE,
+                        &test_file,
+                        create_attr(FileType::RegularFile),
+                        false,
+                        false,
+                    )
+                    .await
+                    .unwrap();
 
-            assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
-            assert!(
-                !(fs.exists_by_name(ROOT_INODE, &SecretString::from_str("42").unwrap())
-                    .unwrap())
-            );
+                assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
+                assert!(
+                    !(fs.exists_by_name(ROOT_INODE, &SecretString::from_str("42").unwrap())
+                        .unwrap())
+                );
+            }
         },
     )
     .await;
@@ -960,33 +979,34 @@ async fn test_remove_dir() {
         },
         async {
             let fs = get_fs().await;
-
-            let test_dir = SecretString::from_str("test-dir").unwrap();
-            let _ = fs
-                .create(
-                    ROOT_INODE,
-                    &test_dir,
-                    create_attr(FileType::Directory),
-                    false,
-                    false,
-                )
-                .await
-                .unwrap();
-
-            assert!(fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
-            fs.remove_dir(ROOT_INODE, &test_dir).await.unwrap();
-            assert!(!fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
-            assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_dir).await.unwrap());
-            assert_eq!(
-                0,
-                fs.read_dir(ROOT_INODE)
+            for dir in ["test-dir", "test-dir\\", "test-dir/"] {
+                let test_dir = SecretString::from_str(dir).unwrap();
+                let _ = fs
+                    .create(
+                        ROOT_INODE,
+                        &test_dir,
+                        create_attr(FileType::Directory),
+                        false,
+                        false,
+                    )
                     .await
-                    .unwrap()
-                    .filter(|entry| {
-                        entry.as_ref().unwrap().name.expose_secret() == test_dir.expose_secret()
-                    })
-                    .count()
-            );
+                    .unwrap();
+
+                assert!(fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
+                fs.remove_dir(ROOT_INODE, &test_dir).await.unwrap();
+                assert!(!fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
+                assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_dir).await.unwrap());
+                assert_eq!(
+                    0,
+                    fs.read_dir(ROOT_INODE)
+                        .await
+                        .unwrap()
+                        .filter(|entry| {
+                            entry.as_ref().unwrap().name.expose_secret() == test_dir.expose_secret()
+                        })
+                        .count()
+                );
+            }
         },
     )
     .await;
@@ -1003,32 +1023,35 @@ async fn test_remove_file() {
         async {
             let fs = get_fs().await;
 
-            let test_file = SecretString::from_str("test-file").unwrap();
-            let _ = fs
-                .create(
-                    ROOT_INODE,
-                    &test_file,
-                    create_attr(FileType::RegularFile),
-                    false,
-                    false,
-                )
-                .await
-                .unwrap();
-
-            assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
-            fs.remove_file(ROOT_INODE, &test_file).await.unwrap();
-            assert!(!fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
-            assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_file).await.unwrap());
-            assert_eq!(
-                0,
-                fs.read_dir(ROOT_INODE)
+            for dir in ["test-dir", "test-dir\\", "test-dir/"] {
+                let test_file = SecretString::from_str(dir).unwrap();
+                let _ = fs
+                    .create(
+                        ROOT_INODE,
+                        &test_file,
+                        create_attr(FileType::RegularFile),
+                        false,
+                        false,
+                    )
                     .await
-                    .unwrap()
-                    .filter(|entry| {
-                        entry.as_ref().unwrap().name.expose_secret() == test_file.expose_secret()
-                    })
-                    .count()
-            );
+                    .unwrap();
+
+                assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
+                fs.remove_file(ROOT_INODE, &test_file).await.unwrap();
+                assert!(!fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
+                assert_eq!(None, fs.find_by_name(ROOT_INODE, &test_file).await.unwrap());
+                assert_eq!(
+                    0,
+                    fs.read_dir(ROOT_INODE)
+                        .await
+                        .unwrap()
+                        .filter(|entry| {
+                            entry.as_ref().unwrap().name.expose_secret()
+                                == test_file.expose_secret()
+                        })
+                        .count()
+                );
+            }
         },
     )
     .await;
@@ -1059,10 +1082,29 @@ async fn test_find_by_name_exists_by_name100files() {
                     .unwrap();
             }
 
+            let special_test_file = SecretString::from_str("test//\\file").unwrap();
+            let _ = fs
+                .create(
+                    ROOT_INODE,
+                    &special_test_file,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
             let test_file = SecretString::from_str("test-file-42").unwrap();
             assert!(fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
             assert!(fs
                 .find_by_name(ROOT_INODE, &test_file)
+                .await
+                .unwrap()
+                .is_some());
+
+            assert!(fs.exists_by_name(ROOT_INODE, &special_test_file).unwrap());
+            assert!(fs
+                .find_by_name(ROOT_INODE, &special_test_file)
                 .await
                 .unwrap()
                 .is_some());
@@ -1497,7 +1539,7 @@ async fn test_rename() {
             )
             .await
             .unwrap();
-        let dir_2 = SecretString::from_str("dir-2").unwrap();
+        let dir_2 = SecretString::from_str("dir-\\2").unwrap();
         fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_2)
             .await
             .unwrap();
@@ -1572,7 +1614,7 @@ async fn test_rename() {
 
         // file to existing file in same directory
         let file_1 = SecretString::from_str("file-1").unwrap();
-        let file_2 = SecretString::from_str("file-2").unwrap();
+        let file_2 = SecretString::from_str("file-/2").unwrap();
         let new_parent = ROOT_INODE;
         let (_, attr) = fs
             .create(
