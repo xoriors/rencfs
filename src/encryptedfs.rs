@@ -639,8 +639,7 @@ impl EncryptedFs {
     }
 
     pub async fn read_only(&self, read_only: bool) {
-        let mut guard = self.read_only.lock().await;
-        *guard = read_only;
+        *self.read_only.lock().await = read_only
     }
 
     pub fn exists(&self, ino: u64) -> bool {
