@@ -302,6 +302,8 @@ pub enum FsError {
     },
     #[error("max filesize exceeded, max allowed {0}")]
     MaxFilesizeExceeded(usize),
+    #[error("Read only mode is active.")]
+    ReadOnly,
 }
 
 #[derive(Debug, Clone)]
@@ -570,6 +572,7 @@ pub struct EncryptedFs {
     sizes_write: Mutex<HashMap<u64, AtomicU64>>,
     sizes_read: Mutex<HashMap<u64, AtomicU64>>,
     requested_read: Mutex<HashMap<u64, AtomicU64>>,
+    read_only: Mutex<bool>,
 }
 
 impl EncryptedFs {
@@ -621,6 +624,7 @@ impl EncryptedFs {
             sizes_write: Mutex::default(),
             sizes_read: Mutex::default(),
             requested_read: Mutex::default(),
+            read_only: Mutex::new(false),
         };
 
         let arc = Arc::new(fs);
@@ -634,6 +638,11 @@ impl EncryptedFs {
         Ok(arc)
     }
 
+    pub async fn read_only(&self, read_only: bool) {
+        let mut guard = self.read_only.lock().await;
+        *guard = read_only;
+    }
+
     pub fn exists(&self, ino: u64) -> bool {
         self.ino_file(ino).is_file()
     }
@@ -644,6 +653,11 @@ impl EncryptedFs {
 
     pub fn is_file(&self, ino: u64) -> bool {
         self.contents_path(ino).is_file()
+    }
+
+    async fn is_read_only(&self) -> bool {
+        let read_only_guard = self.read_only.lock().await;
+        *read_only_guard
     }
 
     /// Create a new node in the filesystem
@@ -666,6 +680,12 @@ impl EncryptedFs {
         }
         if self.exists_by_name(parent, name)? {
             return Err(FsError::AlreadyExists);
+        }
+        // let read_only_guard = self.read_only.lock().await;
+        // if *read_only_guard {
+        // }
+        if self.is_read_only().await {
+            return Err(FsError::ReadOnly);
         }
 
         // spawn on a dedicated runtime to not interfere with other more priority tasks
@@ -861,6 +881,9 @@ impl EncryptedFs {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
+        if self.is_read_only().await {
+            return Err(FsError::ReadOnly);
+        }
 
         if !self.exists_by_name(parent, name)? {
             return Err(FsError::NotFound("name not found"));
@@ -937,6 +960,9 @@ impl EncryptedFs {
         }
         if !self.exists_by_name(parent, name)? {
             return Err(FsError::NotFound("name not found"));
+        }
+        if self.is_read_only().await {
+            return Err(FsError::ReadOnly);
         }
 
         let attr = self
@@ -1476,6 +1502,9 @@ impl EncryptedFs {
         // write
         let ctx = { self.write_handles.write().await.remove(&handle) };
         if let Some(ctx) = ctx {
+            if self.is_read_only().await {
+                return Err(FsError::ReadOnly);
+            }
             let mut ctx = ctx.lock().await;
 
             let mut writer = ctx.writer.take().unwrap();
@@ -1569,6 +1598,9 @@ impl EncryptedFs {
             if !self.write_handles.read().await.contains_key(&handle) {
                 return Err(FsError::InvalidFileHandle);
             }
+        }
+        if self.is_read_only().await {
+            return Err(FsError::ReadOnly);
         }
         {
             let guard = self.write_handles.read().await;
@@ -1668,6 +1700,9 @@ impl EncryptedFs {
             // in the case of directory or if the file was crated without being opened we don't use a handle
             return Ok(());
         }
+        if self.is_read_only().await {
+            return Err(FsError::ReadOnly);
+        }
         let lock = self.read_handles.read().await;
         let mut valid_fh = lock.get(&handle).is_some();
         let lock = self.write_handles.read().await;
@@ -1708,6 +1743,9 @@ impl EncryptedFs {
         if self.is_dir(src_ino) || self.is_dir(dest_ino) {
             return Err(FsError::InvalidInodeType);
         }
+        if self.is_read_only().await {
+            return Err(FsError::ReadOnly);
+        }
 
         let mut buf = vec![0; size];
         let len = self.read(src_ino, src_offset, &mut buf, src_fh).await?;
@@ -1731,6 +1769,7 @@ impl EncryptedFs {
     /// Open a file. We can open multiple times for read but only one to write at a time.
     #[allow(clippy::missing_panics_doc)]
     pub async fn open(&self, ino: u64, read: bool, write: bool) -> FsResult<u64> {
+        let write = write || !self.is_read_only().await;
         if !read && !write {
             return Err(FsError::InvalidInput(
                 "read and write cannot be false at the same time",
@@ -1795,6 +1834,9 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::too_many_lines)]
     pub async fn set_len(&self, ino: u64, size: u64) -> FsResult<()> {
+        if self.is_read_only().await {
+            return Err(FsError::ReadOnly);
+        }
         info!("truncate {ino} to {size}");
         let attr = self.get_attr(ino).await?;
         if matches!(attr.kind, FileType::Directory) {
@@ -1884,6 +1926,9 @@ impl EncryptedFs {
     /// > That is because we want to make sure caller is holding a lock while all writers flush and we can't
     /// > lock here also as we would end-up in a deadlock.
     async fn flush_and_reset_writers(&self, ino: u64) -> FsResult<()> {
+        if self.is_read_only().await {
+            return Err(FsError::ReadOnly);
+        }
         let opened_files_for_write_guard = self.opened_files_for_write.read().await;
         let handle = opened_files_for_write_guard.get(&ino);
         if let Some(handle) = handle {
@@ -1929,6 +1974,9 @@ impl EncryptedFs {
         new_parent: u64,
         new_name: &SecretString,
     ) -> FsResult<()> {
+        if self.is_read_only().await {
+            return Err(FsError::ReadOnly);
+        }
         if !self.exists(parent) {
             return Err(FsError::InodeNotFound);
         }
