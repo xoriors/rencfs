@@ -80,6 +80,7 @@ async fn setup(setup: TestSetup) -> SetupResult {
         Path::new(data_dir_str).to_path_buf(),
         Box::new(PasswordProviderImpl {}),
         Cipher::ChaCha20Poly1305,
+        false,
     )
     .await
     .unwrap();

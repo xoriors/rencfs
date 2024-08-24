@@ -139,7 +139,7 @@ impl EncryptedFsFuse3 {
         cipher: Cipher,
     ) -> FsResult<Self> {
         Ok(Self {
-            fs: EncryptedFs::new(data_dir, password_provider, cipher).await?,
+            fs: EncryptedFs::new(data_dir, password_provider, cipher, false).await?,
         })
     }
 

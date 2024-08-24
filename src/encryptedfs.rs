@@ -572,7 +572,7 @@ pub struct EncryptedFs {
     sizes_write: Mutex<HashMap<u64, AtomicU64>>,
     sizes_read: Mutex<HashMap<u64, AtomicU64>>,
     requested_read: Mutex<HashMap<u64, AtomicU64>>,
-    read_only: Mutex<bool>,
+    read_only: bool,
 }
 
 impl EncryptedFs {
@@ -582,6 +582,7 @@ impl EncryptedFs {
         data_dir: PathBuf,
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
+        read_only: bool,
     ) -> FsResult<Arc<Self>> {
         let key_provider = KeyProvider {
             key_path: data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
@@ -624,7 +625,7 @@ impl EncryptedFs {
             sizes_write: Mutex::default(),
             sizes_read: Mutex::default(),
             requested_read: Mutex::default(),
-            read_only: Mutex::new(false),
+            read_only,
         };
 
         let arc = Arc::new(fs);
@@ -636,10 +637,6 @@ impl EncryptedFs {
         arc.ensure_root_exists().await?;
 
         Ok(arc)
-    }
-
-    pub async fn read_only(&self, read_only: bool) {
-        *self.read_only.lock().await = read_only
     }
 
     pub fn exists(&self, ino: u64) -> bool {
@@ -655,8 +652,7 @@ impl EncryptedFs {
     }
 
     async fn is_read_only(&self) -> bool {
-        let read_only_guard = self.read_only.lock().await;
-        *read_only_guard
+        self.read_only
     }
 
     /// Create a new node in the filesystem
@@ -680,9 +676,6 @@ impl EncryptedFs {
         if self.exists_by_name(parent, name)? {
             return Err(FsError::AlreadyExists);
         }
-        // let read_only_guard = self.read_only.lock().await;
-        // if *read_only_guard {
-        // }
         if self.is_read_only().await {
             return Err(FsError::ReadOnly);
         }
