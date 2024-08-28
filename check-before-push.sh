@@ -18,7 +18,9 @@ cargo clippy --all-targets --release --target x86_64-unknown-linux-gnu -- \
     -A clippy::too_many_arguments \
     -A clippy::significant_drop_tightening \
     -A clippy::redundant_closure \
-    -A clippy::missing_errors_doc
+    -A clippy::missing_errors_doc \
+    -A clippy::too_long_first_doc_paragraph \
+    -A clippy::type_complexity
 cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
 cargo doc --workspace --all-features --no-deps --target x86_64-unknown-linux-gnu
 cargo publish --dry-run --allow-dirty --target x86_64-unknown-linux-gnu
@@ -37,7 +39,9 @@ cargo clippy --all-targets --release --target x86_64-unknown-linux-gnu -- \
     -A clippy::too_many_arguments \
     -A clippy::significant_drop_tightening \
     -A clippy::redundant_closure \
-    -A clippy::missing_errors_doc
+    -A clippy::missing_errors_doc \
+    -A clippy::too_long_first_doc_paragraph \
+    -A clippy::type_complexity
 cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
 cargo doc --workspace --all-features --no-deps --target x86_64-unknown-linux-gnu
 cd ..

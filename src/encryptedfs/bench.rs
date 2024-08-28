@@ -51,20 +51,16 @@ fn bench_exists_by_name(b: &mut Bencher) {
 
         let mut rnd = rand::thread_rng();
         b.iter(|| {
-            black_box({
-                async_util::call_async(async {
-                    let _ = fs
-                        .exists_by_name(
-                            ROOT_INODE,
-                            &SecretString::from_str(&format!(
-                                "test-file-{}",
-                                rnd.gen_range(1..100)
-                            ))
+            async_util::call_async(async {
+                let _ = fs
+                    .exists_by_name(
+                        ROOT_INODE,
+                        &SecretString::from_str(&format!("test-file-{}", rnd.gen_range(1..100)))
                             .unwrap(),
-                        )
-                        .unwrap();
-                });
+                    )
+                    .unwrap();
             });
+            black_box(());
         });
     });
 }
@@ -90,22 +86,18 @@ fn bench_find_by_name(b: &mut Bencher) {
 
         let mut rnd = rand::thread_rng();
         b.iter(|| {
-            black_box({
-                async_util::call_async(async {
-                    let _ = fs.get_attr(ROOT_INODE).await.unwrap();
-                    let _ = fs
-                        .find_by_name(
-                            ROOT_INODE,
-                            &SecretString::from_str(&format!(
-                                "test-file-{}",
-                                rnd.gen_range(1..100)
-                            ))
+            async_util::call_async(async {
+                let _ = fs.get_attr(ROOT_INODE).await.unwrap();
+                let _ = fs
+                    .find_by_name(
+                        ROOT_INODE,
+                        &SecretString::from_str(&format!("test-file-{}", rnd.gen_range(1..100)))
                             .unwrap(),
-                        )
-                        .await
-                        .unwrap();
-                });
+                    )
+                    .await
+                    .unwrap();
             });
+            black_box(());
         });
     });
 }
@@ -130,13 +122,12 @@ fn bench_read_dir(b: &mut Bencher) {
         }
 
         b.iter(|| {
-            black_box({
-                async_util::call_async(async {
-                    let iter = fs.read_dir(ROOT_INODE).await.unwrap();
-                    let vec: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
-                    black_box(vec);
-                });
+            async_util::call_async(async {
+                let iter = fs.read_dir(ROOT_INODE).await.unwrap();
+                let vec: Vec<DirectoryEntry> = iter.map(|e| e.unwrap()).collect();
+                black_box(vec);
             });
+            black_box(());
         });
     });
 }
@@ -161,13 +152,12 @@ fn bench_read_dir_plus(b: &mut Bencher) {
         }
 
         b.iter(|| {
-            black_box({
-                async_util::call_async(async {
-                    let iter = fs.read_dir_plus(ROOT_INODE).await.unwrap();
-                    let vec: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
-                    black_box(vec);
-                });
+            async_util::call_async(async {
+                let iter = fs.read_dir_plus(ROOT_INODE).await.unwrap();
+                let vec: Vec<DirectoryEntryPlus> = iter.map(|e| e.unwrap()).collect();
+                black_box(vec);
             });
+            black_box(());
         });
     });
 }

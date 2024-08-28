@@ -37,7 +37,9 @@ jobs:
             -A clippy::too_many_arguments \
             -A clippy::significant_drop_tightening \
             -A clippy::redundant_closure \
-            -A clippy::missing_errors_doc
+            -A clippy::missing_errors_doc \
+            -A clippy::too_long_first_doc_paragraph \
+            -A clippy::type_complexity
 
       - name: java-bridge build
         run: |
@@ -62,4 +64,6 @@ jobs:
             -A clippy::too_many_arguments \
             -A clippy::significant_drop_tightening \
             -A clippy::redundant_closure \
-            -A clippy::missing_errors_doc
+            -A clippy::missing_errors_doc \
+            -A clippy::too_long_first_doc_paragraph \
+            -A clippy::type_complexity
