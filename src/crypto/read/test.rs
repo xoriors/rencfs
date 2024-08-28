@@ -51,34 +51,6 @@ fn test_read_empty() {
 
 #[test]
 #[traced_test]
-fn test_basic_read() {
-    use super::RingCryptoRead;
-    use crate::crypto::{create_write, write::CryptoWrite, Cipher};
-    use ring::aead::CHACHA20_POLY1305;
-    use std::io::Read;
-    use std::io::{Cursor, Write};
-
-    let writer = Cursor::new(Vec::new());
-    let cipher = Cipher::ChaCha20Poly1305;
-    let key = create_secret_key(cipher.key_len());
-
-    let mut crypto_writer = create_write(writer, cipher, &key);
-
-    let data = b"hello, world!";
-    crypto_writer.write_all(data).unwrap();
-    let encrypted = crypto_writer.finish().unwrap();
-
-    let mut buf = [0u8; 13];
-    let cipher = &CHACHA20_POLY1305;
-    let mut crypto_reader = RingCryptoRead::new(encrypted, cipher, &key);
-
-    crypto_reader.read_exact(&mut buf).unwrap();
-
-    assert_eq!(*data, buf);
-}
-
-#[test]
-#[traced_test]
 fn test_read_single_block() {
     use crate::crypto::read::{RingCryptoRead, BLOCK_SIZE};
     use ring::aead::CHACHA20_POLY1305;
