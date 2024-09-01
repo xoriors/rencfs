@@ -1,0 +1,70 @@
+@@startuml
+box "   fuse3\n<<external>>"
+participant "read" as ext_read
+end box
+
+box "linux.rs"
+participant "EncryptedFsFuse3::read" as read
+end box 
+
+
+box "encyrptedfs.rs"
+participant "EncryptedFs::exists" as exists
+participant "EncryptedFs::is_file" as is_file
+participant "EncryptedFs::get_attr" as get_attr
+' participant "EncryptedFs::set_len" as set_len
+' participant "EncryptedFs::open" as open
+' participant "EncryptedFs::do_with_read_handle" as do_with_read
+' participant "EncryptedFs::do_with_write_handle" as do_with_write
+' participant "check_access" as chk_acc
+end box 
+
+box "crypto/read.rs"
+participant "RingCryptoRead<File>::read" as crypto_read
+participant "decrypt_block!" as macro_decrypt
+end box
+
+
+ext_read --> read
+read --> exists
+alt inode exists
+    read --> is_file 
+    alt inode is file
+    read --> get_attr : <<file_inode>>
+    read <-- get_attr : <<file_attr>>
+    else inode is not a file
+    read <-- is_file
+    ext_read <-- read: EIO:Err
+    end
+else inode does not exist
+read <-- exists 
+ext_read <-- read : EIO:Error
+end
+' read --> chk_acc : <<file_attr>>
+' alt file access allowed
+' read <-- chk_acc : true
+'     opt truncate=true
+'         read --> set_len
+'         read <-- set_len
+'     end
+' read --> open : <<file_inode>>,<<rw mode>>
+'     alt read mode true
+'         open --> do_with_read
+'         open <-- do_with_read
+'         opt write mode true 
+'             open --> do_with_write
+'             open <-- do_with_write
+'         end
+'         read <-- open : <<file_handle>>
+'         ext_read <-- read : <<file_handle>>
+'     else neither read nor write mode 
+'         read <-- open 
+'         ext_read <-- read : <<Err:EIO>>
+'     end
+' else file access not allowed
+' read <-- chk_acc : false
+' ext_read <-- read : <<Err:EACCES>>
+' end 
+
+
+@@enduml
