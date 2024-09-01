@@ -65,7 +65,7 @@ jobs:
           name: PKGBUILD
 
       - name: publish AUR package
-        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
         with:
           pkgname: ${{ github.event.repository.name }}-bin
           pkgbuild: PKGBUILD
