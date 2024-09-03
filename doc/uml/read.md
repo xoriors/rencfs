@@ -1,3 +1,4 @@
+```mermaid
 sequenceDiagram
     box fuse3[external]
         participant ext_read as read
@@ -32,3 +33,4 @@ crypto_read -->> su_read : [bytes_read]
 su_read -->> enc_read : [bytes_read]
 enc_read -->> read : [bytes_read]
 read -->> ext_read : [buf]
+```

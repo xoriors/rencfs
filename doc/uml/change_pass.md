@@ -1,3 +1,4 @@
+```mermaid
 sequenceDiagram
     box run.rs 
         participant rn_chng_pass as run_change_password
@@ -41,3 +42,4 @@ sequenceDiagram
     atomic_enc_ser -->> encfs_passwd : 
     encfs_passwd -->> rn_chng_pass : 
     %% End of message sequence
+```
