@@ -13,8 +13,6 @@ sequenceDiagram
     box encryptedfs.rs
         participant enc_create as EncryptedFs::create
         participant get_attr as EncryptedFs::get_attr
-        %% participant write_inode as EncryptedFs::write_inode_to_storage
-        %% participant gen_inode as EncryptedFs::gen_next_inode
     end
 
     box std::fs[external]
