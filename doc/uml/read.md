@@ -24,7 +24,6 @@ sequenceDiagram
 
 ext_read -->> read : [file_inode,offset,file_handle,size]
 read -->> enc_read : [file_inode,offset,file_hanlde,buf]
-%% enc_read -->> enc_read : [get reader RingCryptoRead]
 enc_read -->> crypto_seek : [offset]
 crypto_seek -->> enc_read : [stream_position]
 enc_read -->> su_read : [buf]
