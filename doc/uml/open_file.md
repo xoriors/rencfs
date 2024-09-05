@@ -18,23 +18,23 @@ sequenceDiagram
         participant chk_acc as check_access 
     end 
 
-    ext_open_file ->> open_file : 
-    open_file ->> get_attr : [file_inode]
+    ext_open_file -->> open_file : 
+    open_file -->> get_attr : [file_inode]
     get_attr -->> open_file : [file_attr]
-    open_file ->> chk_acc : [file_attr]
+    open_file -->> chk_acc : [file_attr]
 
     alt file access allowed
         chk_acc -->> open_file : true
         opt truncate mode true
-            open_file ->> set_len : 
+            open_file -->> set_len : 
             set_len -->> open_file : 
         end
-        open_file ->> open : [file_inode,rw mode]
+        open_file -->> open : [file_inode,rw mode]
         alt read mode true
-            open ->> do_with_read : 
+            open -->> do_with_read : 
             do_with_read -->> open : 
             opt write mode true
-                open ->> do_with_write : 
+                open -->> do_with_write : 
                 do_with_write -->> open : 
             end
             open -->> open_file : [file_handle]
