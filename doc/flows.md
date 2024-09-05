@@ -3,6 +3,8 @@
 
 [Change Password](uml/change_pass.md)
 
+[Open File](uml/open_file.md)
+
 [Close File](uml/close_file.md)
 
 [Read](uml/read.md)
