@@ -1,9 +1,13 @@
+use std::path::Path;
 use std::str::FromStr;
 use std::string::ToString;
+use std::fs;
+use std::time::SystemTime;
 
 use secrecy::{ExposeSecret, SecretString};
 use tracing_test::traced_test;
 
+use crate::crypto::Cipher;
 use crate::encryptedfs::write_all_bytes_to_fs;
 use crate::encryptedfs::HASH_DIR;
 use crate::encryptedfs::INODES_DIR;
@@ -11,11 +15,11 @@ use crate::encryptedfs::KEY_ENC_FILENAME;
 use crate::encryptedfs::KEY_SALT_FILENAME;
 use crate::encryptedfs::SECURITY_DIR;
 use crate::encryptedfs::{
-    DirectoryEntry, DirectoryEntryPlus, FileType, FsError, FsResult, CONTENTS_DIR, ROOT_INODE,
+    EncryptedFs, SetFileAttr, DirectoryEntry, DirectoryEntryPlus, FileType, FsError, FsResult, CONTENTS_DIR, ROOT_INODE,
 };
 use crate::test_common::run_test;
 use crate::test_common::TestSetup;
-use crate::test_common::{create_attr, get_fs};
+use crate::test_common::{create_attr, get_fs, PasswordProviderImpl};
 use crate::{crypto, test_common};
 
 static ROOT_INODE_STR: &str = "1";
@@ -24,7 +28,7 @@ static ROOT_INODE_STR: &str = "1";
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_write() {
-    run_test(TestSetup { key: "test_write" }, async {
+    run_test(TestSetup { key: "test_write", read_only: false }, async {
         let fs = get_fs().await;
 
         let test_file = SecretString::from_str("test-file").unwrap();
@@ -167,7 +171,7 @@ async fn test_write() {
 #[allow(clippy::too_many_lines)]
 // #[ignore]
 async fn test_read() {
-    run_test(TestSetup { key: "test_read" }, async {
+    run_test(TestSetup { key: "test_read", read_only: false }, async {
         let fs = get_fs().await;
 
         let test_test_file = SecretString::from_str("test-file").unwrap();
@@ -345,6 +349,7 @@ async fn test_set_len() {
     run_test(
         TestSetup {
             key: "test_set_len",
+            read_only: false,
         },
         async {
             let fs = get_fs().await;
@@ -419,6 +424,7 @@ async fn test_copy_file_range() {
     run_test(
         TestSetup {
             key: "test_copy_file_range",
+            read_only: false,
         },
         async {
             let fs = get_fs().await;
@@ -505,6 +511,7 @@ async fn test_read_dir() {
     run_test(
         TestSetup {
             key: "test_read_dir",
+            read_only: false,
         },
         async {
             let fs = get_fs().await;
@@ -700,6 +707,7 @@ async fn test_read_dir_plus() {
     run_test(
         TestSetup {
             key: "test_read_dir_plus",
+            read_only: false,
         },
         async {
             let fs = get_fs().await;
@@ -903,6 +911,7 @@ async fn test_find_by_name() {
     run_test(
         TestSetup {
             key: "test_find_by_name",
+            read_only: false,
         },
         async {
             let fs = get_fs().await;
@@ -941,6 +950,7 @@ async fn test_exists_by_name() {
     run_test(
         TestSetup {
             key: "test_exists_by_name",
+            read_only: false,
         },
         async {
             let fs = get_fs().await;
@@ -976,6 +986,7 @@ async fn test_remove_dir() {
     run_test(
         TestSetup {
             key: "test_remove_dir",
+            read_only: false,
         },
         async {
             let fs = get_fs().await;
@@ -1019,6 +1030,7 @@ async fn test_remove_file() {
     run_test(
         TestSetup {
             key: "test_remove_file",
+            read_only: false,
         },
         async {
             let fs = get_fs().await;
@@ -1064,6 +1076,7 @@ async fn test_find_by_name_exists_by_name100files() {
     run_test(
         TestSetup {
             key: "test_find_by_name_exists_by_name_many_files",
+            read_only: false,
         },
         async {
             let fs = get_fs().await;
@@ -1117,7 +1130,7 @@ async fn test_find_by_name_exists_by_name100files() {
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_create_structure_and_root() {
-    run_test(TestSetup { key: "test_sample" }, async {
+    run_test(TestSetup { key: "test_sample", read_only: false }, async {
         let fs = get_fs().await;
 
         assert!(fs.exists(ROOT_INODE));
@@ -1147,7 +1160,7 @@ async fn test_create_structure_and_root() {
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_create() {
-    run_test(TestSetup { key: "test_create" }, async {
+    run_test(TestSetup { key: "test_create", read_only: false }, async {
         let fs = get_fs().await;
 
         // file in root
@@ -1332,7 +1345,7 @@ async fn test_create() {
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_rename() {
-    run_test(TestSetup { key: "test_rename" }, async {
+    run_test(TestSetup { key: "test_rename", read_only: false }, async {
         let fs = get_fs().await;
 
         // new file in same directory
@@ -2243,7 +2256,7 @@ async fn test_rename() {
 #[tokio::test]
 #[traced_test]
 async fn test_open() {
-    run_test(TestSetup { key: "test_open" }, async {
+    run_test(TestSetup { key: "test_open", read_only: false }, async {
         let fs = get_fs().await;
 
         let test_file = SecretString::from_str("test-file").unwrap();
@@ -2278,8 +2291,99 @@ async fn test_open() {
 // #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn _test_sample() {
-    run_test(TestSetup { key: "test_sample" }, async {
+    run_test(TestSetup { key: "test_sample", read_only: false }, async {
         let _ = get_fs().await;
     })
     .await;
+}
+
+#[tokio::test]
+#[traced_test]
+#[allow(clippy::too_many_lines)]
+async fn test_read_only_create() {
+    run_test(TestSetup { key: "test_read_only_create", read_only: true, }, async {
+        let fs = get_fs().await;
+
+        // Check creating a file in a read only fs
+        let test_file = SecretString::from_str("test-file").unwrap();
+        let create_file_result = fs
+            .create(
+                ROOT_INODE,
+                &test_file,
+                create_attr(FileType::RegularFile),
+                true,
+                false,
+            )
+            .await;
+        assert!(matches!(create_file_result, Err(FsError::ReadOnly)));
+    })
+    .await;
+}
+
+#[tokio::test]
+#[traced_test]
+#[allow(clippy::too_many_lines)]
+async fn test_read_only_write() {
+    run_test(TestSetup { key: "read_only_test_create", read_only: false, }, async {
+        let data_dir = Path::new("/tmp/rencfs_data_test").to_path_buf();
+        let cipher = Cipher::ChaCha20Poly1305;
+        let file1 = SecretString::from_str("file1").unwrap();
+        let file_dest = SecretString::from_str("file_dest").unwrap();
+        let dir1 = SecretString::from_str("/tmp/rencfs_data_test/dir1").unwrap();
+        let data = "Hello, world!";
+        fs::remove_dir_all(&data_dir).expect("Could not delete files.");
+
+        let fs_rw = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl {}), cipher, false).await.expect("test_read_only_write: Error creating rw fs.");
+
+        let (fh, attr) = fs_rw.create(ROOT_INODE, &file1, create_attr(FileType::RegularFile), true, true).await.expect("read_only_test_create: Error creating file.");
+        let (fh_dest, attr_dest) = fs_rw.create(ROOT_INODE, &file_dest, create_attr(FileType::RegularFile), true, true).await.expect("read_only_test_create: Error creating file.");
+        let (_, _) = fs_rw.create(ROOT_INODE, &dir1, create_attr(FileType::Directory), false, true).await.expect("read_only_test_create: Error creating dir.");
+        
+        // Create a succesful write on the file
+        crate::encryptedfs::write_all_string_to_fs(&fs_rw, attr.ino, 0, data, fh).await.unwrap();
+        fs_rw.flush(fh).await.unwrap();
+        fs_rw.release(fh).await.unwrap();
+        drop(fs_rw);
+        let fs_ro = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl {}), cipher, true).await.expect("test_read_only_write: Error creating rw fs.");
+        let fh = fs_ro.open(attr.ino, true, true).await.expect("read_only_test_create: Error opening file in ro.");
+
+        // Test a succesful reading the file in rw mode
+        let mut buf = vec![0; data.len()];
+        fs_ro.read(attr.ino, 0, &mut buf, fh).await.unwrap();
+        assert_eq!(data, String::from_utf8(buf).unwrap());
+
+        // Test creating a file
+        let file2 = SecretString::from_str("file2").unwrap();
+        let create_file_result = fs_ro.create(ROOT_INODE, &file2, create_attr(FileType::RegularFile), true, true).await;
+        assert!(matches!(create_file_result, Err(FsError::ReadOnly)));
+        // Test renaming the file
+        let new_file = SecretString::from_str("file1").unwrap();
+        let rename_result = fs_ro.rename(ROOT_INODE, &file1, ROOT_INODE, &new_file).await;
+        assert!(matches!(rename_result, Err(FsError::ReadOnly)));
+        // Test removing a file
+        let remove_file_result = fs_ro.remove_file(ROOT_INODE, &file1).await;
+        assert!(matches!(remove_file_result, Err(FsError::ReadOnly)));
+        // Test copy file range
+        let copy_file_range_result = fs_ro.copy_file_range(attr.ino, 0, attr_dest.ino, 0, data.len(), fh, fh_dest).await;
+        assert!(matches!(copy_file_range_result, Err(FsError::ReadOnly)));
+        // Test removing a dir
+        let remove_dir_result = fs_ro.remove_dir(ROOT_INODE, &dir1).await;
+        assert!(matches!(remove_dir_result, Err(FsError::ReadOnly)));
+        // Test changing the length of the file
+        let set_len_result = fs_ro.set_len(attr.ino, 55).await;
+        assert!(matches!(set_len_result, Err(FsError::ReadOnly)));
+        // Test setting attr of a file
+        let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
+        let set_attr_result = fs_ro.set_attr(attr.ino, set_attr).await;
+        assert!(matches!(set_attr_result, Err(FsError::ReadOnly)));
+        // Test writing to file with Read Only enabled.
+        let write_all_strings_result = crate::encryptedfs::write_all_string_to_fs(&fs_ro, attr.ino, 0, data, fh).await;
+        assert!(matches!(write_all_strings_result, Err(FsError::ReadOnly)));
+        // Test flushing data to file
+        let flush_result = fs_ro.flush(fh).await;
+        assert!(matches!(flush_result, Err(FsError::ReadOnly)));
+        // END OF TESTING
+        fs::remove_dir_all(&data_dir).expect("Could not delete files.");
+    })
+    .await
 }

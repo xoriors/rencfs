@@ -1294,6 +1294,9 @@ impl EncryptedFs {
 
     /// Set metadata
     pub async fn set_attr(&self, ino: u64, set_attr: SetFileAttr) -> FsResult<()> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
         self.set_attr2(ino, set_attr, false).await
     }
 
@@ -1584,6 +1587,9 @@ impl EncryptedFs {
         if !self.exists(ino) {
             return Err(FsError::InodeNotFound);
         }
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
         if !self.is_file(ino) {
             return Err(FsError::InvalidInodeType);
         }
@@ -1591,9 +1597,6 @@ impl EncryptedFs {
             if !self.write_handles.read().await.contains_key(&handle) {
                 return Err(FsError::InvalidFileHandle);
             }
-        }
-        if self.read_only {
-            return Err(FsError::ReadOnly);
         }
         {
             let guard = self.write_handles.read().await;
@@ -2058,6 +2061,9 @@ impl EncryptedFs {
         &self,
         file: W,
     ) -> FsResult<impl CryptoWrite<W>> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
         Ok(crypto::create_write(
             file,
             self.cipher,
@@ -2070,6 +2076,9 @@ impl EncryptedFs {
         &self,
         file: W,
     ) -> FsResult<impl CryptoWriteSeek<W>> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
         Ok(crypto::create_write_seek(
             file,
             self.cipher,
