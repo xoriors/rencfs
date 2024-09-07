@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 use std::string::ToString;
@@ -2360,7 +2359,8 @@ async fn test_read_only_write() {
             let cipher = Cipher::ChaCha20Poly1305;
             let file1 = SecretString::from_str("file1").unwrap();
             let file_dest = SecretString::from_str("file_dest").unwrap();
-            let dir1 = SecretString::from_str("/tmp/rencfs-test-data/read_only_test_write/dir1").unwrap();
+            let dir1 =
+                SecretString::from_str("/tmp/rencfs-test-data/read_only_test_write/dir1").unwrap();
             let data = "Hello, world!";
 
             let fs_rw = get_fs().await;
