@@ -63,7 +63,7 @@ impl Future for MountHandle {
 pub(crate) trait MountHandleInner: Future<Output = io::Result<()>> {
     async fn unmount(mut self) -> io::Result<()>;
 }
-/// Available flags
+/// Available arguments
 ///
 /// **`mountpoint`** where it wil mount the filesystem
 /// **`data_dir`** the directory where the encrypted files will be stored  

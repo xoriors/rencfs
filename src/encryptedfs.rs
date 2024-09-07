@@ -2061,9 +2061,6 @@ impl EncryptedFs {
         &self,
         file: W,
     ) -> FsResult<impl CryptoWrite<W>> {
-        if self.read_only {
-            return Err(FsError::ReadOnly);
-        }
         Ok(crypto::create_write(
             file,
             self.cipher,
