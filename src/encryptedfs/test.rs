@@ -15,7 +15,8 @@ use crate::encryptedfs::KEY_ENC_FILENAME;
 use crate::encryptedfs::KEY_SALT_FILENAME;
 use crate::encryptedfs::SECURITY_DIR;
 use crate::encryptedfs::{
-    EncryptedFs, SetFileAttr, DirectoryEntry, DirectoryEntryPlus, FileType, FsError, FsResult, CONTENTS_DIR, ROOT_INODE,
+    DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType, FsError, FsResult, SetFileAttr,
+    CONTENTS_DIR, ROOT_INODE,
 };
 use crate::test_common::run_test;
 use crate::test_common::TestSetup;
@@ -2345,7 +2346,7 @@ async fn test_read_only_write() {
         fs_rw.release(fh).await.unwrap();
         drop(fs_rw);
         let fs_ro = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl {}), cipher, true).await.expect("test_read_only_write: Error creating rw fs.");
-        let fh = fs_ro.open(attr.ino, true, true).await.expect("read_only_test_create: Error opening file in ro.");
+        let fh = fs_ro.open(attr.ino, true, false).await.expect("read_only_test_create: Error opening file in ro.");
 
         // Test a succesful reading the file in rw mode
         let mut buf = vec![0; data.len()];
