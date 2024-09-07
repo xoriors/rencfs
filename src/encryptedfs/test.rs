@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::str::FromStr;
 use std::string::ToString;
 use std::time::SystemTime;
@@ -2355,15 +2354,14 @@ async fn test_read_only_write() {
             read_only: false,
         },
         async {
-            let data_dir = Path::new("/tmp/rencfs-test-data/read_only_test_write").to_path_buf();
+            let fs_rw = get_fs().await;
+            let data_dir = fs_rw.data_dir.clone();
             let cipher = Cipher::ChaCha20Poly1305;
             let file1 = SecretString::from_str("file1").unwrap();
             let file_dest = SecretString::from_str("file_dest").unwrap();
-            let dir1 =
-                SecretString::from_str("/tmp/rencfs-test-data/read_only_test_write/dir1").unwrap();
+            let dir1 = data_dir.clone().join("dir1");
+            let dir1 = SecretString::from_str(dir1.to_str().unwrap()).unwrap();
             let data = "Hello, world!";
-
-            let fs_rw = get_fs().await;
 
             let (fh, attr) = fs_rw
                 .create(
@@ -2403,14 +2401,9 @@ async fn test_read_only_write() {
             fs_rw.flush(fh).await.unwrap();
             fs_rw.release(fh).await.unwrap();
             drop(fs_rw);
-            let fs_ro = EncryptedFs::new(
-                data_dir.clone(),
-                Box::new(PasswordProviderImpl {}),
-                cipher,
-                true,
-            )
-            .await
-            .expect("test_read_only_write: Error creating rw fs.");
+            let fs_ro = EncryptedFs::new(data_dir, Box::new(PasswordProviderImpl {}), cipher, true)
+                .await
+                .expect("test_read_only_write: Error creating rw fs.");
             let fh = fs_ro
                 .open(attr.ino, true, false)
                 .await
