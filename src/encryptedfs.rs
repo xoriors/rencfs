@@ -1584,11 +1584,11 @@ impl EncryptedFs {
     /// it will return an error of type [FsError::InvalidFileHandle].
     #[instrument(skip(self, buf), fields(len = %buf.len()), ret(level = Level::DEBUG))]
     pub async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
-        if !self.exists(ino) {
-            return Err(FsError::InodeNotFound);
-        }
         if self.read_only {
             return Err(FsError::ReadOnly);
+        }
+        if !self.exists(ino) {
+            return Err(FsError::InodeNotFound);
         }
         if !self.is_file(ino) {
             return Err(FsError::InvalidInodeType);
@@ -2076,9 +2076,6 @@ impl EncryptedFs {
         &self,
         file: W,
     ) -> FsResult<impl CryptoWriteSeek<W>> {
-        if self.read_only {
-            return Err(FsError::ReadOnly);
-        }
         Ok(crypto::create_write_seek(
             file,
             self.cipher,
