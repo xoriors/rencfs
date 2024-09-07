@@ -2332,7 +2332,7 @@ async fn test_read_only_write() {
         let file_dest = SecretString::from_str("file_dest").unwrap();
         let dir1 = SecretString::from_str("/tmp/rencfs_data_test/dir1").unwrap();
         let data = "Hello, world!";
-        fs::remove_dir_all(&data_dir).expect("Could not delete files.");
+        // fs::remove_dir_all(&data_dir).expect("Could not delete files.");
 
         let fs_rw = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl {}), cipher, false).await.expect("test_read_only_write: Error creating rw fs.");
 

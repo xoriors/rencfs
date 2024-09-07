@@ -60,17 +60,18 @@ impl Future for MountHandle {
 }
 
 #[async_trait]
-#[allow(clippy::too_long_first_doc_paragraph)]
 pub(crate) trait MountHandleInner: Future<Output = io::Result<()>> {
     async fn unmount(mut self) -> io::Result<()>;
 }
-
+/// Available flags
+///
 /// **`mountpoint`** where it wil mount the filesystem
 /// **`data_dir`** the directory where the encrypted files will be stored  
 /// **`password_provider`** the password provider  
 /// **`cipher`** The encryption algorithm to use.
-///
+
 /// Currently, it supports these ciphers [`Cipher`]
+///
 /// **`allow_root`** allow root to access the file system  
 /// **`allow_other`** allow other users to access the file system  
 /// **`read_only`** Set FUSE filesystem read-only mount option, default is disabled.
