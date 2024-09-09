@@ -11,7 +11,9 @@ use thread_local::ThreadLocal;
 use tokio::sync::Mutex;
 
 use crate::crypto::Cipher;
-use crate::encryptedfs::{CreateFileAttr, EncryptedFs, FileType, PasswordProvider};
+use crate::encryptedfs::{
+    CreateFileAttr, EncryptedFs, FileHandle, FileType, InodeMetaData, PasswordProvider,
+};
 
 #[allow(dead_code)]
 pub static TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
@@ -154,17 +156,11 @@ pub async fn copy_all_file_range(
     dest_fh: u64,
 ) {
     let mut copied = 0;
+    let file_handle = FileHandle::new(src_fh, dest_fh);
+    let inode_meta_data = InodeMetaData::new(src_ino, src_offset, dest_ino, dest_offset);
     while copied < size {
         let len = fs
-            .copy_file_range(
-                src_ino,
-                src_offset + copied as u64,
-                dest_ino,
-                dest_offset + copied as u64,
-                size - copied,
-                src_fh,
-                dest_fh,
-            )
+            .copy_file_range(&inode_meta_data, size - copied, &file_handle)
             .await
             .unwrap();
         assert!(!(len == 0 && copied < size), "Failed to copy all bytes");

@@ -1728,15 +1728,11 @@ impl EncryptedFs {
     /// Helpful when we want to copy just some portions of the file.
     pub async fn copy_file_range(
         &self,
-        src_ino: u64,
-        src_offset: u64,
-        dest_ino: u64,
-        dest_offset: u64,
+        ino: &InodeMetaData,
         size: usize,
-        src_fh: u64,
-        dest_fh: u64,
+        fh: &FileHandle,
     ) -> FsResult<usize> {
-        if self.is_dir(src_ino) || self.is_dir(dest_ino) {
+        if self.is_dir(ino.src_ino) || self.is_dir(ino.dest_ino) {
             return Err(FsError::InvalidInodeType);
         }
         if self.read_only {
@@ -1744,14 +1740,16 @@ impl EncryptedFs {
         }
 
         let mut buf = vec![0; size];
-        let len = self.read(src_ino, src_offset, &mut buf, src_fh).await?;
+        let len = self
+            .read(ino.src_ino, ino.src_offset, &mut buf, fh.src_fh)
+            .await?;
         if len == 0 {
             return Ok(0);
         }
         let mut copied = 0;
         while copied < size {
             let len = self
-                .write(dest_ino, dest_offset, &buf[copied..len], dest_fh)
+                .write(ino.dest_ino, ino.dest_offset, &buf[copied..len], fh.dest_fh)
                 .await?;
             if len == 0 && copied < size {
                 error!(len, "Failed to copy all read bytes");
@@ -2439,6 +2437,41 @@ impl EncryptedFs {
 
             return ino;
         }
+    }
+}
+
+pub struct FileHandle {
+    src_fh: u64,
+    dest_fh: u64,
+}
+
+impl FileHandle {
+    pub(crate) fn new(src_fh: u64, dest_fh: u64) -> Self {
+        Self { src_fh, dest_fh }
+    }
+}
+
+pub struct InodeMetaData {
+    src_ino: u64,
+    src_offset: u64,
+    dest_ino: u64,
+    dest_offset: u64,
+}
+
+impl InodeMetaData {
+    pub(crate) fn new(src_ino: u64, src_offset: u64, dest_ino: u64, dest_offset: u64) -> Self {
+        Self {
+            src_ino,
+            src_offset,
+            dest_ino,
+            dest_offset,
+        }
+    }
+}
+
+impl Default for InodeMetaData {
+    fn default() -> Self {
+        InodeMetaData::new(0, 0, 0, 0)
     }
 }
 

@@ -6,16 +6,16 @@ use secrecy::{ExposeSecret, SecretString};
 use tracing_test::traced_test;
 
 use crate::crypto::Cipher;
-use crate::encryptedfs::write_all_bytes_to_fs;
-use crate::encryptedfs::HASH_DIR;
 use crate::encryptedfs::INODES_DIR;
 use crate::encryptedfs::KEY_ENC_FILENAME;
 use crate::encryptedfs::KEY_SALT_FILENAME;
 use crate::encryptedfs::SECURITY_DIR;
+use crate::encryptedfs::{write_all_bytes_to_fs, FileHandle};
 use crate::encryptedfs::{
     DirectoryEntry, DirectoryEntryPlus, EncryptedFs, FileType, FsError, FsResult, SetFileAttr,
     CONTENTS_DIR, ROOT_INODE,
 };
+use crate::encryptedfs::{InodeMetaData, HASH_DIR};
 use crate::test_common::run_test;
 use crate::test_common::TestSetup;
 use crate::test_common::{create_attr, get_fs, PasswordProviderImpl};
@@ -499,15 +499,19 @@ async fn test_copy_file_range() {
             // out of bounds
             let fh = fs.open(attr_1.ino, true, false).await.unwrap();
             let fh_2 = fs.open(attr_2.ino, false, true).await.unwrap();
+            let file_handle = FileHandle::new(fh, fh_2);
+            let inode_meta_data = InodeMetaData::new(attr_1.ino, 42, attr_2.ino, 0);
+            let size = 2;
             let len = fs
-                .copy_file_range(attr_1.ino, 42, attr_2.ino, 0, 2, fh, fh_2)
+                .copy_file_range(&inode_meta_data, size, &file_handle)
                 .await
                 .unwrap();
             assert_eq!(len, 0);
-
+            let file_handle = FileHandle::new(fh, fh_2);
+            let inode_meta_data = InodeMetaData::default();
             // invalid inodes
             assert!(matches!(
-                fs.copy_file_range(0, 0, 0, 0, 0, fh, fh_2).await,
+                fs.copy_file_range(&inode_meta_data, 0, &file_handle).await,
                 Err(FsError::InodeNotFound)
             ));
         },
@@ -2436,8 +2440,10 @@ async fn test_read_only_write() {
             let remove_file_result = fs_ro.remove_file(ROOT_INODE, &file1).await;
             assert!(matches!(remove_file_result, Err(FsError::ReadOnly)));
             // Test copy file range
+            let file_handle = FileHandle::new(fh, fh_dest);
+            let inode_meta_data = InodeMetaData::new(attr.ino, 0, attr_dest.ino, 0);
             let copy_file_range_result = fs_ro
-                .copy_file_range(attr.ino, 0, attr_dest.ino, 0, data.len(), fh, fh_dest)
+                .copy_file_range(&inode_meta_data, data.len(), &file_handle)
                 .await;
             assert!(matches!(copy_file_range_result, Err(FsError::ReadOnly)));
             // Test removing a dir
