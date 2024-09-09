@@ -23,8 +23,6 @@ cargo clippy --all-targets --release -- \
 cargo test --release --all --all-features
 cargo doc --workspace --all-features --no-deps
 cargo publish --dry-run --allow-dirty
-cargo aur
-cargo generate-rpm
 
 cd java-bridge
 cargo fmt --all

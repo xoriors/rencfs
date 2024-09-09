@@ -39,12 +39,6 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 cargo publish --dry-run --allow-dirty
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-cargo aur
-if %errorlevel% neq 0 exit /b %errorlevel%
-
-cargo generate-rpm
-if %errorlevel% neq 0 exit /b %errorlevel%
-
 cd java-bridge
 cargo fmt --all
 if %errorlevel% neq 0 exit /b %errorlevel%
