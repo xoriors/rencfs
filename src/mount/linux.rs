@@ -31,8 +31,8 @@ use tracing::{info, Level};
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
-    CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult, PasswordProvider,
-    SetFileAttr,
+    CreateFileAttr, EncryptedFs, FileAttr, FileHandle, FileType, FsError, FsResult, InodeMetaData,
+    PasswordProvider, SetFileAttr,
 };
 use crate::mount;
 use crate::mount::{MountHandleInner, MountPoint};
