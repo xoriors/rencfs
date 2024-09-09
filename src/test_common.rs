@@ -156,8 +156,16 @@ pub async fn copy_all_file_range(
     dest_fh: u64,
 ) {
     let mut copied = 0;
-    let file_handle = FileHandle::new(src_fh, dest_fh);
-    let inode_meta_data = InodeMetaData::new(src_ino, src_offset, dest_ino, dest_offset);
+    let file_handle = FileHandle::builder()
+        .src_fh(src_fh)
+        .dest_fh(dest_fh)
+        .build();
+    let inode_meta_data = InodeMetaData::builder()
+        .src_ino(src_ino)
+        .src_offset(src_offset)
+        .dest_ino(dest_ino)
+        .dest_offset(dest_offset)
+        .build();
     while copied < size {
         let len = fs
             .copy_file_range(&inode_meta_data, size - copied, &file_handle)

@@ -499,15 +499,21 @@ async fn test_copy_file_range() {
             // out of bounds
             let fh = fs.open(attr_1.ino, true, false).await.unwrap();
             let fh_2 = fs.open(attr_2.ino, false, true).await.unwrap();
-            let file_handle = FileHandle::new(fh, fh_2);
-            let inode_meta_data = InodeMetaData::new(attr_1.ino, 42, attr_2.ino, 0);
+            let file_handle = FileHandle::builder().src_fh(fh).dest_fh(fh_2).build();
+            let inode_meta_data = InodeMetaData::builder()
+                .src_ino(attr_1.ino)
+                .src_offset(42)
+                .dest_ino(attr_2.ino)
+                .dest_offset(0)
+                .build();
             let size = 2;
             let len = fs
                 .copy_file_range(&inode_meta_data, size, &file_handle)
                 .await
                 .unwrap();
             assert_eq!(len, 0);
-            let file_handle = FileHandle::new(fh, fh_2);
+
+            let file_handle = FileHandle::builder().src_fh(fh).dest_fh(fh_2).build();
             let inode_meta_data = InodeMetaData::default();
             // invalid inodes
             assert!(matches!(
@@ -2440,8 +2446,13 @@ async fn test_read_only_write() {
             let remove_file_result = fs_ro.remove_file(ROOT_INODE, &file1).await;
             assert!(matches!(remove_file_result, Err(FsError::ReadOnly)));
             // Test copy file range
-            let file_handle = FileHandle::new(fh, fh_dest);
-            let inode_meta_data = InodeMetaData::new(attr.ino, 0, attr_dest.ino, 0);
+            let file_handle = FileHandle::builder().src_fh(fh).dest_fh(fh_dest).build();
+            let inode_meta_data = InodeMetaData::builder()
+                .src_ino(attr.ino)
+                .src_offset(0)
+                .dest_ino(attr_dest.ino)
+                .dest_offset(0)
+                .build();
             let copy_file_range_result = fs_ro
                 .copy_file_range(&inode_meta_data, data.len(), &file_handle)
                 .await;

@@ -30,6 +30,7 @@ use crate::crypto::write::{CryptoInnerWriter, CryptoWrite, CryptoWriteSeek};
 use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
 use crate::{crypto, fs_util, stream_util};
+use bon::bon;
 
 mod bench;
 #[cfg(test)]
@@ -2445,8 +2446,10 @@ pub struct FileHandle {
     dest_fh: u64,
 }
 
+#[bon]
 impl FileHandle {
-    pub(crate) fn new(src_fh: u64, dest_fh: u64) -> Self {
+    #[builder]
+    pub fn new(src_fh: u64, dest_fh: u64) -> Self {
         Self { src_fh, dest_fh }
     }
 }
@@ -2458,8 +2461,10 @@ pub struct InodeMetaData {
     dest_offset: u64,
 }
 
+#[bon]
 impl InodeMetaData {
-    pub(crate) fn new(src_ino: u64, src_offset: u64, dest_ino: u64, dest_offset: u64) -> Self {
+    #[builder]
+    pub fn new(src_ino: u64, src_offset: u64, dest_ino: u64, dest_offset: u64) -> Self {
         Self {
             src_ino,
             src_offset,
@@ -2471,7 +2476,12 @@ impl InodeMetaData {
 
 impl Default for InodeMetaData {
     fn default() -> Self {
-        InodeMetaData::new(0, 0, 0, 0)
+        InodeMetaData::builder()
+            .src_ino(0)
+            .src_offset(0)
+            .dest_ino(0)
+            .dest_offset(0)
+            .build()
     }
 }
 
