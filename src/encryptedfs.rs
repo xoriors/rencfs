@@ -2480,19 +2480,6 @@ impl CopyFileRangeReq {
     }
 }
 
-impl Default for CopyFileRangeReq {
-    fn default() -> Self {
-        CopyFileRangeReq::builder()
-            .src_ino(0)
-            .src_offset(0)
-            .dest_ino(0)
-            .dest_offset(0)
-            .src_fh(0)
-            .dest_fh(0)
-            .build()
-    }
-}
-
 fn read_or_create_key(
     key_path: &PathBuf,
     salt_path: &PathBuf,
