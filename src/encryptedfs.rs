@@ -1729,11 +1729,10 @@ impl EncryptedFs {
     /// Helpful when we want to copy just some portions of the file.
     pub async fn copy_file_range(
         &self,
-        ino: &InodeMetaData,
+        file_range_req: &CopyFileRangeReq,
         size: usize,
-        fh: &FileHandle,
     ) -> FsResult<usize> {
-        if self.is_dir(ino.src_ino) || self.is_dir(ino.dest_ino) {
+        if self.is_dir(file_range_req.src_ino) || self.is_dir(file_range_req.dest_ino) {
             return Err(FsError::InvalidInodeType);
         }
         if self.read_only {
@@ -1742,7 +1741,12 @@ impl EncryptedFs {
 
         let mut buf = vec![0; size];
         let len = self
-            .read(ino.src_ino, ino.src_offset, &mut buf, fh.src_fh)
+            .read(
+                file_range_req.src_ino,
+                file_range_req.src_offset,
+                &mut buf,
+                file_range_req.src_fh,
+            )
             .await?;
         if len == 0 {
             return Ok(0);
@@ -1750,7 +1754,12 @@ impl EncryptedFs {
         let mut copied = 0;
         while copied < size {
             let len = self
-                .write(ino.dest_ino, ino.dest_offset, &buf[copied..len], fh.dest_fh)
+                .write(
+                    file_range_req.dest_ino,
+                    file_range_req.dest_offset,
+                    &buf[copied..len],
+                    file_range_req.dest_fh,
+                )
                 .await?;
             if len == 0 && copied < size {
                 error!(len, "Failed to copy all read bytes");
@@ -2440,47 +2449,46 @@ impl EncryptedFs {
         }
     }
 }
-
-pub struct FileHandle {
+pub struct CopyFileRangeReq {
+    src_ino: u64,
+    src_offset: u64,
+    dest_ino: u64,
+    dest_offset: u64,
     src_fh: u64,
     dest_fh: u64,
 }
 
 #[bon]
-impl FileHandle {
+impl CopyFileRangeReq {
     #[builder]
-    pub fn new(src_fh: u64, dest_fh: u64) -> Self {
-        Self { src_fh, dest_fh }
-    }
-}
-
-pub struct InodeMetaData {
-    src_ino: u64,
-    src_offset: u64,
-    dest_ino: u64,
-    dest_offset: u64,
-}
-
-#[bon]
-impl InodeMetaData {
-    #[builder]
-    pub fn new(src_ino: u64, src_offset: u64, dest_ino: u64, dest_offset: u64) -> Self {
+    pub fn new(
+        src_ino: u64,
+        src_offset: u64,
+        dest_ino: u64,
+        dest_offset: u64,
+        src_fh: u64,
+        dest_fh: u64,
+    ) -> Self {
         Self {
             src_ino,
             src_offset,
             dest_ino,
             dest_offset,
+            src_fh,
+            dest_fh,
         }
     }
 }
 
-impl Default for InodeMetaData {
+impl Default for CopyFileRangeReq {
     fn default() -> Self {
-        InodeMetaData::builder()
+        CopyFileRangeReq::builder()
             .src_ino(0)
             .src_offset(0)
             .dest_ino(0)
             .dest_offset(0)
+            .src_fh(0)
+            .dest_fh(0)
             .build()
     }
 }

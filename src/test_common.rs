@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
-    CreateFileAttr, EncryptedFs, FileHandle, FileType, InodeMetaData, PasswordProvider,
+    CopyFileRangeReq, CreateFileAttr, EncryptedFs, FileType, PasswordProvider,
 };
 
 #[allow(dead_code)]
@@ -156,19 +156,17 @@ pub async fn copy_all_file_range(
     dest_fh: u64,
 ) {
     let mut copied = 0;
-    let file_handle = FileHandle::builder()
-        .src_fh(src_fh)
-        .dest_fh(dest_fh)
-        .build();
-    let inode_meta_data = InodeMetaData::builder()
+    let file_range_req = CopyFileRangeReq::builder()
         .src_ino(src_ino)
         .src_offset(src_offset)
         .dest_ino(dest_ino)
         .dest_offset(dest_offset)
+        .src_fh(src_fh)
+        .dest_fh(dest_fh)
         .build();
     while copied < size {
         let len = fs
-            .copy_file_range(&inode_meta_data, size - copied, &file_handle)
+            .copy_file_range(&file_range_req, size - copied)
             .await
             .unwrap();
         assert!(!(len == 0 && copied < size), "Failed to copy all bytes");
