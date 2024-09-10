@@ -1229,7 +1229,7 @@ impl Filesystem for EncryptedFsFuse3 {
         #[allow(clippy::cast_possible_truncation)]
         match self
             .get_fs()
-            .copy_file_range(&file_range_req, length as usize, &file_handle)
+            .copy_file_range(&file_range_req, length as usize)
             .await
         {
             Err(err) => {
