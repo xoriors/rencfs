@@ -18,7 +18,6 @@ sequenceDiagram
     box encryptedfs.rs
         participant enc_fs as EncryptedFs::new
         participant ensure_fs_created as ensure_structure_created
-        %% participant chk_struct as check_structure
         participant ensure_root as EncryptedFs::ensure_root_exists
     end
 
@@ -39,11 +38,6 @@ sequenceDiagram
     mnt_fuse -->> enc_fs_fuse3 : [data_dir,password_provider,cipher,...]
     enc_fs_fuse3 -->> enc_fs : [data_dir,password_provider,cipher,...] 
     enc_fs -->> ensure_fs_created :  [data_dir]
-    
-    %% opt Optional Check
-    %%     ensure_fs_created ->> chk_struct :  
-    %%     chk_struct ->> ensure_fs_created :  
-    %% end
     
     ensure_fs_created -->> enc_fs :  
     enc_fs -->> ensure_root : 

@@ -20,7 +20,6 @@ sequenceDiagram
         participant ser_into as serialize_into
     end
 
-    %% Message sequence
     rn_chng_pass -->> encfs_passwd : 
     encfs_passwd --> chk_stucture : 
     chk_stucture -->> encfs_passwd : 
@@ -41,5 +40,4 @@ sequenceDiagram
     ser_into -->> atomic_enc_ser : 
     atomic_enc_ser -->> encfs_passwd : 
     encfs_passwd -->> rn_chng_pass : 
-    %% End of message sequence
 ```

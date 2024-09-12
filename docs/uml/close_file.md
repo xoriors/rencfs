@@ -30,6 +30,4 @@ sequenceDiagram
         enc_setattr -->> release : 
     end
     release -->> ext_release : 
-
-
 ```
