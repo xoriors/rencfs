@@ -23,7 +23,7 @@ sequenceDiagram
     fuse -->> vfs : (file_handle, attributes)
     vfs -->> stdio : (file_handle, attributes)
     stdio -->> application : file_handle
-    stdio --> rencfs : file operations (e.g. read/write/close)
+    Note over stdio,application :  file operations (e.g. read/write/close)
     application -->> MountHandle : unmount()
     MountHandle -->> application : 
     destroy MountHandle 
