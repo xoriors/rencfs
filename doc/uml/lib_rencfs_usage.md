@@ -24,10 +24,14 @@ sequenceDiagram
     vfs -->> stdio : (file_handle, attributes)
     stdio -->> application : file_handle
     stdio --> rencfs : file operations (e.g. read/write/close)
-    application-xMountHandle :  unmount()
-    destroy participant MountHandle 
-    %% MountHandle-xMountPoint : 
-    destroy participant MountPoint
+    application -->> MountHandle : unmount()
+    MountHandle -->> application : 
+    destroy MountHandle 
+    rencfs --x MountHandle : 
+    destroy MountPoint
+    rencfs --x MountPoint : 
+    application --x application : exit
+
 ```
 
 Further details about the create sequence can be found in [Create](create_file.md).
