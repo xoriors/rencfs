@@ -65,7 +65,11 @@ In progress:
   changes. This makes the write operations atomic.
 - multiple writes in parallel to the same file, ideal for torrent like applications
 
+# Docs
+
 [![rencfs](website/resources/layers.png)](website/resources/layers.png)
+
+For detailed description of the various sequence flows please look into [Flows](docs/flows.md). 
 
 # Stack
 
