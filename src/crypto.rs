@@ -22,8 +22,14 @@ use thiserror::Error;
 use tracing::{debug, error, instrument};
 use write::CryptoInnerWriter;
 
-use crate::crypto::read::{CryptoRead, CryptoReadSeek, RingCryptoRead};
-use crate::crypto::write::{CryptoWrite, CryptoWriteSeek, RingCryptoWrite};
+use crate::crypto::read::{
+    CryptoRead, CryptoReadSeek, CryptoReadSeekSendSync, CryptoReadSeekSendSyncImpl,
+    CryptoReadSendSync, CryptoReadSendSyncImpl, RingCryptoRead,
+};
+use crate::crypto::write::{
+    CryptoWrite, CryptoWriteSeek, CryptoWriteSeekSendSync, CryptoWriteSeekSendSyncImpl,
+    CryptoWriteSendSync, CryptoWriteSendSyncImpl, RingCryptoWrite,
+};
 use crate::encryptedfs::FsResult;
 use crate::{fs_util, stream_util};
 
@@ -109,7 +115,7 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Creates an encrypted writer
+/// Creates a crypto writer
 pub fn create_write<W: CryptoInnerWriter + Send + Sync + 'static>(
     writer: W,
     cipher: Cipher,
@@ -118,13 +124,31 @@ pub fn create_write<W: CryptoInnerWriter + Send + Sync + 'static>(
     create_ring_write(writer, cipher, key)
 }
 
-/// Creates an encrypted writer with seek
+/// Creates a crypto writer with seek
 pub fn create_write_seek<W: CryptoInnerWriter + Seek + Read + Send + Sync + 'static>(
     writer: W,
     cipher: Cipher,
     key: &SecretVec<u8>,
 ) -> impl CryptoWriteSeek<W> {
     create_ring_write_seek(writer, cipher, key)
+}
+
+/// Creates a [`Send`] + [`Seek`] + `'static` crypto writer.
+pub fn create_write_send_sync<W: CryptoInnerWriter + Send + Sync + 'static>(
+    writer: W,
+    cipher: Cipher,
+    key: &SecretVec<u8>,
+) -> impl CryptoWriteSendSync<W> {
+    CryptoWriteSendSyncImpl::new(writer, cipher, key)
+}
+
+/// Creates a [`Send`] + [`Seek`] + `'static` crypto writer with seek.
+pub fn create_write_seek_send_sync<W: CryptoInnerWriter + Seek + Read + Send + Sync + 'static>(
+    writer: W,
+    cipher: Cipher,
+    key: &SecretVec<u8>,
+) -> impl CryptoWriteSeekSendSync<W> {
+    CryptoWriteSeekSendSyncImpl::new(writer, cipher, key)
 }
 
 fn create_ring_write<W: CryptoInnerWriter + Send + Sync>(
@@ -151,11 +175,7 @@ fn create_ring_write_seek<W: CryptoInnerWriter + Seek + Read + Send + Sync>(
     RingCryptoWrite::new(writer, true, algorithm, key)
 }
 
-fn create_ring_read<R: Read + Send + Sync>(
-    reader: R,
-    cipher: Cipher,
-    key: &SecretVec<u8>,
-) -> RingCryptoRead<R> {
+fn create_ring_read<R: Read>(reader: R, cipher: Cipher, key: &SecretVec<u8>) -> RingCryptoRead<R> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
@@ -163,7 +183,7 @@ fn create_ring_read<R: Read + Send + Sync>(
     RingCryptoRead::new(reader, algorithm, key)
 }
 
-fn create_ring_read_seek<R: Read + Seek + Send + Sync>(
+fn create_ring_read_seek<R: Read + Seek>(
     reader: R,
     cipher: Cipher,
     key: &SecretVec<u8>,
@@ -175,22 +195,40 @@ fn create_ring_read_seek<R: Read + Seek + Send + Sync>(
     RingCryptoRead::new_seek(reader, algorithm, key)
 }
 
-/// Creates an encrypted reader
-pub fn create_read<R: Read + Send + Sync>(
-    reader: R,
-    cipher: Cipher,
-    key: &SecretVec<u8>,
-) -> impl CryptoRead<R> {
+/// Creates a crypto reader. This is not thread-safe.
+///
+/// Use [`create_read_send_sync`] if you need thread-safe access.
+pub fn create_read<R: Read>(reader: R, cipher: Cipher, key: &SecretVec<u8>) -> impl CryptoRead<R> {
     create_ring_read(reader, cipher, key)
 }
 
-/// Creates an encrypted reader with seek
-pub fn create_read_seek<R: Read + Seek + Send + Sync>(
+/// Creates a crypto reader with seek. This is not thread-safe.
+///
+/// Use [`create_read_seek_send_sync`] if you need thread-safe access.
+pub fn create_read_seek<R: Read + Seek>(
     reader: R,
     cipher: Cipher,
     key: &SecretVec<u8>,
 ) -> impl CryptoReadSeek<R> {
     create_ring_read_seek(reader, cipher, key)
+}
+
+/// Creates a [`Send`] + [`Seek`] + `'static` crypto reader.
+pub fn create_read_send_sync<R: Read + Send + Sync + 'static>(
+    reader: R,
+    cipher: Cipher,
+    key: &SecretVec<u8>,
+) -> impl CryptoReadSendSync<R> {
+    CryptoReadSendSyncImpl::new(reader, cipher, key)
+}
+
+/// Creates a [`Send`] + [`Seek`] + `'static` encrypted reader with seek.
+pub fn create_read_seek_send_sync<R: Read + Seek + Send + Sync + 'static>(
+    reader: R,
+    cipher: Cipher,
+    key: &SecretVec<u8>,
+) -> impl CryptoReadSeekSendSync<R> {
+    CryptoReadSeekSendSyncImpl::new(reader, cipher, key)
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -293,7 +331,9 @@ pub fn hash_secret_vec(data: &SecretVec<u8>) -> [u8; 32] {
 }
 
 /// Copy from `pos` position in file `len` bytes
-#[instrument(skip(w, key), fields(pos = pos.to_formatted_string(& Locale::en), len = len.to_formatted_string(& Locale::en)))]
+#[instrument(skip(w, key), fields(
+    pos = pos.to_formatted_string(& Locale::en), len = len.to_formatted_string(& Locale::en)
+))]
 #[allow(clippy::missing_errors_doc)]
 pub fn copy_from_file_exact(
     file: PathBuf,

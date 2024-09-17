@@ -10,7 +10,12 @@ on:
         description: 'The current value in version file (type: string)'
         type: string
         required: true
-  
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+  RUSTDOCFLAGS: "-Dwarnings"
+
 jobs:
   aur_build:
       name: build AUR

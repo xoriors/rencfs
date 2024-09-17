@@ -14,6 +14,7 @@ use tracing::error;
 
 use crate::crypto::buf_mut::BufMut;
 use crate::crypto::read::ExistingNonceSequence;
+use crate::crypto::Cipher;
 use crate::{crypto, decrypt_block, stream_util};
 
 mod bench;
@@ -24,15 +25,18 @@ pub(crate) const BLOCK_SIZE: usize = 100; // round value easier for debugging
 #[cfg(not(test))]
 pub(crate) const BLOCK_SIZE: usize = 256 * 1024; // 256 KB block size
 
-/// If you have your custom [Write] + [Seek] you want to pass to [CryptoWrite] it needs to implement this trait.
-/// It has a blanket implementation for [Write] + [Seek] + [Read].
+/// If you have your custom [`Write`] + [`Seek`],
+/// you want to pass to [`CryptoWrite`] it needs to implement this trait.
+/// It has a blanket implementation for [`Write`] + [`Seek`] + [`Read`].
 pub trait WriteSeekRead: Write + Seek + Read {}
 
 impl<T: Write + Seek + Read> WriteSeekRead for T {}
 
-/// If you have your custom implementation for [Write] you want to pass to [CryptoWrite] it needs to implement this trait.
+/// If you have your custom implementation for [`Write`],
+/// you want to pass to [`CryptoWrite`] it needs to implement this trait.
 ///
-/// It has a blanket implementation for [Write] + [Seek] + [Read] + [`'static`] but in case your implementation is only [Write] it needs to implement this.
+/// It has a blanket implementation for [`Write`] + [Seek] + [Read] + [`'static`],
+/// but in case your implementation is only [`Write`] it needs to implement this.
 pub trait CryptoInnerWriter: Write + Any {
     fn into_any(self) -> Box<dyn Any>;
     fn as_write(&mut self) -> Option<&mut dyn Write>;
@@ -52,21 +56,41 @@ impl<T: Write + Seek + Read + 'static> CryptoInnerWriter for T {
     }
 }
 
-/// Writes encrypted content to the wrapped Writer.
+/// Writes encrypted content to the wrapped [`Write`].
+///
+/// > ⚠️ **Warning**
+/// > This is not thread-safe.
+/// > Use [`CryptoWriteSendSync`] instead for thread-safe scenarios.
 #[allow(clippy::module_name_repetitions)]
-pub trait CryptoWrite<W: CryptoInnerWriter + Send + Sync>: Write + Send + Sync {
+pub trait CryptoWrite<W: CryptoInnerWriter>: Write {
     /// You must call this after the last writing to make sure we write the last block.
     /// This handles the flush also.
     #[allow(clippy::missing_errors_doc)]
     fn finish(&mut self) -> io::Result<W>;
 }
 
-/// Write with Seek
-pub trait CryptoWriteSeek<W: CryptoInnerWriter + Send + Sync>: CryptoWrite<W> + Seek {}
+/// Write encrypted content in the wrapped [`Write`] + [`Seek`].
+///
+/// > ⚠️ **Warning**
+/// > This is not thread-safe.
+/// > Use [CryptoWriteSeekSendSync] instead for thread-safe scenarios.
+pub trait CryptoWriteSeek<W: CryptoInnerWriter>: CryptoWrite<W> + Seek {}
+
+/// Thread-safe versions which are [`Send`] + [`Seek`] + `'static`.
+
+/// [`Send`] + [`Seek`] version of [`CryptoWrite`].
+#[allow(clippy::module_name_repetitions)]
+pub trait CryptoWriteSendSync<W: CryptoInnerWriter>: Write + Send + Sync + 'static {}
+
+/// [`Send`] + [`Seek`] version of [`CryptoWriteSeek`].
+pub trait CryptoWriteSeekSendSync<W: CryptoInnerWriter>:
+    CryptoWrite<W> + Seek + Send + Sync + 'static
+{
+}
 
 /// ring
 #[allow(clippy::module_name_repetitions)]
-pub struct RingCryptoWrite<W: CryptoInnerWriter + Send + Sync> {
+pub struct RingCryptoWrite<W: CryptoInnerWriter> {
     writer: Option<W>,
     seek: bool,
     sealing_key: SealingKey<RandomNonceSequenceWrapper>,
@@ -80,7 +104,7 @@ pub struct RingCryptoWrite<W: CryptoInnerWriter + Send + Sync> {
     decrypt_buf: Option<BufMut>,
 }
 
-impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
+impl<W: CryptoInnerWriter> RingCryptoWrite<W> {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(
@@ -141,7 +165,7 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
             .writer
             .as_mut()
             .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
-        writer.write_all(nonce)?;
+        writer.write_all(&nonce.lock().unwrap())?;
         writer.write_all(data)?;
         self.buf.clear();
         writer.write_all(tag.as_ref())?;
@@ -209,7 +233,7 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
     }
 }
 
-impl<W: CryptoInnerWriter + Send + Sync> Write for RingCryptoWrite<W> {
+impl<W: CryptoInnerWriter> Write for RingCryptoWrite<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.writer.is_none() {
             return Err(io::Error::new(
@@ -271,7 +295,7 @@ impl<W: CryptoInnerWriter + Send + Sync> Write for RingCryptoWrite<W> {
     }
 }
 
-impl<W: CryptoInnerWriter + Send + Sync> CryptoWrite<W> for RingCryptoWrite<W> {
+impl<W: CryptoInnerWriter> CryptoWrite<W> for RingCryptoWrite<W> {
     fn finish(&mut self) -> io::Result<W> {
         if self.buf.is_dirty() {
             // encrypt and write last block, use as many bytes as we have
@@ -289,15 +313,15 @@ impl<W: CryptoInnerWriter + Send + Sync> CryptoWrite<W> for RingCryptoWrite<W> {
 }
 
 struct RandomNonceSequence {
-    rng: Mutex<Box<dyn RngCore + Send + Sync>>,
-    last_nonce: Vec<u8>,
+    rng: Mutex<Box<dyn RngCore>>,
+    last_nonce: Mutex<Vec<u8>>,
 }
 
 impl Default for RandomNonceSequence {
     fn default() -> Self {
         Self {
             rng: Mutex::new(Box::new(crypto::create_rng())),
-            last_nonce: vec![0; NONCE_LEN],
+            last_nonce: Mutex::new(vec![0; NONCE_LEN]),
         }
     }
 }
@@ -305,10 +329,16 @@ impl Default for RandomNonceSequence {
 impl NonceSequence for RandomNonceSequence {
     // called once for each seal operation
     fn advance(&mut self) -> Result<Nonce, Unspecified> {
-        self.rng.lock().unwrap().fill_bytes(&mut self.last_nonce);
-        Nonce::try_assume_unique_for_key(&self.last_nonce)
+        self.rng
+            .lock()
+            .unwrap()
+            .fill_bytes(&mut self.last_nonce.lock().unwrap());
+        Nonce::try_assume_unique_for_key(&self.last_nonce.lock().unwrap())
     }
 }
+
+unsafe impl Send for RandomNonceSequence {}
+unsafe impl Sync for RandomNonceSequence {}
 
 struct RandomNonceSequenceWrapper {
     inner: Arc<Mutex<RandomNonceSequence>>,
@@ -326,7 +356,7 @@ impl NonceSequence for RandomNonceSequenceWrapper {
     }
 }
 
-impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
+impl<W: CryptoInnerWriter> RingCryptoWrite<W> {
     fn get_plaintext_len(&mut self) -> io::Result<u64> {
         let writer = self
             .writer
@@ -355,7 +385,7 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
     }
 }
 
-impl<W: CryptoInnerWriter + Send + Sync> Seek for RingCryptoWrite<W> {
+impl<W: CryptoInnerWriter> Seek for RingCryptoWrite<W> {
     #[allow(clippy::cast_possible_wrap)]
     #[allow(clippy::cast_sign_loss)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
@@ -455,4 +485,127 @@ impl<W: CryptoInnerWriter + Send + Sync> Seek for RingCryptoWrite<W> {
     }
 }
 
-impl<W: CryptoInnerWriter + Send + Sync> CryptoWriteSeek<W> for RingCryptoWrite<W> {}
+impl<W: CryptoInnerWriter> CryptoWriteSeek<W> for RingCryptoWrite<W> {}
+
+/// Thread-safe versions which are [`Send`] + [`Seek`] + `'static`.
+
+pub struct CryptoWriteSendSyncImpl<W>
+where
+    W: CryptoInnerWriter + Send + Sync + 'static,
+{
+    inner: Mutex<Option<Box<dyn CryptoWrite<W>>>>,
+}
+
+unsafe impl<W> Send for CryptoWriteSendSyncImpl<W> where W: CryptoInnerWriter + Send + Sync + 'static
+{}
+
+unsafe impl<R> Sync for CryptoWriteSendSyncImpl<R> where R: CryptoInnerWriter + Send + Sync + 'static
+{}
+
+impl<W> CryptoWriteSendSyncImpl<W>
+where
+    W: CryptoInnerWriter + Send + Sync + 'static,
+{
+    pub fn new(writer: W, cipher: Cipher, key: &SecretVec<u8>) -> Self {
+        Self {
+            inner: Mutex::new(Some(Box::new(crypto::create_write(writer, cipher, key)))),
+        }
+    }
+}
+
+impl<W> Write for CryptoWriteSendSyncImpl<W>
+where
+    W: CryptoInnerWriter + Send + Sync + 'static,
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.lock().unwrap().as_mut().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.lock().unwrap().as_mut().unwrap().flush()
+    }
+}
+
+impl<W> CryptoWriteSendSync<W> for CryptoWriteSendSyncImpl<W> where
+    W: CryptoInnerWriter + Send + Sync + 'static
+{
+}
+
+impl<W> CryptoWrite<W> for CryptoWriteSendSyncImpl<W>
+where
+    W: CryptoInnerWriter + Send + Sync + 'static,
+{
+    fn finish(&mut self) -> io::Result<W> {
+        let mut lock = self.inner.lock().unwrap();
+        let mut boxed = (*lock).take().take().unwrap();
+        boxed.finish()
+    }
+}
+
+pub struct CryptoWriteSeekSendSyncImpl<W>
+where
+    W: CryptoInnerWriter + Seek + Read + Send + Sync + 'static,
+{
+    inner: Mutex<Option<Box<dyn CryptoWriteSeek<W>>>>,
+}
+
+unsafe impl<W> Send for CryptoWriteSeekSendSyncImpl<W> where
+    W: CryptoInnerWriter + Seek + Read + Send + Sync + 'static
+{
+}
+
+unsafe impl<W> Sync for CryptoWriteSeekSendSyncImpl<W> where
+    W: CryptoInnerWriter + Seek + Read + Send + Sync + 'static
+{
+}
+
+impl<W> CryptoWriteSeekSendSyncImpl<W>
+where
+    W: CryptoInnerWriter + Seek + Read + Send + Sync + 'static,
+{
+    pub fn new(writer: W, cipher: Cipher, key: &SecretVec<u8>) -> Self {
+        Self {
+            inner: Mutex::new(Some(Box::new(crypto::create_write_seek(
+                writer, cipher, key,
+            )))),
+        }
+    }
+}
+
+impl<W> Seek for CryptoWriteSeekSendSyncImpl<W>
+where
+    W: CryptoInnerWriter + Seek + Read + Send + Sync + 'static,
+{
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.inner.lock().unwrap().as_mut().unwrap().seek(pos)
+    }
+}
+
+impl<W> CryptoWrite<W> for CryptoWriteSeekSendSyncImpl<W>
+where
+    W: CryptoInnerWriter + Seek + Read + Send + Sync + 'static,
+{
+    fn finish(&mut self) -> io::Result<W> {
+        let mut lock = self.inner.lock().unwrap();
+        let mut boxed = (*lock).take().take().unwrap();
+        boxed.finish()
+    }
+}
+
+impl<W> Write for CryptoWriteSeekSendSyncImpl<W>
+where
+    W: CryptoInnerWriter + Seek + Read + Send + Sync + 'static,
+{
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.lock().unwrap().as_mut().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.lock().unwrap().as_mut().unwrap().flush()
+    }
+}
+
+impl<W> CryptoWriteSeekSendSync<W> for CryptoWriteSeekSendSyncImpl<W> where
+    W: CryptoInnerWriter + Seek + Read + Send + Sync + 'static
+{
+}
