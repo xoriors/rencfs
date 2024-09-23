@@ -65,8 +65,8 @@ Some of these are still being worked on, marked with `[WIP]`.
 - Exposed with `FUSE`;
 - Fully `concurrent` for all operations;
 - `[WIP]` Handle `long file names`;
-- `[WIP]` Abatraction layer for `Rust File` and `fs` API to use it as lib to `switch to using encrypted files` by just `changing the use statements`;
-- `[WIP]` Abstraction layer to `access fhe storage` with implementation for desktop, wasm, Android, iOS and ability to write your own implementation.
+- `[WIP]` Abstraction layer for `Rust File` and `fs` API to use it as lib to `switch to using encrypted files` by just `changing the use statements`;
+- `[WIP]` Abstraction layer to `access the storage` with implementation for desktop, wasm, Android, iOS and ability to write your own implementation.
 
 # Functionality
 
@@ -85,8 +85,8 @@ Some of these are still being worked on, marked with `[WIP]`.
   This is because we can seek to particular chunk.
 - Encryption key is `zeroize`d in mem on dispose and idle. Also, it's `mlock`ed while used to prevent being moved to swap. It's
   also `mprotect`ed while not in use.
-- `[WIP]` Ensure file integrity by saving each change to WAL, so on crash or power loss on next start we apply the pending
-  changes. This makes the write operations atomic.
+- `[WIP]` Ensure file integrity by saving each change to WAL, so on crash or power loss we apply the pending
+  changes on the next start. This makes the write operations atomic.
 - Multiple writes in parallel to the same file, ideal for torrent like applications.
 
 # Docs
@@ -128,7 +128,7 @@ For detailed description of the various sequence flows please look into [Flows](
 
 ## What separates us
 
-[Asked](https://chatgpt.com/share/66e7a5a5-d254-8003-9359-9b1556b75fe9) ChatGPT if there are other solutions out there which offers all the key funcionalities we do, seems there are not :) Seems we are realy building a unique solution.  
+[Asked](https://chatgpt.com/share/66e7a5a5-d254-8003-9359-9b1556b75fe9) ChatGPT if there are other solutions out there which offers all the key functionalities we do, seems like there are none :) Seems that we are really building a unique solution.  
 You can see the [key features](README.md#key-features) that separates us.
   
 # Usage
@@ -258,7 +258,7 @@ It will prompt you to enter the old password and then the new password.
 
 ### Encryption info
 
-You can specify the encryption algorithm adding this argument to the command line
+You can specify the encryption algorithm by adding this argument to the command line
 
 ```bash
 --cipher CIPHER ...
@@ -342,7 +342,7 @@ In that case please add it to the `PATH` manually.
 
 Project is setup to use `nightly` toolchain in `rust-toolchain.toml`, on first build you will see it fetch the nightly.
 
-Make sure to add this you your `$PATH` too
+Make sure to add this to your `$PATH` too
 
 ```bash
 export PATH="$PATH::$HOME/.cargo/bin"
@@ -401,7 +401,7 @@ If you don't want to be prompted for password, you can set this env var and run 
 RENCFS_PASSWORD=PASS cargo run --release -- mount --mount-point MOUNT_POINT --data-dir DATA_DIR
 ```
 
-For dev mode is recommended to run with `DEBUG` log level:
+For dev mode it is recommended to run with `DEBUG` log level:
 
 ```bash
 cargo run --release -- --log-level DEBUG mount --mount-point MOUNT_POINT --data-dir DATA_DIR
@@ -497,7 +497,7 @@ Both are good options. `AES-GCM` can be faster with **hardware support**, but **
       of children as files in it.
       So we could see how many children a directory has.
       However, we can't identify that actual directory name,
-      we can just see its inode number (internal representation like an id for each file), and we cannot see the actual
+      we can just see its inode number (internal representation like an ID for each file), and we cannot see the actual
       filenames of directory or children.
       Also, we cannot identify which file content corresponds to a directory child
     - Each file content is saved in a separate file, so we could see the size of the encrypted content, but not the
@@ -523,7 +523,7 @@ Both are good options. `AES-GCM` can be faster with **hardware support**, but **
   want close to bulletproof solutions, then maybe this is not the ideal one for you. But is trying to offer a simple use
   of an encryption solution that should be used taking into consideration all the security concerns from above
 - It started as a learning project of Rust programming language, and I feel like keep building more on it
-- It's a fairly simple and standard implementation that tries to respect all security standards, correcly use secure and robust
+- It's a fairly simple and standard implementation that tries to respect all security standards, correctly use secure and robust
   primitives so that it can be extended from this. Indeed, it doesn't have the maturity yet to "fight" other well-known
   implementations.
   But it can be a project from which others can learn or build upon or why not for some to actually use it keeping in
