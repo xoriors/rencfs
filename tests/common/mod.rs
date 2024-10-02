@@ -1,51 +1,85 @@
-
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::{Mutex, Once};
+use std::thread::sleep;
+use std::time::Duration;
 
-use futures_util::TryFutureExt;
 use rencfs::crypto::Cipher;
-use rencfs::mount::{create_mount_point, MountPoint, MountHandle};
 use rencfs::encryptedfs::PasswordProvider;
+use rencfs::mount::{create_mount_point, MountHandle, MountPoint};
 use shush_rs::SecretString;
+use tokio::runtime::Runtime;
 
-// struct TestResource {
-//     mount_handle : MountHandle,
-// }
+struct TestResource {
+    mount_handle: Option<MountHandle>,
+    runtime: Runtime,
+}
 
-// const MOUNT_PATH: &str = "/tmp/rencfs/mnt";
-// const DATA_PATH: &str = "/tmp/rencfs/data";
+const MOUNT_PATH: &str = "/tmp/rencfs/mnt";
+const DATA_PATH: &str = "/tmp/rencfs/data";
 
-// impl TestResource {
-//     fn new() -> Self {
-//         let mount_point = create_mount_point(
-//             Path::new(&MOUNT_PATH),
-//             Path::new(&DATA_PATH),
-//             get_password_provider(),
-//             Cipher::ChaCha20Poly1305,
-//             false,
-//             false,
-//             false,
-//         );
-//         let mnt_handle;
-//         tokio::runtime::Builder::new_multi_thread()
-//         .worker_threads(1)
-//         .enable_all()
-//         .build()
-//         .unwrap()
-//         .block_on(async {
-//             mnt_handle =  mount_point.mount().await;
-//         });
-//         Self { 
-//            mount_handle = mnt_handle.unwrap(),
-//         }
-//     }
-// } 
+impl TestResource {
+    fn new() -> Self {
+        let mount_point = create_mount_point(
+            Path::new(&MOUNT_PATH),
+            Path::new(&DATA_PATH),
+            get_password_provider(),
+            Cipher::ChaCha20Poly1305,
+            false,
+            false,
+            false,
+        );
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let mh = runtime.block_on(async {
+            let mh = mount_point.mount().await;
+            sleep(Duration::from_millis(50));
+            return mh;
+        });
 
-// impl Drop for TestResource {
-//     fn drop(&mut self) {
-//     }
-// }
+        return Self {
+            mount_handle: match mh {
+                Ok(mh) => Some(mh),
+                Err(e) => panic!("Encountered an error mounting {}", e),
+            },
+            runtime: runtime,
+        };
+    }
+}
 
+impl Drop for TestResource {
+    fn drop(&mut self) {
+        println!("Trying to unmount...");
+        let mh = self
+            .mount_handle
+            .take()
+            .expect("MountHandle should be some");
+        let res = self.runtime.block_on(async {
+            return mh.umount().await;
+        });
+        match res {
+            Ok(_) => println!("Succesfully unmounted"),
+            Err(e) => panic!(
+                "Something went wrong when unmounting {}.You may need to manually unmount",
+                e
+            ),
+        }
+    }
+}
+
+static mut TEST_RESOURCES: Option<Mutex<TestResource>> = None;
+static INIT: Once = Once::new();
+
+pub fn setup() {
+    unsafe {
+        INIT.call_once(|| {
+            TEST_RESOURCES = Some(Mutex::new(TestResource::new()));
+        });
+    }
+}
 
 struct TestPasswordProvider {}
 impl PasswordProvider for TestPasswordProvider {
