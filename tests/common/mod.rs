@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::{Mutex, Once};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, Once};
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -36,7 +37,7 @@ impl TestResource {
             .unwrap();
         let mh = runtime.block_on(async {
             let mh = mount_point.mount().await;
-            sleep(Duration::from_millis(50));
+            sleep(Duration::from_millis(100));
             return mh;
         });
 
@@ -52,7 +53,6 @@ impl TestResource {
 
 impl Drop for TestResource {
     fn drop(&mut self) {
-        println!("Trying to unmount...");
         let mh = self
             .mount_handle
             .take()
@@ -70,13 +70,28 @@ impl Drop for TestResource {
     }
 }
 
-static mut TEST_RESOURCES: Option<Mutex<TestResource>> = None;
+static mut TEST_RESOURCES: Option<Arc<Mutex<TestResource>>> = None;
 static INIT: Once = Once::new();
+static TEARDOWN: Once = Once::new();
+static RESOURCE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub fn setup() {
     unsafe {
         INIT.call_once(|| {
-            TEST_RESOURCES = Some(Mutex::new(TestResource::new()));
+            println!("Initializing the mount");
+            TEST_RESOURCES = Some(Arc::new(Mutex::new(TestResource::new())));
+        });
+    }
+    RESOURCE_COUNT.fetch_add(1, Ordering::SeqCst);
+}
+
+pub fn cleanup() {
+    if RESOURCE_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
+        TEARDOWN.call_once(|| unsafe {
+            if let Some(resources) = TEST_RESOURCES.take() {
+                println!("Deinitializing the mount");
+                drop(resources);
+            }
         });
     }
 }
