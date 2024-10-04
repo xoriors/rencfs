@@ -319,6 +319,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     #[allow(clippy::items_after_statements)]
     struct PasswordProviderImpl {}
     #[allow(clippy::items_after_statements)]
+    #[allow(static_mut_refs)]
     impl PasswordProvider for PasswordProviderImpl {
         fn get_password(&self) -> Option<SecretString> {
             unsafe {
@@ -401,6 +402,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
+#[allow(static_mut_refs)]
 fn remove_pass() {
     unsafe {
         if PASS.is_none() {
