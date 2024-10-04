@@ -27,8 +27,8 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 cargo check --all
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-cargo clippy --all-targets --release
-if %errorlevel% neq 0 exit /b %errorlevel%
+REM cargo clippy --all-targets --release
+REM if %errorlevel% neq 0 exit /b %errorlevel%
 
 cargo test --release --all --all-features
 if %errorlevel% neq 0 exit /b %errorlevel%

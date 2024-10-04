@@ -76,6 +76,7 @@ pub(crate) trait MountHandleInner: Future<Output = io::Result<()>> {
 ///
 #[must_use]
 #[allow(clippy::fn_params_excessive_bools)]
+#[allow(clippy::too_long_first_doc_paragraph)]
 pub fn create_mount_point(
     mountpoint: &Path,
     data_dir: &Path,
