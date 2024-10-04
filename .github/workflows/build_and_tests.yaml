@@ -15,16 +15,16 @@ env:
 
 jobs:
   version:
-      uses: radumarias/rencfs/.github/workflows/version_reusable.yml@main
+      uses: radumarias/rencfs/.github/workflows/version_reusable.yaml@main
       
   build_and_test:
     name: build and test
-    uses: radumarias/rencfs/.github/workflows/build_and_tests_reusable.yml@main
+    uses: radumarias/rencfs/.github/workflows/build_and_tests_reusable.yaml@main
     secrets: inherit
 
   package:
     needs: [version, build_and_test]
-    uses: radumarias/rencfs/.github/workflows/package_reusable.yml@main
+    uses: radumarias/rencfs/.github/workflows/package_reusable.yaml@main
     with:
       upload_artifacts: false
       version: ${{ needs.version.outputs.version }}

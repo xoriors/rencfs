@@ -1,7 +1,7 @@
 use core::str::FromStr;
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError};
-use secrecy::SecretString;
+use shush_rs::SecretString;
 use std::env::args;
 use std::path::Path;
 

@@ -1,7 +1,7 @@
 use std::io::{self, Seek, SeekFrom};
 
 use ring::aead::{Aad, Algorithm, BoundKey, OpeningKey, UnboundKey, NONCE_LEN};
-use secrecy::{ExposeSecret, SecretVec};
+use shush_rs::{ExposeSecret, SecretVec};
 use std::sync::{Arc, Mutex};
 #[allow(unused_imports)]
 use tracing_test::traced_test;
@@ -13,10 +13,10 @@ use crate::crypto::Cipher;
 #[allow(dead_code)]
 fn create_secret_key(key_len: usize) -> SecretVec<u8> {
     use rand::RngCore;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
     let mut key = vec![0; key_len];
     rand::thread_rng().fill_bytes(&mut key);
-    SecretVec::new(key)
+    SecretVec::from(key)
 }
 
 #[allow(dead_code)]
@@ -1315,7 +1315,7 @@ fn writer_only_write() {
     use std::io::{self, Write};
 
     use rand::RngCore;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
 
     use crate::crypto;
     use crate::crypto::write::{CryptoInnerWriter, WriteSeekRead};
@@ -1345,7 +1345,7 @@ fn writer_only_write() {
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = SecretVec::new(key);
+    let key = SecretVec::from(key);
 
     let writer = WriteOnly {};
     let _writer = crypto::create_write(writer, cipher, &key);
@@ -1359,7 +1359,7 @@ fn writer_with_seeks() {
     use std::io::{self, Cursor, Seek, SeekFrom};
 
     use rand::RngCore;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
 
     use crate::crypto;
     use crate::crypto::write::BLOCK_SIZE;
@@ -1368,7 +1368,7 @@ fn writer_with_seeks() {
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = SecretVec::new(key);
+    let key = SecretVec::from(key);
 
     let len = BLOCK_SIZE * 3 + 42;
 

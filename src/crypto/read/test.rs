@@ -3,7 +3,7 @@ use super::CryptoRead;
 #[allow(unused_imports)]
 use ring::aead::AES_256_GCM;
 #[allow(unused_imports)]
-use secrecy::SecretVec;
+use shush_rs::SecretVec;
 #[allow(unused_imports)]
 use std::io::{self, Seek};
 #[allow(unused_imports)]
@@ -11,10 +11,10 @@ use tracing_test::traced_test;
 #[allow(dead_code)]
 fn create_secret_key(key_len: usize) -> SecretVec<u8> {
     use rand::RngCore;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
     let mut key = vec![0; key_len];
     rand::thread_rng().fill_bytes(&mut key);
-    SecretVec::new(key)
+    SecretVec::new(Box::new(key))
 }
 #[allow(dead_code)]
 fn create_encrypted_data(data: &[u8], key: &SecretVec<u8>) -> Vec<u8> {
@@ -169,7 +169,7 @@ fn test_ring_crypto_read_seek_chacha() {
     use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
     use ring::aead::CHACHA20_POLY1305;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
 
     use crate::crypto::read::RingCryptoRead;
     use crate::crypto::write::{CryptoWrite, RingCryptoWrite};
@@ -180,7 +180,7 @@ fn test_ring_crypto_read_seek_chacha() {
 
     let algorithm = &CHACHA20_POLY1305;
     // Create a key for encryption
-    let key = SecretVec::new(vec![0; algorithm.key_len()]);
+    let key = SecretVec::new(Box::new(vec![0; algorithm.key_len()]));
 
     // write the data
     let mut writer = RingCryptoWrite::new(cursor, false, algorithm, &key);
@@ -228,7 +228,7 @@ fn test_ring_crypto_read_seek_aes() {
 
     let algorithm = &AES_256_GCM;
     // Create a key for encryption
-    let key = SecretVec::new(vec![0; algorithm.key_len()]);
+    let key = SecretVec::new(Box::new(vec![0; algorithm.key_len()]));
 
     // write the data
     let mut writer = RingCryptoWrite::new(cursor, true, algorithm, &key);
@@ -279,7 +279,7 @@ fn test_ring_crypto_read_seek_blocks_chacha() {
 
     // Create a key for encryption
     let algorithm = &CHACHA20_POLY1305;
-    let key = SecretVec::new(vec![0; algorithm.key_len()]);
+    let key = SecretVec::new(Box::new(vec![0; algorithm.key_len()]));
 
     // write the data
     let mut writer = RingCryptoWrite::new(cursor, false, algorithm, &key);
@@ -330,7 +330,7 @@ fn test_ring_crypto_read_seek_blocks_aes() {
 
     // Create a key for encryption
     let algorithm = &AES_256_GCM;
-    let key = SecretVec::new(vec![0; algorithm.key_len()]);
+    let key = SecretVec::new(Box::new(vec![0; algorithm.key_len()]));
 
     // write the data
     let mut writer = RingCryptoWrite::new(cursor, true, algorithm, &key);
@@ -381,7 +381,7 @@ fn test_ring_crypto_read_seek_blocks_boundary_chacha() {
 
     // Create a key for encryption
     let algorithm = &CHACHA20_POLY1305;
-    let key = SecretVec::new(vec![0; algorithm.key_len()]);
+    let key = SecretVec::new(Box::new(vec![0; algorithm.key_len()]));
 
     // write the data
     let mut writer = RingCryptoWrite::new(cursor, false, algorithm, &key);
@@ -429,7 +429,7 @@ fn test_ring_crypto_read_seek_blocks_boundary_aes() {
 
     // Create a key for encryption
     let algorithm = &AES_256_GCM;
-    let key = SecretVec::new(vec![0; algorithm.key_len()]);
+    let key = SecretVec::new(Box::new(vec![0; algorithm.key_len()]));
 
     // write the data
     let mut writer = RingCryptoWrite::new(cursor, true, algorithm, &key);
@@ -477,7 +477,7 @@ fn test_ring_crypto_read_seek_skip_blocks_chacha() {
 
     // Create a key for encryption
     let algorithm = &CHACHA20_POLY1305;
-    let key = SecretVec::new(vec![0; algorithm.key_len()]);
+    let key = SecretVec::new(Box::new(vec![0; algorithm.key_len()]));
 
     // write the data
     let mut writer = RingCryptoWrite::new(cursor, false, algorithm, &key);
@@ -513,7 +513,7 @@ fn test_ring_crypto_read_seek_skip_blocks_aes() {
 
     // Create a key for encryption
     let algorithm = &AES_256_GCM;
-    let key = SecretVec::new(vec![0; algorithm.key_len()]);
+    let key = SecretVec::new(Box::new(vec![0; algorithm.key_len()]));
 
     // write the data
     let mut writer = RingCryptoWrite::new(cursor, false, algorithm, &key);
@@ -549,7 +549,7 @@ fn test_ring_crypto_read_seek_in_second_block() {
 
     // Create a key for encryption
     let algorithm = &AES_256_GCM;
-    let key = SecretVec::new(vec![0; algorithm.key_len()]);
+    let key = SecretVec::new(Box::new(vec![0; algorithm.key_len()]));
 
     // write the data
     let mut writer = RingCryptoWrite::new(cursor, false, algorithm, &key);
@@ -571,7 +571,8 @@ fn test_ring_crypto_read_seek_in_second_block() {
 fn finish_seek() {
     use super::RingCryptoRead;
     let reader = io::Cursor::new(vec![0; 10]);
-    let mut reader = RingCryptoRead::new_seek(reader, &AES_256_GCM, &SecretVec::new(vec![0; 32]));
+    let mut reader =
+        RingCryptoRead::new_seek(reader, &AES_256_GCM, &SecretVec::new(Box::new(vec![0; 32])));
     let mut reader = reader.into_inner();
     let _ = reader.seek(io::SeekFrom::Start(0));
 }
@@ -582,7 +583,7 @@ fn reader_only_read() {
     use std::io::Read;
 
     use rand::RngCore;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
 
     use crate::crypto;
     use crate::crypto::Cipher;
@@ -597,7 +598,7 @@ fn reader_only_read() {
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = SecretVec::new(key);
+    let key = SecretVec::new(Box::new(key));
 
     let reader = ReadOnly {};
     let _reader = crypto::create_read(reader, cipher, &key);
@@ -611,7 +612,7 @@ fn reader_with_seeks() {
     use std::io::{self, Seek, SeekFrom};
 
     use rand::RngCore;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
 
     use crate::crypto;
     use crate::crypto::read::BLOCK_SIZE;
@@ -621,7 +622,7 @@ fn reader_with_seeks() {
     let cipher = Cipher::Aes256Gcm;
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = SecretVec::new(key);
+    let key = SecretVec::new(Box::new(key));
 
     let len = BLOCK_SIZE * 3 + 42;
 

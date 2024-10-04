@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 
 use anyhow::Result;
-use secrecy::SecretString;
+use shush_rs::SecretString;
 use tracing::info;
 
 use rencfs::crypto::Cipher;

@@ -5,13 +5,15 @@ use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use std::{env, fs, io};
 
-use secrecy::SecretString;
+use shush_rs::SecretString;
 use tempfile::NamedTempFile;
 use thread_local::ThreadLocal;
 use tokio::sync::Mutex;
 
 use crate::crypto::Cipher;
-use crate::encryptedfs::{CreateFileAttr, EncryptedFs, FileType, PasswordProvider};
+use crate::encryptedfs::{
+    CopyFileRangeReq, CreateFileAttr, EncryptedFs, FileType, PasswordProvider,
+};
 
 #[allow(dead_code)]
 pub static TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
@@ -53,6 +55,7 @@ pub const fn create_attr(kind: FileType) -> CreateFileAttr {
 pub struct TestSetup {
     #[allow(dead_code)]
     pub key: &'static str,
+    pub read_only: bool,
 }
 
 pub struct SetupResult {
@@ -63,7 +66,7 @@ pub struct SetupResult {
 }
 
 #[allow(dead_code)]
-struct PasswordProviderImpl {}
+pub struct PasswordProviderImpl {}
 impl PasswordProvider for PasswordProviderImpl {
     fn get_password(&self) -> Option<SecretString> {
         Some(SecretString::from_str("password").unwrap())
@@ -72,6 +75,7 @@ impl PasswordProvider for PasswordProviderImpl {
 #[allow(dead_code)]
 async fn setup(setup: TestSetup) -> SetupResult {
     let path = TESTS_DATA_DIR.join(setup.key);
+    let read_only = setup.read_only;
     let data_dir_str = path.to_str().unwrap();
     let _ = fs::remove_dir_all(data_dir_str);
     let _ = fs::create_dir_all(data_dir_str);
@@ -80,7 +84,7 @@ async fn setup(setup: TestSetup) -> SetupResult {
         Path::new(data_dir_str).to_path_buf(),
         Box::new(PasswordProviderImpl {}),
         Cipher::ChaCha20Poly1305,
-        false,
+        read_only,
     )
     .await
     .unwrap();
@@ -152,17 +156,17 @@ pub async fn copy_all_file_range(
     dest_fh: u64,
 ) {
     let mut copied = 0;
+    let file_range_req = CopyFileRangeReq::builder()
+        .src_ino(src_ino)
+        .src_offset(src_offset)
+        .dest_ino(dest_ino)
+        .dest_offset(dest_offset)
+        .src_fh(src_fh)
+        .dest_fh(dest_fh)
+        .build();
     while copied < size {
         let len = fs
-            .copy_file_range(
-                src_ino,
-                src_offset + copied as u64,
-                dest_ino,
-                dest_offset + copied as u64,
-                size - copied,
-                src_fh,
-                dest_fh,
-            )
+            .copy_file_range(&file_range_req, size - copied)
             .await
             .unwrap();
         assert!(!(len == 0 && copied < size), "Failed to copy all bytes");
@@ -184,10 +188,15 @@ pub async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8],
 }
 
 #[allow(dead_code)]
-pub fn bench<F: Future + Send + Sync>(key: &'static str, worker_threads: usize, f: F) {
+pub fn bench<F: Future + Send + Sync>(
+    key: &'static str,
+    worker_threads: usize,
+    read_only: bool,
+    f: F,
+) {
     block_on(
         async {
-            run_test(TestSetup { key }, f).await;
+            run_test(TestSetup { key, read_only }, f).await;
         },
         worker_threads,
     );

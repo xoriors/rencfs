@@ -15,8 +15,8 @@ use num_format::{Locale, ToFormattedString};
 use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use ring::aead::{AES_256_GCM, CHACHA20_POLY1305};
-use secrecy::{ExposeSecret, SecretString, SecretVec};
 use serde::{Deserialize, Serialize};
+use shush_rs::{ExposeSecret, SecretString, SecretVec};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tracing::{debug, error, instrument};
@@ -212,7 +212,7 @@ pub fn decrypt(s: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretStr
     let mut reader = create_read(cursor, cipher, key);
     let mut decrypted = String::new();
     reader.read_to_string(&mut decrypted)?;
-    Ok(SecretString::new(decrypted))
+    Ok(SecretString::new(Box::new(decrypted)))
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -230,7 +230,7 @@ pub fn derive_key(password: &SecretString, cipher: Cipher, salt: &[u8]) -> Resul
     Argon2::default()
         .hash_password_into(password.expose_secret().as_bytes(), salt, &mut dk)
         .map_err(|err| Error::GenericString(err.to_string()))?;
-    Ok(SecretVec::new(dk))
+    Ok(SecretVec::new(Box::new(dk)))
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -245,7 +245,7 @@ pub fn encrypt_file_name(
         "$." | "$.." => Ok(secret_string.clone()),
         "." | ".." => Ok(format!("${secret_string}")),
         _ => {
-            let secret = SecretString::from_str(secret_string)
+            let secret = SecretString::from_str(&secret_string)
                 .map_err(|err| Error::GenericString(err.to_string()))?;
             let mut encrypted = encrypt(&secret, cipher, key)?;
             encrypted = encrypted.replace('/', "|");
@@ -258,9 +258,9 @@ pub fn encrypt_file_name(
 #[allow(clippy::missing_errors_doc)]
 #[must_use]
 pub fn hash_file_name(name: &SecretString) -> String {
-    if name.expose_secret() == "$." || name.expose_secret() == "$.." {
+    if *name.expose_secret() == "$." || *name.expose_secret() == "$.." {
         name.expose_secret().clone()
-    } else if name.expose_secret() == "." || name.expose_secret() == ".." {
+    } else if *name.expose_secret() == "." || *name.expose_secret() == ".." {
         format!("${}", name.expose_secret())
     } else {
         hex::encode(hash_secret_string(name))
@@ -289,7 +289,7 @@ pub fn hash_secret_string(data: &SecretString) -> [u8; 32] {
 
 #[must_use]
 pub fn hash_secret_vec(data: &SecretVec<u8>) -> [u8; 32] {
-    hash(data.expose_secret())
+    hash(&data.expose_secret())
 }
 
 /// Copy from `pos` position in file `len` bytes
@@ -386,7 +386,7 @@ mod tests {
     use super::*;
 
     use rand_core::RngCore;
-    use secrecy::{ExposeSecret, Secret, SecretString, SecretVec};
+    use shush_rs::{ExposeSecret, SecretString, SecretVec};
     use std::{
         fs::File,
         io::{self, Write},
@@ -397,7 +397,7 @@ mod tests {
     fn create_encrypted_file(
         content: &str,
         cipher: Cipher,
-        key: &Secret<Vec<u8>>,
+        key: &SecretVec<u8>,
     ) -> (TempDir, PathBuf) {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_file.txt");
@@ -423,15 +423,15 @@ mod tests {
         (temp_dir, encrypted_file_path)
     }
 
-    fn secret_key(cipher: Cipher) -> Secret<Vec<u8>> {
+    fn secret_key(cipher: Cipher) -> SecretVec<u8> {
         let mut key = vec![0; cipher.key_len()];
         create_rng().fill_bytes(&mut key);
-        SecretVec::new(key)
+        SecretVec::new(Box::new(key))
     }
 
     #[test]
     fn test_simple_encrypt_and_decrypt() {
-        let secret = SecretString::new("Test secret".to_string());
+        let secret = SecretString::from_str("Test secret").unwrap();
 
         for &cipher in &[Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
             let key = secret_key(cipher);
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_encrypt_and_decrypt_file_name() {
-        let secret_name = SecretString::new("testfile.txt".to_string());
+        let secret_name = SecretString::from_str("testfile.txt").unwrap();
 
         for &cipher in &[Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
             let key = secret_key(cipher);
@@ -453,7 +453,7 @@ mod tests {
             assert_eq!(decrypted.expose_secret(), secret_name.expose_secret());
         }
 
-        let secret_name = SecretString::new("testfile\\With/slash.txt".to_string());
+        let secret_name = SecretString::from_str("testfile\\With/slash.txt").unwrap();
 
         for &cipher in &[Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
             let key = secret_key(cipher);
@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn test_encrypt_and_decrypt_file_name_invalid_cipher() {
         let key = secret_key(Cipher::ChaCha20Poly1305);
-        let secret_name = SecretString::new("testfile.txt".to_string());
+        let secret_name = SecretString::from_str("testfile.txt").unwrap();
 
         let encrypted = encrypt_file_name(&secret_name, Cipher::ChaCha20Poly1305, &key).unwrap();
         let result = decrypt_file_name(&encrypted, Cipher::Aes256Gcm, &key);
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_derive_key() {
-        let password = SecretString::new("password".to_string());
+        let password = SecretString::from_str("password").unwrap();
         let salt = b"salt_of_pass";
 
         for &cipher in &[Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_derive_key_consistency() {
-        let password = SecretString::new("password".to_string());
+        let password = SecretString::from_str("password").unwrap();
         let salt = b"random_salt";
 
         let derived_key_1 = derive_key(&password, Cipher::ChaCha20Poly1305, salt).unwrap();
@@ -497,7 +497,7 @@ mod tests {
 
     #[test]
     fn test_derive_key_empty_salt() {
-        let empty_password = SecretString::new("password".to_string());
+        let empty_password = SecretString::from_str("password").unwrap();
         let empty_salt = b"";
 
         let result = derive_key(&empty_password, Cipher::ChaCha20Poly1305, empty_salt);
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_derive_key_uniqueness() {
-        let password = SecretString::new("password".to_string());
+        let password = SecretString::from_str("password").unwrap();
         let salts = vec![b"random_salt1", b"random_salt2", b"random_salt3"];
 
         let mut derived_keys = std::collections::HashSet::new();
@@ -525,12 +525,12 @@ mod tests {
         for &cipher in &[Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
             let key = secret_key(cipher);
 
-            let data = SecretString::new("A".to_string());
+            let data = SecretString::from_str("A").unwrap();
             let encrypted = encrypt(&data, cipher, &key).unwrap();
             let decrypted = decrypt(&encrypted, cipher, &key).unwrap();
             assert_eq!(decrypted.expose_secret(), data.expose_secret());
 
-            let large_data = SecretString::new("A".repeat(1024 * 1024)); // 1 MB
+            let large_data = SecretString::from_str("A".repeat(1024 * 1024).as_str()).unwrap(); // 1 MB
             let encrypted = encrypt(&large_data, cipher, &key).unwrap();
             let decrypted = decrypt(&encrypted, cipher, &key).unwrap();
             assert_eq!(decrypted.expose_secret(), large_data.expose_secret());
@@ -539,43 +539,43 @@ mod tests {
 
     #[test]
     fn test_encrypt_decrypt_empty_string() {
-        let key = SecretVec::new(vec![0; 32]);
-        let secret = SecretString::new("".to_string());
+        let key = SecretVec::from(vec![0; 32]);
+        let secret = SecretString::new(Box::new("".to_string()));
 
         let encrypted = encrypt(&secret, Cipher::ChaCha20Poly1305, &key).unwrap();
         let decrypted = decrypt(&encrypted, Cipher::ChaCha20Poly1305, &key).unwrap();
 
-        assert_eq!(decrypted.expose_secret(), "");
+        assert_eq!(*decrypted.expose_secret(), "");
     }
 
     #[test]
     fn test_hash_file_name_special_cases() {
         let expected = "$.".to_string();
-        let name = SecretString::new(expected.clone());
+        let name = SecretString::new(Box::new(expected.clone()));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
 
         let expected = "$..".to_string();
-        let name = SecretString::new(expected.clone());
+        let name = SecretString::new(Box::new(expected.clone()));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
 
         let input = ".".to_string();
         let expected = "$.".to_string();
-        let name = SecretString::new(input);
+        let name = SecretString::new(Box::new(input));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
 
         let input = "..".to_string();
         let expected = "$..".to_string();
-        let name = SecretString::new(input);
+        let name = SecretString::new(Box::new(input));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
     }
 
     #[test]
     fn test_hash_file_name_regular_case() {
-        let name = SecretString::new("filename.txt".to_string());
+        let name = SecretString::new(Box::new("filename.txt".to_string()));
         let result = hash_file_name(&name);
         let expected_hash = hex::encode(hash_secret_string(&name));
         assert_eq!(result, expected_hash);
@@ -583,7 +583,7 @@ mod tests {
 
     #[test]
     fn test_hash_secret_string() {
-        let secret = SecretString::new("hash this secret".to_string());
+        let secret = SecretString::new(Box::new("hash this secret".to_string()));
         let expected_hash_hex = "d820cbf278fc742d8ec30e43947674689cd06d5aa9b71a2f9afe162a4ce408dc";
 
         let hash_hex = hex::encode(hash_secret_string(&secret));
@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn test_copy_from_file_exact_zero_length() {
-        let key = SecretVec::new(vec![0; 32]);
+        let key = SecretVec::from(vec![0; 32]);
         let (_temp_dir, file_path) =
             create_encrypted_file("Hello, world!", Cipher::ChaCha20Poly1305, &key);
 

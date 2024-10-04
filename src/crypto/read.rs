@@ -6,7 +6,7 @@ use ring::aead::{
     Aad, Algorithm, BoundKey, Nonce, NonceSequence, OpeningKey, UnboundKey, NONCE_LEN,
 };
 use ring::error;
-use secrecy::{ExposeSecret, SecretVec};
+use shush_rs::{ExposeSecret, SecretVec};
 use tracing::{error, instrument, warn};
 
 use crate::crypto::buf_mut::BufMut;
@@ -91,7 +91,7 @@ impl<R: Read> RingCryptoRead<R> {
         let ciphertext_block_size = NONCE_LEN + BLOCK_SIZE + algorithm.tag_len();
         let buf = BufMut::new(vec![0; ciphertext_block_size]);
         let last_nonce = Arc::new(Mutex::new(None));
-        let unbound_key = UnboundKey::new(algorithm, key.expose_secret()).unwrap();
+        let unbound_key = UnboundKey::new(algorithm, &key.expose_secret()).unwrap();
         let nonce_sequence = ExistingNonceSequence::new(last_nonce.clone());
         let opening_key = OpeningKey::new(unbound_key, nonce_sequence);
         Self {

@@ -1,6 +1,6 @@
 extern crate jni;
 extern crate rencfs;
-extern crate secrecy;
+extern crate shush_rs;
 extern crate tokio;
 extern crate tracing;
 
@@ -13,7 +13,7 @@ use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::PasswordProvider;
 use rencfs::log::log_init;
 use rencfs::mount::{create_mount_point, umount, MountHandle};
-use secrecy::SecretString;
+use shush_rs::SecretString;
 use std::collections::BTreeMap;
 use std::ops::Add;
 use std::path::Path;

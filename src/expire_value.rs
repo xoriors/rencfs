@@ -16,6 +16,10 @@ pub trait ValueProvider<T, E: Error + Send + Sync + 'static>: Send + Sync + 'sta
     async fn provide(&self) -> Result<T, E>;
 }
 
+/// It keeps the value in memory while it's being used and while there are strong references to it.
+///
+/// After the specified `duration` it will remove it from internal cache and just keep it while there are strong references to it, after which it will be zeroized and dropped from memory.  
+// Helps mitigate against [Cold boot attack](https://en.wikipedia.org/wiki/Cold_boot_attack) by expiring values from memory.
 pub struct ExpireValue<
     T: Send + Sync + 'static,
     E: Error + Send + Sync + 'static,

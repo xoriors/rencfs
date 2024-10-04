@@ -8,7 +8,7 @@ use std::{fs, io};
 
 use anyhow::Result;
 use rand_core::RngCore;
-use secrecy::SecretVec;
+use shush_rs::SecretVec;
 
 use rencfs::crypto;
 use rencfs::crypto::write::{CryptoInnerWriter, CryptoWrite};
@@ -156,5 +156,5 @@ where
 fn get_key(cipher: Cipher) -> io::Result<SecretVec<u8>> {
     let mut key = vec![0; cipher.key_len()];
     crypto::create_rng().fill_bytes(key.as_mut_slice());
-    Ok(SecretVec::new(key))
+    Ok(SecretVec::from(key))
 }

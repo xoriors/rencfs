@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Result;
-use secrecy::SecretString;
+use shush_rs::SecretString;
 
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::write_all_string_to_fs;

@@ -1,4 +1,4 @@
-name: '_reusable-package'
+name: '_package'
 on:
   workflow_call:
     inputs:
@@ -18,15 +18,24 @@ jobs:
       steps:
         - uses: actions/checkout@v4
 
-        - name: install latest Rust nightly
-          run: rustup default nightly && rustup update
-        
-        - name: install cargo-aur
-          run: cargo install cargo-aur
+        - name: setup Rust
+          uses: actions-rs/toolchain@v1
+          with:
+            toolchain: nightly
+            components: rustfmt, clippy
+            profile: minimal
 
-        - name: run cargo aur
-          run: cargo aur
-        
+        - name: setup Rust
+          run: |
+            cargo install cargo-aur
+            cargo install cargo-generate-rpm          
+
+        - name: run cargo aur and generate-rpm
+          if: matrix.os == 'ubuntu-latest'
+          run: |
+            cargo aur
+            cargo generate-rpm
+
         - name: check for publish
           run: cargo publish --dry-run --allow-dirty
 

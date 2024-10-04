@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io;
 use std::path::Path;
 
-use secrecy::SecretVec;
+use shush_rs::SecretVec;
 use tracing::info;
 
 use rencfs::crypto;
@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     let cipher = Cipher::ChaCha20Poly1305;
     let mut key = vec![0; cipher.key_len()];
     crypto::create_rng().fill_bytes(key.as_mut_slice());
-    let key = SecretVec::new(key);
+    let key = SecretVec::from(key);
 
     let mut args = args();
     // skip the program name

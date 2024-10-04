@@ -1,0 +1,45 @@
+#!/usr/bin/env pwsh
+# Pre-commit hook script for Git on Windows (PowerShell)
+# Save this file as .git/hooks/pre-commit.ps1
+
+# Check if we are committing to an existing branch or the initial commit
+$against = ""
+try {
+    git rev-parse --verify HEAD > $null 2>&1
+    $against = "HEAD"
+} catch {
+    # Initial commit: diff against an empty tree object
+    $against = git hash-object -t tree /dev/null
+}
+
+# Get the allownonascii configuration value
+$allownonascii = git config --type=bool hooks.allownonascii
+
+# Redirect output to stderr
+$ErrorActionPreference = "Stop"
+
+# Cross-platform projects tend to avoid non-ASCII filenames; prevent them from being added to the repository
+if ($allownonascii -ne $true) {
+    # Ensure there are no non-ASCII file names being added
+    $diff = git diff-index --cached --name-only --diff-filter=A -z $against |
+            ForEach-Object { $_.Trim([char]0) }
+
+    foreach ($file in $diff) {
+        if ($file -cmatch '[^ -~]') {
+            Write-Host "Error: Attempt to add a non-ASCII file name." -ForegroundColor Red
+            Write-Host "This can cause problems if you want to work with people on other platforms."
+            Write-Host "To be portable it is advisable to rename the file."
+            Write-Host "If you know what you are doing, you can disable this check using:"
+            Write-Host "  git config hooks.allownonascii true" -ForegroundColor Yellow
+            exit 1
+        }
+    }
+}
+
+# Call an additional script for checks before pushing (if applicable)
+# Ensure that `check-before-push.ps1` exists in the repo
+if (Test-Path "./check-before-push.bat") {
+    & "./check-before-push.bat"
+}
+
+exit 0

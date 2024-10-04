@@ -1,9 +1,9 @@
-use std::env::args;
 use std::io;
 use std::io::Write;
+use std::{env::args, str::FromStr};
 
 use rpassword::read_password;
-use secrecy::{ExposeSecret, SecretString};
+use shush_rs::{ExposeSecret, SecretString};
 use tracing::{error, info};
 
 use rencfs::encryptedfs::{EncryptedFs, FsError};
@@ -21,13 +21,13 @@ async fn main() {
     use rencfs::crypto::Cipher;
     print!("Enter old password: ");
     io::stdout().flush().unwrap();
-    let old_password = SecretString::new(read_password().unwrap());
+    let old_password = SecretString::from_str(&read_password().unwrap()).unwrap();
     print!("Enter new password: ");
     io::stdout().flush().unwrap();
-    let new_password = SecretString::new(read_password().unwrap());
+    let new_password = SecretString::from_str(&read_password().unwrap()).unwrap();
     print!("Confirm new password: ");
     io::stdout().flush().unwrap();
-    let new_password2 = SecretString::new(read_password().unwrap());
+    let new_password2 = SecretString::from_str(&read_password().unwrap()).unwrap();
     if new_password.expose_secret() != new_password2.expose_secret() {
         error!("Passwords do not match");
         return;

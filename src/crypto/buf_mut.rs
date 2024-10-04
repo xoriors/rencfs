@@ -2,7 +2,7 @@ use std::cmp::min;
 use std::io;
 use std::io::{Read, SeekFrom, Write};
 
-use secrecy::Zeroize;
+use shush_rs::Zeroize;
 
 pub struct BufMut {
     // TODO: use secrets to benefit of mlock()

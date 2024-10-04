@@ -8,7 +8,7 @@ use anyhow::Result;
 use clap::{crate_authors, crate_name, crate_version, Arg, ArgAction, ArgMatches, Command};
 use ctrlc::set_handler;
 use rpassword::read_password;
-use secrecy::{ExposeSecret, SecretString};
+use shush_rs::{ExposeSecret, SecretString};
 use strum::IntoEnumIterator;
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -227,13 +227,13 @@ async fn run_change_password(cipher: Cipher, matches: &ArgMatches) -> Result<()>
     // read password from stdin
     print!("Enter old password: ");
     io::stdout().flush().unwrap();
-    let password = SecretString::new(read_password().unwrap());
+    let password = SecretString::from_str(&read_password().unwrap()).unwrap();
     print!("Enter new password: ");
     io::stdout().flush().unwrap();
-    let new_password = SecretString::new(read_password().unwrap());
+    let new_password = SecretString::from_str(&read_password().unwrap()).unwrap();
     print!("Confirm new password: ");
     io::stdout().flush().unwrap();
-    let new_password2 = SecretString::new(read_password().unwrap());
+    let new_password2 = SecretString::from_str(&read_password().unwrap()).unwrap();
     if new_password.expose_secret() != new_password2.expose_secret() {
         println!("Passwords do not match");
         return Err(ExitStatusError::Failure(1).into());
@@ -269,13 +269,17 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
 
     // when running from IDE we can't read from stdin with rpassword, get it from env var
-    let mut password =
-        SecretString::new(env::var("RENCFS_PASSWORD").unwrap_or_else(|_| String::new()));
+    let mut password = SecretString::from_str(
+        env::var("RENCFS_PASSWORD")
+            .unwrap_or_else(|_| String::new())
+            .as_str(),
+    )
+    .unwrap();
     if password.expose_secret().is_empty() {
         // read password from stdin
         print!("Enter password: ");
         io::stdout().flush().unwrap();
-        password = SecretString::new(read_password().unwrap());
+        password = SecretString::from_str(read_password().unwrap().as_str()).unwrap();
 
         if !PathBuf::new().join(data_dir.clone()).is_dir()
             || fs::read_dir(&data_dir)
@@ -289,7 +293,8 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             // first run, ask to confirm password
             print!("Confirm password: ");
             io::stdout().flush().unwrap();
-            let confirm_password = SecretString::new(read_password().unwrap());
+            let confirm_password =
+                SecretString::from_str(read_password().unwrap().as_str()).unwrap();
             if password.expose_secret() != confirm_password.expose_secret() {
                 error!("Passwords do not match");
                 return Err(ExitStatusError::Failure(1).into());
@@ -316,7 +321,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         });
     }
 
-    #[allow(clippy::items_after_statements)]
     struct PasswordProviderImpl {}
     #[allow(clippy::items_after_statements)]
     #[allow(static_mut_refs)]

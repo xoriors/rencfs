@@ -6,7 +6,7 @@ use test::{black_box, Bencher};
 #[allow(unused_imports)]
 use rand::Rng;
 #[allow(unused_imports)]
-use secrecy::SecretString;
+use shush_rs::SecretString;
 
 #[allow(unused_imports)]
 use crate::encryptedfs::{DirectoryEntry, DirectoryEntryPlus, FileType, ROOT_INODE};
@@ -17,7 +17,7 @@ use crate::{async_util, test_common};
 
 #[bench]
 fn bench_create(b: &mut Bencher) {
-    test_common::bench("bench_create", 1, async {
+    test_common::bench("bench_create", 1, false, async {
         let fs = get_fs().await;
 
         let mut i = 1;
@@ -46,7 +46,7 @@ fn bench_create(b: &mut Bencher) {
 
 #[bench]
 fn bench_exists_by_name(b: &mut Bencher) {
-    test_common::bench("exists_by_name", 1, async {
+    test_common::bench("exists_by_name", 1, false, async {
         let fs = get_fs().await;
 
         let mut rnd = rand::thread_rng();
@@ -67,7 +67,7 @@ fn bench_exists_by_name(b: &mut Bencher) {
 
 #[bench]
 fn bench_find_by_name(b: &mut Bencher) {
-    test_common::bench("bench_find_by_name", 1, async {
+    test_common::bench("bench_find_by_name", 1, false, async {
         let fs = get_fs().await;
 
         for i in 0..100 {
@@ -104,7 +104,7 @@ fn bench_find_by_name(b: &mut Bencher) {
 
 #[bench]
 fn bench_read_dir(b: &mut Bencher) {
-    test_common::bench("bench_read_dir", 1, async {
+    test_common::bench("bench_read_dir", 1, false, async {
         let fs = get_fs().await;
 
         for i in 0..100 {
@@ -134,7 +134,7 @@ fn bench_read_dir(b: &mut Bencher) {
 
 #[bench]
 fn bench_read_dir_plus(b: &mut Bencher) {
-    test_common::bench("bench_read_dir_plus", 1, async {
+    test_common::bench("bench_read_dir_plus", 1, false, async {
         let fs = get_fs().await;
 
         for i in 0..100 {

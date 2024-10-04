@@ -7,7 +7,7 @@ fn bench_read_1mb_chacha_file(b: &mut Bencher) {
     use crate::crypto::write::CryptoWrite;
     use crate::crypto::Cipher;
     use rand::RngCore;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
     use std::io;
     use std::io::Seek;
     use test::black_box;
@@ -17,7 +17,7 @@ fn bench_read_1mb_chacha_file(b: &mut Bencher) {
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = SecretVec::new(key);
+    let key = SecretVec::new(Box::new(key));
 
     let file = tempfile::tempfile().unwrap();
     let mut writer = crypto::create_write(file, cipher, &key);
@@ -43,7 +43,7 @@ fn bench_read_1mb_aes_file(b: &mut Bencher) {
     use crate::crypto::write::CryptoWrite;
     use crate::crypto::Cipher;
     use rand::RngCore;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
     use std::io;
     use std::io::Seek;
     use test::black_box;
@@ -53,7 +53,7 @@ fn bench_read_1mb_aes_file(b: &mut Bencher) {
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = SecretVec::new(key);
+    let key = SecretVec::new(Box::new(key));
 
     let file = tempfile::tempfile().unwrap();
     let mut writer = crypto::create_write(file, cipher, &key);
@@ -79,7 +79,7 @@ fn bench_read_1mb_chacha_ram(b: &mut Bencher) {
     use crate::crypto::write::CryptoWrite;
     use crate::crypto::Cipher;
     use rand::RngCore;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
     use std::io;
     use std::io::Seek;
     use test::black_box;
@@ -89,7 +89,7 @@ fn bench_read_1mb_chacha_ram(b: &mut Bencher) {
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = SecretVec::new(key);
+    let key = SecretVec::new(Box::new(key));
 
     let cursor_write = io::Cursor::new(vec![]);
     let mut writer = crypto::create_write(cursor_write, cipher, &key);
@@ -115,7 +115,7 @@ fn bench_read_1mb_aes_ram(b: &mut Bencher) {
     use crate::crypto::write::CryptoWrite;
     use crate::crypto::Cipher;
     use rand::RngCore;
-    use secrecy::SecretVec;
+    use shush_rs::SecretVec;
     use std::io;
     use std::io::Seek;
     use test::black_box;
@@ -125,7 +125,7 @@ fn bench_read_1mb_aes_ram(b: &mut Bencher) {
 
     let mut key: Vec<u8> = vec![0; cipher.key_len()];
     rand::thread_rng().fill_bytes(&mut key);
-    let key = SecretVec::new(key);
+    let key = SecretVec::new(Box::new(key));
 
     let cursor_write = io::Cursor::new(vec![]);
     let mut writer = crypto::create_write(cursor_write, cipher, &key);
