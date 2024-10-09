@@ -1,5 +1,5 @@
 mod common;
-use common::{cleanup, setup, MOUNT_PATH};
+use common::{cleanup, setup, DATA_PATH, MOUNT_PATH};
 use std::{
     fs::{self, File}, io::{Read, Write}, os::unix::fs::MetadataExt, path::Path
 };
@@ -63,8 +63,12 @@ fn it_create_write_read_delete() {
     let test_file1 = format!("{}{}", MOUNT_PATH, "/random/initial.txt");
     let test_file1_renamed = format!("{}{}", MOUNT_PATH, "/random/renamed.txt");
     let test_file2 = format!("{}{}", MOUNT_PATH, "/random/another.txt");
+    let temp_path  = Path::new("/tmp");
+    let mut initial_file_count = 0;
+    for _entry in fs::read_dir(temp_path) {
+        initial_file_count+=1;
+    }
     const WRITTEN_TEXT: &str = "the quick brown fox jumps over the lazy dog";
-    // const REWRITTEN_TEXT : &str = "the quick brown bear jumps over the lazy dog";
     {
         let tf_path = Path::new(&test_folder);
         let f1_path = Path::new(&test_file1);
@@ -95,10 +99,11 @@ fn it_create_write_read_delete() {
         // create file 2
         let fh2 = File::create_new(f2_path);
         assert!(fh2.is_ok(), "failed to create [{}]", &test_file2);
-        // get attributes 
-        // let atrributes_f1 =  fs::metadata(test_file1_renamed);
-        // atrributes_f1.unwrap().len()
-
+        let mut final_file_count = 0;
+        for _entry in fs::read_dir(&temp_path) {
+            final_file_count+=1;
+        }   
+        assert_eq!(initial_file_count,final_file_count);
     }
     let res = fs::remove_dir_all(Path::new(&test_folder));
     assert!(res.is_ok(), "failed to delete [{}]", &test_folder);
@@ -118,14 +123,10 @@ fn it_create_empty_dir_check_attr() {
         let metadata = res.unwrap();
         assert!(metadata.is_dir());
         assert_eq!(metadata.size(),0);
-        
-        println!("size in bytes :{}",metadata.len());
-        println!("created time :{:#?}",metadata.created());
-        println!("permissions :{:#?}",metadata.permissions());
-        println!("uid {}", metadata.uid());
-        println!("inode {}", metadata.ino());
-        println!("total size {}", metadata.size());
-        // assert!(metadata.si)
+        assert_ne!(metadata.uid(),0); //we don't create it as root
+        let inode_path = format!("{}{}{}",DATA_PATH,"/inodes/",metadata.ino());
+        let inode_exists = fs::exists(Path::new(&inode_path));
+        assert_eq!(inode_exists.unwrap(),true);
     }
     let res = fs::remove_dir_all(Path::new(&test_folder));
     assert!(res.is_ok(), "failed to delete [{}]", &test_folder);
