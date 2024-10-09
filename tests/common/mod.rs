@@ -16,8 +16,8 @@ struct TestResource {
     runtime: Runtime,
 }
 
-const MOUNT_PATH: &str = "/tmp/rencfs/mnt";
-const DATA_PATH: &str = "/tmp/rencfs/data";
+pub const MOUNT_PATH: &str = "/tmp/rencfs/mnt";
+pub const DATA_PATH: &str = "/tmp/rencfs/data";
 
 impl TestResource {
     fn new() -> Self {
@@ -76,6 +76,7 @@ static TEARDOWN: Once = Once::new();
 static RESOURCE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub fn setup() {
+    #[cfg(not(target_os = "linux"))] { return; }
     unsafe {
         INIT.call_once(|| {
             println!("Initializing the mount");
@@ -86,6 +87,7 @@ pub fn setup() {
 }
 
 pub fn cleanup() {
+    #[cfg(not(target_os = "linux"))] { return; }
     if RESOURCE_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
         TEARDOWN.call_once(|| unsafe {
             if let Some(resources) = TEST_RESOURCES.take() {
