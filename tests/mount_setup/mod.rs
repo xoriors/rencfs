@@ -1,3 +1,4 @@
+#[cfg(target_os = "linux")]
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -38,16 +39,16 @@ impl TestResource {
         let mh = runtime.block_on(async {
             let mh = mount_point.mount().await;
             sleep(Duration::from_millis(100));
-            return mh;
+            mh
         });
 
-        return Self {
+        Self {
             mount_handle: match mh {
                 Ok(mh) => Some(mh),
                 Err(e) => panic!("Encountered an error mounting {}", e),
             },
-            runtime: runtime,
-        };
+            runtime,
+        }
     }
 }
 
@@ -57,9 +58,7 @@ impl Drop for TestResource {
             .mount_handle
             .take()
             .expect("MountHandle should be some");
-        let res = self.runtime.block_on(async {
-            return mh.umount().await;
-        });
+        let res = self.runtime.block_on(async { mh.umount().await });
         match res {
             Ok(_) => println!("Succesfully unmounted"),
             Err(e) => panic!(
@@ -76,7 +75,6 @@ static TEARDOWN: Once = Once::new();
 static RESOURCE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub fn setup() {
-    #[cfg(not(target_os = "linux"))] { return; }
     unsafe {
         INIT.call_once(|| {
             println!("Initializing the mount");
@@ -85,9 +83,8 @@ pub fn setup() {
     }
     RESOURCE_COUNT.fetch_add(1, Ordering::SeqCst);
 }
-
+#[allow(static_mut_refs)]
 pub fn cleanup() {
-    #[cfg(not(target_os = "linux"))] { return; }
     if RESOURCE_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
         TEARDOWN.call_once(|| unsafe {
             if let Some(resources) = TEST_RESOURCES.take() {
@@ -101,10 +98,10 @@ pub fn cleanup() {
 struct TestPasswordProvider {}
 impl PasswordProvider for TestPasswordProvider {
     fn get_password(&self) -> Option<SecretString> {
-        return Some(SecretString::from_str("test").unwrap());
+        Some(SecretString::from_str("test").unwrap())
     }
 }
 
 pub fn get_password_provider() -> Box<dyn PasswordProvider> {
-    return Box::new(TestPasswordProvider {});
+    Box::new(TestPasswordProvider {})
 }
