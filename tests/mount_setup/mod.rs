@@ -1,4 +1,5 @@
 #[cfg(target_os = "linux")]
+use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -74,24 +75,32 @@ static INIT: Once = Once::new();
 static TEARDOWN: Once = Once::new();
 static RESOURCE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-pub fn setup() {
-    unsafe {
-        INIT.call_once(|| {
-            println!("Initializing the mount");
-            TEST_RESOURCES = Some(Arc::new(Mutex::new(TestResource::new())));
-        });
+pub struct TestGuard;
+
+impl TestGuard {
+    pub fn setup() -> Self {
+        unsafe {
+            INIT.call_once(|| {
+                println!("Initializing the mount");
+                TEST_RESOURCES = Some(Arc::new(Mutex::new(TestResource::new())));
+            });
+        }
+        RESOURCE_COUNT.fetch_add(1, Ordering::SeqCst);
+        TestGuard
     }
-    RESOURCE_COUNT.fetch_add(1, Ordering::SeqCst);
 }
+
 #[allow(static_mut_refs)]
-pub fn cleanup() {
-    if RESOURCE_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
-        TEARDOWN.call_once(|| unsafe {
-            if let Some(resources) = TEST_RESOURCES.take() {
-                println!("Deinitializing the mount");
-                drop(resources);
-            }
-        });
+impl Drop for TestGuard {
+    fn drop(&mut self) {
+        if RESOURCE_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
+            TEARDOWN.call_once(|| unsafe {
+                if let Some(resources) = TEST_RESOURCES.take() {
+                    println!("Deinitializing the mount");
+                    drop(resources);
+                }
+            });
+        }
     }
 }
 
@@ -104,4 +113,18 @@ impl PasswordProvider for TestPasswordProvider {
 
 pub fn get_password_provider() -> Box<dyn PasswordProvider> {
     Box::new(TestPasswordProvider {})
+}
+
+pub fn count_files(folder_path: &str) -> u32 {
+    println!("<<<[{}]>>>", &folder_path);
+    let path = Path::new(folder_path);
+    let mut file_count = 0;
+    if let Ok(dir_iterator) = fs::read_dir(path) {
+        for _entry in dir_iterator {
+            let _ = _entry.inspect(|e| println!("[{:?}]", e.file_name()));
+            file_count += 1;
+        }
+    }
+    println!("<<< File count [{}] >>>", &file_count);
+    file_count
 }
