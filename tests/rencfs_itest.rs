@@ -1,5 +1,5 @@
-#[cfg(target_os = "linux")]
 mod mount_setup;
+#[cfg(target_os = "linux")]
 use mount_setup::{count_files, TestGuard, DATA_PATH, MOUNT_PATH};
 use std::{
     fs::{self, File},
