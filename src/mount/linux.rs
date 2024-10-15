@@ -1084,7 +1084,10 @@ impl Filesystem for EncryptedFsFuse3 {
         }
     }
 
-    type DirEntryStream<'a> = Iter<Skip<DirectoryEntryIterator>> where Self: 'a;
+    type DirEntryStream<'a>
+        = Iter<Skip<DirectoryEntryIterator>>
+    where
+        Self: 'a;
 
     #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn readdir(
@@ -1175,7 +1178,10 @@ impl Filesystem for EncryptedFsFuse3 {
         })
     }
 
-    type DirEntryPlusStream<'a> = Iter<Skip<DirectoryEntryPlusIterator>> where Self: 'a;
+    type DirEntryPlusStream<'a>
+        = Iter<Skip<DirectoryEntryPlusIterator>>
+    where
+        Self: 'a;
 
     #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn readdirplus(

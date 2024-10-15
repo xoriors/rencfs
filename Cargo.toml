@@ -10,7 +10,7 @@ authors = ["Radu Marias <radumarias@gmail.com>"]
 homepage = "https://radumarias.github.io/rencfs"
 repository = "https://github.com/radumarias/rencfs"
 readme = "README.md"
-keywords = ["filesystem", "fuse", "encryption", "system", "security"]
+keywords = ["privacy", "filesystem", "encryption", "security", "cryptography"]
 categories = ["cryptography", "filesystem"]
 documentation = "https://docs.rs/rencfs"
 exclude = [".github/"]
@@ -62,7 +62,7 @@ shush-rs = "0.1.10"
 fuse3 = { version = "0.7.2", features = ["tokio-runtime", "unprivileged"] }
 
 [profile.release]
-panic = "abort"
+#panic = "abort"
 # Treat warnings as errors in release builds
 rustflags = ["-Dwarnings"]
 lto = true

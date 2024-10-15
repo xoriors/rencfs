@@ -43,3 +43,4 @@ cargo clippy --all-targets --release --target x86_64-unknown-linux-gnu -- \
 cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
 cargo doc --workspace --all-features --no-deps --target x86_64-unknown-linux-gnu
 cd ..
+

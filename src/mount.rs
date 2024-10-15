@@ -69,13 +69,11 @@ pub(crate) trait MountHandleInner: Future<Output = io::Result<()>> {
 /// **`data_dir`** the directory where the encrypted files will be stored  
 /// **`password_provider`** the password provider  
 /// **`cipher`** The encryption algorithm to use.
-
 /// Currently, it supports these ciphers [`Cipher`]
 ///
 /// **`allow_root`** allow root to access the file system  
 /// **`allow_other`** allow other users to access the file system  
 /// **`read_only`** Set FUSE filesystem read-only mount option, default is disabled.
-///
 #[must_use]
 #[allow(clippy::fn_params_excessive_bools)]
 pub fn create_mount_point(

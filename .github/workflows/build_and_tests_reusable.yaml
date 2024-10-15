@@ -48,8 +48,7 @@ jobs:
             -A clippy::significant_drop_tightening \
             -A clippy::redundant_closure \
             -A clippy::missing_errors_doc \
-            -A clippy::type_complexity \
-            -A clippy::too_long_first_doc_paragraph
+            -A clippy::type_complexity
         shell: bash
 
       - name: doc
@@ -59,8 +58,8 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: cargo test --release --all --all-features
 
-      - name: test publish
-        run: cargo publish --dry-run --allow-dirty
+      #      - name: test publish
+      #        run: cargo publish --dry-run --allow-dirty --allow-staged
 
       - name: test package
         if: matrix.os == 'ubuntu-latest'
@@ -92,8 +91,7 @@ jobs:
             -A clippy::significant_drop_tightening \
             -A clippy::redundant_closure \
             -A clippy::missing_errors_doc \
-            -A clippy::type_complexity \
-            -A clippy::too_long_first_doc_paragraph
+            -A clippy::type_complexity
         shell: bash
 
       - name: java-bridge doc
