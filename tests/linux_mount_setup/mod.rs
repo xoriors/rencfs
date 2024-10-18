@@ -1,4 +1,4 @@
-#[cfg(target_os = "linux")]
+#![cfg(target_os = "linux")]
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
