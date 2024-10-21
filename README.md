@@ -28,7 +28,7 @@ You can use it as CLI or as a library to build your custom FUSE implementation o
 
 # Motivation
 
-Create a `simple`, `performant`, `modular` and `ergonomic` yet `very secure` `encrypted filesystem` to protect your `privacy` which is also `open source` and is correctly and safely using `well known audited` crates as `cryptographic primitives`.
+Create a `simple,` `performant,` `modular` and `ergonomic` yet `very secure` `encrypted filesystem` to protect your `privacy`, which is also `open source` and is correctly and safely using `well-known audited` crates as `cryptographic primitives.`
 
 # A short story
 
@@ -44,7 +44,7 @@ It was [crate of the week](https://this-week-in-rust.org/blog/2024/08/14/this-we
 
 # Talks
 
-- [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://miro.com/app/board/uXjVLa80zcg=/?share_link_id=481504844045)
+- [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://startech-rd.io/hitchhikers-guide-to/)
 - [Basics of cryptography and FUSE for building a filesystem in Rust](https://miro.com/app/board/uXjVLccxeCE=/?share_link_id=342563218323)
 
 # Key features
@@ -53,9 +53,9 @@ Some of these are still being worked on and marked with `[WIP]`.
 
 - `Security` using well-known audited `AEAD` cryptography primitives;
 - `[WIP]` `Data integrity`, data is written with `WAL` to ensure integrity even on crash or power loss;
-- `[WIP]` Hide all info for enhanced `privacy`, all `metadata`, `content`, `file name`, `file size`, `*time` fields, `files count`, directory structure are encrypted;
-- `Safely` manage `credentials` in memory with `mlock(2)`, `mprotect`, `zeroize` and `expiry` to mitigate cold boot attacks;
-- `Memory safety`, `performance` and `optimized` for `concurrency` with Rust;
+- `[WIP]` Hide all info for enhanced `privacy`, all `metadata`, `content`, `file name`, `file size`, `*time` fields, `files count`, and directory structure is encrypted;
+- `Safely` manage `credentials` in memory with `mlock(2)`, `mprotect`, `zeroize`, and `expiry` to mitigate cold boot attacks;
+- `Memory safety`, `performance`, and `optimized` for `concurrency` with Rust;
 - Simplicity;
 - Encryption key generated from password;
 - Password saved in OS's `keyring`;
@@ -67,7 +67,7 @@ Some of these are still being worked on and marked with `[WIP]`.
 - Fully `concurrent` for all operations;
 - `[WIP]` Handle `long file names`;
 - `[WIP]` Abstraction layer for `Rust File` and `fs` API to use it as lib to `switch to using encrypted files` by just `changing the use statements`;
-- `[WIP]` Abstraction layer to `access the storage` with implementation for desktop, wasm, Android, iOS and ability to write your own implementation.
+- `[WIP]` Abstraction layer to `access the storage` with implementations for desktop, Wasm, Android, and iOS and the ability to write your own implementation.
 
 # Functionality
 
@@ -75,8 +75,8 @@ Some of these are still being worked on and marked with `[WIP]`.
 
 - It keeps all `encrypted` data and `master encryption key` in a dedicated directory with files structured on `inodes` (with
   metadata info), files for binary content, and directories with files/directories entries. All data, metadata, and filenames
-  are encrypted. For new files, it generates unique inodes in a multi-instance run and offline mode.
-- The password is collected from CLI and saved in the OS's `keyring` while the app is running. This is because, for security concerns, we
+  are encrypted. It generates unique inodes for new files in a multi-instance run and offline mode.
+- The password is collected from CLI and saved in the OS's `keyring` while the app runs. This is because, for security concerns, we
   clear the password from memory on inactivity, and we derive it again from the password just when needed.
 - Master encryption key is also encrypted with another key derived from the password. This gives the ability to change
   the
@@ -228,6 +228,8 @@ You can install the encrypted file system binary using the following command
 ```bash
 cargo install rencfs
 ```
+
+### Usage
 
 A basic example of how to use the encrypted file system is shown below
 
@@ -469,7 +471,7 @@ on most CPUs via AES-NI. However, where hardware acceleration is not available, 
 - Wear-out of a single (key, nonce) pair:
     - `AES-GCM`: Messages must be less than `2^32 – 2` blocks (a.k.a. `2^36 – 32 bytes`, a.k.a. `2^39 – 256 bits`), that's
       roughly `64GB`.
-      This also makes the security analysis of `AES-GCM` with long nonces complicated, since the hashed nonce doesn’t
+      This also makes the security analysis of `AES-GCM` with long nonces complicated since the hashed nonce doesn’t
       start
       with the lower `4 bytes` set to `00 00 00 02`.
     - `ChaCha20-Poly1305`: `ChaCha` has an internal counter (`32 bits` in the standardized IETF variant, `64 bits` in the
@@ -498,7 +500,7 @@ files. However, the content of the file could be bigger, and we read until the o
       of children as files in it.
       So we could see how many children a directory has.
       However, we can't identify that actual directory name;
-      we can just see its inode number (internal representation like an ID for each file), and we cannot see the actual
+      We can just see its inode number (internal representation like an ID for each file), but we cannot see the actual
       filenames of the directory or children.
       Also, we cannot identify which file content corresponds to a directory child
     - Each file content is saved in a separate file, so we can see the size of the encrypted content but not the
@@ -512,7 +514,7 @@ files. However, the content of the file could be bigger, and we read until the o
 - **Cold boot attacks**: to reduce the risk of this, we keep the encryption key in memory just as long as we really
   need it to encrypt/decrypt data, and we are zeroing it after that. We also remove it from memory after a period of
   inactivity
-- Please note this project was not audited by any security expert. It's built with security in mind and tries to
+- Please note that no security expert audited this project. It's built with security in mind and tries to
   follow all the best practices, but it's not guaranteed to be secure
 - **Also, please back up your data; the project is still in development, and there might be bugs that can lead to data
   loss**
@@ -521,9 +523,9 @@ files. However, the content of the file could be bigger, and we read until the o
 
 - Please note that this project doesn't try to reinvent the wheel or be better than already proven implementations
 - This project doesn't want to be a replacement in any way for already proven file encryption solutions. If you really
-  want close to bulletproof solutions, then maybe this is not the ideal one for you. But is trying to offer a simple use
+  want to be close to bulletproof solutions, then maybe this is not the ideal one for you. But is trying to offer a simple use
   of an encryption solution that should be used, taking into consideration all the security concerns from above
-- It started as a learning project of Rust programming language, and I feel like keep building more on it
+- It started as a learning project of Rust programming language, and I feel like I keep building more on it
 - It's a fairly simple and standard implementation that tries to respect all security standards and correctly use secure and robust
   primitives so that it can be extended from this. Indeed, it doesn't have the maturity yet to "fight" other well-known
   implementations.
@@ -532,7 +534,7 @@ files. However, the content of the file could be bigger, and we read until the o
 
 # Contribute
 
-Feel free to fork it, change and use it in any way that you want. If you build something interesting and feel like sharing 
+Feel free to fork it, change and use it however you want. If you build something interesting and feel like sharing 
 pull requests are always appreciated.
 
 ## How to contribute

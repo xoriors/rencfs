@@ -62,7 +62,7 @@ shush-rs = "0.1.10"
 fuse3 = { version = "0.7.2", features = ["tokio-runtime", "unprivileged"] }
 
 [profile.release]
-panic = "abort"
+#panic = "abort"
 # Treat warnings as errors in release builds
 rustflags = ["-Dwarnings"]
 lto = true

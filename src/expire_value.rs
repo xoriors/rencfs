@@ -102,54 +102,53 @@ impl<T: Send + Sync + 'static, E: Error + Send + Sync + 'static, P: ValueProvide
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::convert::Infallible;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
-    use tokio::sync::Mutex;
-
-    use super::*;
-
     struct TestProvider {
-        called: Arc<Mutex<u8>>,
+        called: Arc<AtomicUsize>,
     }
     #[async_trait]
     impl ValueProvider<String, Infallible> for TestProvider {
         async fn provide(&self) -> Result<String, Infallible> {
-            *self.called.lock().await += 1;
+            self.called.fetch_add(1, Ordering::SeqCst);
             Ok("test".to_string())
         }
     }
 
     #[tokio::test]
     async fn test_expire_value() {
-        let called = Arc::new(Mutex::default());
+        let called = Arc::new(AtomicUsize::new(0));
         let provider = TestProvider {
             called: called.clone(),
         };
 
         let expire_value = ExpireValue::new(provider, Duration::from_secs(1));
         let v = expire_value.get().await.unwrap();
-        // ensure out value is correct
+        // ensure our value is correct
         assert_eq!(*v, "test");
         // ensure the provider wa called
-        assert_eq!(*called.lock().await, 1);
+        assert_eq!(called.load(Ordering::SeqCst), 1);
 
         // wait for cache to expire
         tokio::time::sleep(Duration::from_secs(2)).await;
         // ensure it's taken from Weak ref
         let _ = expire_value.get().await.unwrap();
-        assert_eq!(*called.lock().await, 1);
+        assert_eq!(called.load(Ordering::SeqCst), 1);
 
         // drop ref so now provider should be called again
         drop(v);
         let _ = expire_value.get().await.unwrap();
         // ensure provider was called again
-        assert_eq!(*called.lock().await, 2);
+        assert_eq!(called.load(Ordering::SeqCst), 2);
 
         // clear cache
         expire_value.clear().await;
         let _ = expire_value.get().await.unwrap();
         // ensure provider was called again
-        assert_eq!(*called.lock().await, 3);
+        let called = called.clone();
+        assert_eq!(called.load(Ordering::SeqCst), 3)
     }
 }

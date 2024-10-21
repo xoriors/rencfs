@@ -64,6 +64,7 @@ static RT: LazyLock<Runtime> = LazyLock::new(|| {
         .unwrap()
 });
 
+#[allow(clippy::type_complexity)]
 static HANDLES: LazyLock<Mutex<Option<BTreeMap<u32, (String, MountHandle)>>>> =
     LazyLock::new(|| Mutex::new(Some(BTreeMap::new())));
 
