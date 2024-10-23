@@ -31,7 +31,7 @@ jobs:
           cargo install cargo-generate-rpm          
 
       - name: run cargo aur and generate-rpm
-        if: matrix.os == 'ubuntu-latest'
+        if: inputs.upload_artifacts
         run: |
           cargo aur
           cargo generate-rpm
