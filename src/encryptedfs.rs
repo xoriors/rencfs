@@ -58,8 +58,8 @@ fn spawn_runtime() -> Runtime {
 static DIR_ENTRIES_RT: LazyLock<Runtime> = LazyLock::new(spawn_runtime);
 static NOD_RT: LazyLock<Runtime> = LazyLock::new(spawn_runtime);
 
-static INITIALIZED: OnceLock<FsResult<bool>> = OnceLock::new();
-static INSTANCE: OnceLock<Arc<EncryptedFs>> = OnceLock::new();
+pub static INITIALIZED: OnceLock<FsResult<bool>> = OnceLock::new();
+pub static INSTANCE: OnceLock<Arc<EncryptedFs>> = OnceLock::new();
 
 /// File attributes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

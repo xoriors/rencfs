@@ -95,6 +95,28 @@ Some of these are still being worked on, marked with `[WIP]`.
 
 For detailed description of the various sequence flows please look into [Flows](docs/flows.md). 
 
+# OpenOptions API
+
+| #  | Read | Write | Append | Truncate | Create | Create New | Error condition                 | Behaviour                                        |
+|----|------|-------|--------|----------|--------|------------|-----------------------|--------------------------------------------------|
+| 1  | _    | FALSE | FALSE  | FALSE    | FALSE  | FALSE      | InvalidInput          | Open existing file only if read is true          |
+| 2  | _    | FALSE | FALSE  | FALSE    | TRUE   | FALSE      | ReadOnly | No possible output                              |
+| 3  | _    | FALSE | FALSE  | TRUE     | FALSE  | FALSE      | ReadOnly | No possible output                              |
+| 4  | _    | FALSE | FALSE  | TRUE     | TRUE   | FALSE      | ReadOnly | No possible output                              |
+| 5  | _    | _     | TRUE   | FALSE    | FALSE  | FALSE      | NotFound        | Append mode                                      |
+| 6  | _    | _     | TRUE   | FALSE    | TRUE   | FALSE      |                       | Open file with append, or create new file        |
+| 7  | _    | _     | TRUE   | TRUE     | FALSE  | FALSE      | Append and truncate cannot be true | No possible output                   |
+| 8  | _    | _     | TRUE   | TRUE     | TRUE   | FALSE      | Append and truncate cannot be true | No possible output                   |
+| 9  | _    | TRUE  | FALSE  | FALSE    | FALSE  | FALSE      |                       | Open file in write mode                          |
+| 10 | _    | TRUE  | FALSE  | FALSE    | TRUE   | FALSE      |                       | Create new file                                  |
+| 11 | _    | TRUE  | FALSE  | TRUE     | FALSE  | FALSE      |                       | Open file in write mode with cursor to 0         |
+| 12 | _    | TRUE  | FALSE  | TRUE     | TRUE   | FALSE      |                       | Create or open a file                            |
+| 13 | _    | FALSE | FALSE  | _        | _      | TRUE       | No write access | No possible output                              |
+| 14 | _    | _     | TRUE   | _        | _      | TRUE       | AlreadyExists   | Create new file                                  |
+| 15 | _    | TRUE  | FALSE  | _        | _      | TRUE       | AlreadyExists   | Create new file                                  |
+
+
+
 # Stack
 
 - it's fully async built upon [tokio](https://crates.io/crates/tokio) and [fuse3](https://crates.io/crates/fuse3)

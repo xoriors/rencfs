@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
-    CopyFileRangeReq, CreateFileAttr, EncryptedFs, FileType, PasswordProvider,
+    CopyFileRangeReq, CreateFileAttr, EncryptedFs, FileType, FsError, FsResult, PasswordProvider,
 };
 
 #[allow(dead_code)]
@@ -38,6 +38,7 @@ pub static TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 
 #[allow(dead_code)]
 pub static SETUP_RESULT: ThreadLocal<Mutex<Option<SetupResult>>> = ThreadLocal::new();
+pub static SETUP_INIT_RESULT: LazyLock<Mutex<Option<Arc<EncryptedFs>>>> = LazyLock::new(|| Mutex::new(None));
 
 #[allow(dead_code)]
 pub const fn create_attr(kind: FileType) -> CreateFileAttr {
@@ -96,6 +97,31 @@ async fn setup(setup: TestSetup) -> SetupResult {
 }
 
 #[allow(dead_code)]
+async fn init_setup(setup: TestSetup) -> SetupResult {
+    let path = TESTS_DATA_DIR.join(setup.key);
+    let read_only = setup.read_only;
+    let data_dir_str = path.to_str().unwrap();
+    let _ = fs::remove_dir_all(data_dir_str);
+    let _ = fs::create_dir_all(data_dir_str);
+
+    EncryptedFs::initialize(
+        Path::new(data_dir_str).to_path_buf(),
+        Box::new(PasswordProviderImpl {}),
+        Cipher::ChaCha20Poly1305,
+        read_only,
+    )
+    .await
+    .unwrap();
+
+    let fs = init_get_fs().await;
+
+    SetupResult {
+        fs: Some(fs),
+        setup,
+    }
+}
+
+#[allow(dead_code)]
 async fn teardown() -> Result<(), io::Error> {
     let s = SETUP_RESULT.get_or(|| Mutex::new(None));
     let s = s.lock().await;
@@ -116,6 +142,28 @@ where
         let s = SETUP_RESULT.get_or(|| Mutex::new(None));
         let mut s = s.lock().await;
         *s = Some(setup(init).await);
+    }
+    t.await;
+    teardown().await.unwrap();
+}
+
+#[allow(dead_code)]
+#[allow(clippy::future_not_send)]
+pub async fn init_run_test<T>(init: TestSetup, t: T)
+where
+    T: Future,
+{
+    {
+        dbg!("test1");
+        let mut s = SETUP_INIT_RESULT.lock().await;
+        dbg!("test2");
+        let fs = init_setup(init).await.fs.unwrap();
+        dbg!("test3");
+        if s.is_none() {
+            dbg!("test4");
+            *s = Some(fs);
+        }
+        dbg!("test5");
     }
     t.await;
     teardown().await.unwrap();
@@ -218,4 +266,14 @@ pub async fn get_fs() -> Arc<EncryptedFs> {
     let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
     let mut fs = fs.lock().await;
     fs.as_mut().unwrap().fs.as_ref().unwrap().clone()
+}
+
+pub async fn init_get_fs() -> Arc<EncryptedFs> {
+    // let mut setup = SETUP_INIT_RESULT.lock().await;
+
+    // if setup.is_none() {
+    //     let fs = EncryptedFs::instance().ok_or(FsError::Other("initialization failed"))?;
+    //     *setup = Some(fs);
+    // }
+    EncryptedFs::instance().ok_or(FsError::Other("initialization failed")).unwrap()
 }

@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
     )
     .await?;
     let fs = EncryptedFs::instance().ok_or(FsError::Other("not initialized"))?;
+    dbg!(fs.exists(1));
 
     let file1 = SecretString::from_str("file1").unwrap();
     let (fh, attr) = fs
@@ -58,6 +59,17 @@ async fn main() -> Result<()> {
 const fn file_attr() -> CreateFileAttr {
     CreateFileAttr {
         kind: FileType::RegularFile,
+        perm: 0o644,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        flags: 0,
+    }
+}
+
+const fn dir_attr() -> CreateFileAttr {
+    CreateFileAttr {
+        kind: FileType::Directory,
         perm: 0o644,
         uid: 0,
         gid: 0,
