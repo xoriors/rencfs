@@ -133,7 +133,10 @@ pub struct File {
 impl std::fmt::Debug for File {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("File")
-            .field("context", &self.context)
+            .field("ino", &self.context.ino)
+            .field("read", &(self.context.fh_read != 0))
+            .field("write", &(self.context.fh_write != 0))
+            .field("pos", &self.context.pos)
             .finish()
     }
 }

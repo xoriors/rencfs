@@ -27,7 +27,6 @@ async fn main() -> anyhow::Result<()> {
             .create(true)
             .open(FILENAME)
             .await?;
-
         opened_file1.write_all(b"Hello world\n").await?;
         opened_file1.write_all(b"This is the second line").await?;
         opened_file1.flush().await?;
