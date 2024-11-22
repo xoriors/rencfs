@@ -7,6 +7,7 @@ use tracing_test::traced_test;
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::write_all_bytes_to_fs;
+use crate::encryptedfs::EncryptedFilesystem;
 use crate::encryptedfs::INODES_DIR;
 use crate::encryptedfs::KEY_ENC_FILENAME;
 use crate::encryptedfs::KEY_SALT_FILENAME;

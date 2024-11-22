@@ -30,6 +30,7 @@ use tracing::{debug, error, instrument, trace, warn};
 use tracing::{info, Level};
 
 use crate::crypto::Cipher;
+use crate::encryptedfs::EncryptedFilesystem;
 use crate::encryptedfs::{
     CopyFileRangeReq, CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult,
     PasswordProvider, SetFileAttr,

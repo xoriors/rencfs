@@ -11,6 +11,7 @@ use thread_local::ThreadLocal;
 use tokio::sync::Mutex;
 
 use crate::crypto::Cipher;
+use crate::encryptedfs::EncryptedFilesystem;
 use crate::encryptedfs::{
     CopyFileRangeReq, CreateFileAttr, EncryptedFs, FileType, PasswordProvider,
 };

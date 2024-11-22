@@ -9,6 +9,8 @@ use rand::Rng;
 use shush_rs::SecretString;
 
 #[allow(unused_imports)]
+use crate::encryptedfs::EncryptedFilesystem;
+#[allow(unused_imports)]
 use crate::encryptedfs::{DirectoryEntry, DirectoryEntryPlus, FileType, ROOT_INODE};
 #[allow(unused_imports)]
 use crate::test_common::{create_attr, get_fs};

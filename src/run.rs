@@ -17,6 +17,7 @@ use tracing::{error, info, warn, Level};
 
 use crate::keyring;
 use rencfs::crypto::Cipher;
+use rencfs::encryptedfs::EncryptedFilesystem;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
 use rencfs::{log, mount};

@@ -7,7 +7,9 @@ use shush_rs::SecretString;
 
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::write_all_string_to_fs;
-use rencfs::encryptedfs::{CreateFileAttr, EncryptedFs, FileType, PasswordProvider};
+use rencfs::encryptedfs::{
+    CreateFileAttr, EncryptedFilesystem, EncryptedFs, FileType, PasswordProvider,
+};
 
 const ROOT_INODE: u64 = 1;
 

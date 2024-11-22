@@ -576,92 +576,129 @@ pub struct EncryptedFs {
     read_only: bool,
 }
 
-impl EncryptedFs {
-    #[allow(clippy::missing_panics_doc)]
-    #[allow(clippy::missing_errors_doc)]
-    pub async fn new(
-        data_dir: PathBuf,
-        password_provider: Box<dyn PasswordProvider>,
-        cipher: Cipher,
-        read_only: bool,
-    ) -> FsResult<Arc<Self>> {
-        let key_provider = KeyProvider {
-            key_path: data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
-            salt_path: data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME),
-            password_provider,
-            cipher,
-        };
-        let key = ExpireValue::new(key_provider, Duration::from_secs(10 * 60));
-
-        ensure_structure_created(&data_dir.clone()).await?;
-        key.get().await?; // this will check the password
-
-        let fs = Self {
-            data_dir,
-            write_handles: RwLock::new(HashMap::new()),
-            read_handles: RwLock::new(HashMap::new()),
-            current_handle: AtomicU64::new(1),
-            cipher,
-            opened_files_for_read: RwLock::new(HashMap::new()),
-            opened_files_for_write: RwLock::new(HashMap::new()),
-            serialize_inode_locks: Arc::new(ArcHashMap::default()),
-            serialize_update_inode_locks: ArcHashMap::default(),
-            serialize_dir_entries_ls_locks: Arc::new(ArcHashMap::default()),
-            serialize_dir_entries_hash_locks: Arc::new(ArcHashMap::default()),
-            key,
-            self_weak: std::sync::Mutex::new(None),
-            read_write_locks: ArcHashMap::default(),
-            // todo: take duration from param
-            attr_cache: ExpireValue::new(AttrCacheProvider {}, Duration::from_secs(10 * 60)),
-            // todo: take duration from param
-            dir_entries_name_cache: ExpireValue::new(
-                DirEntryNameCacheProvider {},
-                Duration::from_secs(10 * 60),
-            ),
-            // todo: take duration from param
-            dir_entries_meta_cache: ExpireValue::new(
-                DirEntryMetaCacheProvider {},
-                Duration::from_secs(10 * 60),
-            ),
-            sizes_write: Mutex::default(),
-            sizes_read: Mutex::default(),
-            requested_read: Mutex::default(),
-            read_only,
-        };
-
-        let arc = Arc::new(fs);
-        arc.self_weak
-            .lock()
-            .expect("cannot obtain lock")
-            .replace(Arc::downgrade(&arc));
-
-        arc.ensure_root_exists().await?;
-
-        Ok(arc)
-    }
-
-    pub fn exists(&self, ino: u64) -> bool {
-        self.ino_file(ino).is_file()
-    }
-
-    pub fn is_dir(&self, ino: u64) -> bool {
-        self.contents_path(ino).is_dir()
-    }
-
-    pub fn is_file(&self, ino: u64) -> bool {
-        self.contents_path(ino).is_file()
-    }
-
-    #[allow(dead_code)]
-    async fn is_read_only(&self) -> bool {
-        self.read_only
-    }
-
+#[async_trait]
+pub trait EncryptedFilesystem: Send + Sync {
+    fn exists(&self, ino: u64) -> bool;
+    fn is_dir(&self, ino: u64) -> bool;
+    fn is_file(&self, ino: u64) -> bool;
     /// Create a new node in the filesystem
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
     #[allow(clippy::too_many_lines)]
-    pub async fn create(
+    async fn create(
+        &self,
+        parent: u64,
+        name: &SecretString,
+        create_attr: CreateFileAttr,
+        read: bool,
+        write: bool,
+    ) -> FsResult<(u64, FileAttr)>;
+    async fn find_by_name(&self, parent: u64, name: &SecretString) -> FsResult<Option<FileAttr>>;
+    /// Count children of a directory. This **EXCLUDES** "." and "..".
+    #[allow(clippy::missing_errors_doc)]
+    fn len(&self, ino: u64) -> FsResult<usize>;
+    /// Delete a directory
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::missing_errors_doc)]
+    async fn remove_dir(&self, parent: u64, name: &SecretString) -> FsResult<()>;
+    /// Delete a file
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::missing_errors_doc)]
+    async fn remove_file(&self, parent: u64, name: &SecretString) -> FsResult<()>;
+    fn exists_by_name(&self, parent: u64, name: &SecretString) -> FsResult<bool>;
+    async fn read_dir(&self, ino: u64) -> FsResult<DirectoryEntryIterator>;
+    /// Like [`EncryptedFs::read_dir`] but with [`FileAttr`] so we don't need to query again for those.    
+    async fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator>;
+    /// Get metadata
+    #[allow(clippy::missing_errors_doc)]
+    async fn get_attr(&self, ino: u64) -> FsResult<FileAttr>;
+    /// Set metadata
+    async fn set_attr(&self, ino: u64, set_attr: SetFileAttr) -> FsResult<()>;
+    /// Read the contents from an `offset`.
+    ///
+    /// If we try to read outside of file size, we return zero bytes.
+    /// If the file is not opened for read, it will return an error of type [FsError::InvalidFileHandle].
+    #[allow(clippy::missing_errors_doc)]
+    #[allow(clippy::cast_possible_truncation)]
+    async fn read(&self, ino: u64, offset: u64, buf: &mut [u8], handle: u64) -> FsResult<usize>;
+    async fn release(&self, handle: u64) -> FsResult<()>;
+    /// Check if a file is opened for reading with this handle.    
+    async fn is_read_handle(&self, fh: u64) -> bool;
+    /// Check if a file is opened for writing with this handle.    
+    async fn is_write_handle(&self, fh: u64) -> bool;
+    /// Writes the contents of `buf` to the file with `ino` starting at `offset`.
+    ///
+    /// If we write outside file size, we fill up with zeros until the `offset`.
+    /// If the file is not opened for writing,
+    /// it will return an error of type [FsError::InvalidFileHandle].    
+    async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize>;
+    /// Flush the data to the underlying storage.
+    #[allow(clippy::missing_panics_doc)]
+    async fn flush(&self, handle: u64) -> FsResult<()>;
+    /// Helpful when we want to copy just some portions of the file.    
+    async fn copy_file_range(
+        &self,
+        file_range_req: &CopyFileRangeReq,
+        size: usize,
+    ) -> FsResult<usize>;
+    /// Open a file. We can open multiple times for read but only one to write at a time.
+    #[allow(clippy::missing_panics_doc)]
+    async fn open(&self, ino: u64, read: bool, write: bool) -> FsResult<u64>;
+    /// Truncates or extends the underlying file, updating the size of this file to become size.
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::too_many_lines)]
+    async fn set_len(&self, ino: u64, size: u64) -> FsResult<()>;
+    async fn rename(
+        &self,
+        parent: u64,
+        name: &SecretString,
+        new_parent: u64,
+        new_name: &SecretString,
+    ) -> FsResult<()>;
+    /// Create a crypto writer using internal encryption info.
+    async fn create_write<W: CryptoInnerWriter + Seek + Send + Sync + 'static>(
+        &self,
+        file: W,
+    ) -> FsResult<Box<dyn CryptoWrite<W>>>;
+    /// Create a crypto writer with seek using internal encryption info.
+    async fn create_write_seek<W: Write + Seek + Read + Send + Sync + 'static>(
+        &self,
+        file: W,
+    ) -> FsResult<Box<dyn CryptoWriteSeek<W>>>;
+    /// Create a crypto reader using internal encryption info.
+    async fn create_read<R: Read + Send + Sync + 'static>(
+        &self,
+        reader: R,
+    ) -> FsResult<Box<dyn CryptoRead<R>>>;
+    /// Create a crypto reader with seek using internal encryption info.
+    async fn create_read_seek<R: Read + Seek + Send + Sync + 'static>(
+        &self,
+        reader: R,
+    ) -> FsResult<Box<dyn CryptoReadSeek<R>>>;
+    /// Change the password of the filesystem used to access the encryption key.
+    async fn passwd(
+        data_dir: &Path,
+        old_password: SecretString,
+        new_password: SecretString,
+        cipher: Cipher,
+    ) -> FsResult<()>;
+}
+
+#[async_trait]
+impl EncryptedFilesystem for EncryptedFs {
+    fn exists(&self, ino: u64) -> bool {
+        self.ino_file(ino).is_file()
+    }
+
+    fn is_dir(&self, ino: u64) -> bool {
+        self.contents_path(ino).is_dir()
+    }
+
+    fn is_file(&self, ino: u64) -> bool {
+        self.contents_path(ino).is_file()
+    }
+
+    async fn create(
         &self,
         parent: u64,
         name: &SecretString,
@@ -820,11 +857,7 @@ impl EncryptedFs {
 
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
-    pub async fn find_by_name(
-        &self,
-        parent: u64,
-        name: &SecretString,
-    ) -> FsResult<Option<FileAttr>> {
+    async fn find_by_name(&self, parent: u64, name: &SecretString) -> FsResult<Option<FileAttr>> {
         if !self.exists(parent) {
             return Err(FsError::InodeNotFound);
         }
@@ -851,9 +884,7 @@ impl EncryptedFs {
         self.get_inode_from_cache_or_storage(ino).await.map(Some)
     }
 
-    /// Count children of a directory. This **EXCLUDES** "." and "..".
-    #[allow(clippy::missing_errors_doc)]
-    pub fn len(&self, ino: u64) -> FsResult<usize> {
+    fn len(&self, ino: u64) -> FsResult<usize> {
         if !self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
@@ -868,10 +899,7 @@ impl EncryptedFs {
         Ok(count)
     }
 
-    /// Delete a directory
-    #[allow(clippy::missing_panics_doc)]
-    #[allow(clippy::missing_errors_doc)]
-    pub async fn remove_dir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
+    async fn remove_dir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
@@ -945,10 +973,7 @@ impl EncryptedFs {
             .await?
     }
 
-    /// Delete a file
-    #[allow(clippy::missing_panics_doc)]
-    #[allow(clippy::missing_errors_doc)]
-    pub async fn remove_file(&self, parent: u64, name: &SecretString) -> FsResult<()> {
+    async fn remove_file(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
@@ -1019,7 +1044,7 @@ impl EncryptedFs {
 
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
-    pub fn exists_by_name(&self, parent: u64, name: &SecretString) -> FsResult<bool> {
+    fn exists_by_name(&self, parent: u64, name: &SecretString) -> FsResult<bool> {
         if !self.exists(parent) {
             return Err(FsError::InodeNotFound);
         }
@@ -1032,7 +1057,7 @@ impl EncryptedFs {
     }
 
     #[allow(clippy::missing_errors_doc)]
-    pub async fn read_dir(&self, ino: u64) -> FsResult<DirectoryEntryIterator> {
+    async fn read_dir(&self, ino: u64) -> FsResult<DirectoryEntryIterator> {
         if !self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
@@ -1047,8 +1072,7 @@ impl EncryptedFs {
         Ok(self.create_directory_entry_iterator(iter).await)
     }
 
-    /// Like [`EncryptedFs::read_dir`] but with [`FileAttr`] so we don't need to query again for those.
-    pub async fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
+    async fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
         if !self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
@@ -1061,6 +1085,835 @@ impl EncryptedFs {
         let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
         self.set_attr(ino, set_attr).await?;
         Ok(self.create_directory_entry_plus_iterator(iter).await)
+    }
+
+    async fn get_attr(&self, ino: u64) -> FsResult<FileAttr> {
+        let mut attr = self.get_inode_from_cache_or_storage(ino).await?;
+
+        // merge time info with any open read handles
+        let open_reads = { self.opened_files_for_read.read().await.contains_key(&ino) };
+        if open_reads {
+            let fhs = self.opened_files_for_read.read().await.get(&ino).cloned();
+            if let Some(fhs) = fhs {
+                for fh in fhs {
+                    let lock = self.read_handles.read().await;
+                    if let Some(ctx) = lock.get(&fh) {
+                        let set_atr: SetFileAttr = ctx.lock().await.attr.clone().into();
+                        merge_attr(&mut attr, &set_atr, false);
+                    }
+                }
+            }
+        }
+
+        // merge time info and size with any open write handles
+        let open_writes = { self.opened_files_for_write.read().await.contains_key(&ino) };
+        if open_writes {
+            let fh = self.opened_files_for_write.read().await.get(&ino).copied();
+            if let Some(fh) = fh {
+                let lock = self.write_handles.read().await;
+                if let Some(ctx) = lock.get(&fh) {
+                    let ctx = ctx.lock().await;
+                    merge_attr(&mut attr, &ctx.attr.clone().into(), false);
+                }
+            }
+        }
+
+        Ok(attr)
+    }
+
+    async fn set_attr(&self, ino: u64, set_attr: SetFileAttr) -> FsResult<()> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
+        self.set_attr2(ino, set_attr, false).await
+    }
+
+    #[instrument(skip(self, buf), fields(len = %buf.len()), ret(level = Level::DEBUG))]
+    async fn read(&self, ino: u64, offset: u64, buf: &mut [u8], handle: u64) -> FsResult<usize> {
+        if !self.exists(ino) {
+            return Err(FsError::InodeNotFound);
+        }
+        if !self.is_file(ino) {
+            return Err(FsError::InvalidInodeType);
+        }
+        if !self.read_handles.read().await.contains_key(&handle) {
+            return Err(FsError::InvalidFileHandle);
+        }
+
+        let _size = self.get_attr(ino).await?.size;
+
+        let lock = self
+            .read_write_locks
+            .get_or_insert_with(ino, || RwLock::new(false));
+        let _read_guard = lock.read().await;
+
+        let guard = self.read_handles.read().await;
+        let mut ctx = guard.get(&handle).unwrap().lock().await;
+
+        if ctx.ino != ino {
+            return Err(FsError::InvalidFileHandle);
+        }
+        if self.is_dir(ino) {
+            return Err(FsError::InvalidInodeType);
+        }
+        if buf.is_empty() {
+            // no-op
+            return Ok(0);
+        }
+
+        // read data
+        let (_buf, len) = {
+            let reader = ctx.reader.as_mut().unwrap();
+
+            reader.seek(SeekFrom::Start(offset)).map_err(|err| {
+                error!(err = %err, "seeking");
+                err
+            })?;
+            let pos = reader.stream_position().map_err(|err| {
+                error!(err = %err, "getting position");
+                err
+            })?;
+            if pos != offset {
+                // we would need to seek after filesize
+                return Ok(0);
+            }
+            // keep block size to max the cipher can handle
+            #[allow(clippy::cast_possible_truncation)]
+            let buf = if offset + buf.len() as u64 > self.cipher.max_plaintext_len() as u64 {
+                warn!("reading more than max block size, truncating");
+                buf.split_at_mut(self.cipher.max_plaintext_len() - offset as usize)
+                    .0
+            } else {
+                buf
+            };
+            let len = stream_util::read(reader, buf).map_err(|err| {
+                error!(err = %err, "reading");
+                err
+            })?;
+            (buf, len)
+        };
+
+        ctx.attr.atime = SystemTime::now();
+        drop(ctx);
+
+        // self.sizes_read
+        //     .lock()
+        //     .await
+        //     .get_mut(&ino)
+        //     .unwrap()
+        //     .fetch_add(len as u64, Ordering::SeqCst);
+        // self.requested_read
+        //     .lock()
+        //     .await
+        //     .get_mut(&ino)
+        //     .unwrap()
+        //     .fetch_add(buf.len() as u64, Ordering::SeqCst);
+
+        // if buf.len() != len {
+        //     error!(
+        //         "size mismatch in read(), size {size} offset {offset} buf_len {} len {len}",
+        //         buf.len()
+        //     );
+        //     let lock = self.write_handles.read().await;
+        //     lock.iter().for_each(|(_, lock2)| {
+        //         call_async(async {
+        //             let ctx = lock2.lock().await;
+        //             if ctx.ino == ino && size != ctx.attr.size {
+        //                 error!("trying to read from a file which is not commited yet, ctx size {} actual size {size}", ctx.attr.size);
+        //             }
+        //         });
+        //     });
+        // }
+
+        Ok(len)
+    }
+
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::too_many_lines)]
+    async fn release(&self, handle: u64) -> FsResult<()> {
+        if handle == 0 {
+            // in the case of directory or if the file was crated
+            // without being opened we don't use a handle
+            return Ok(());
+        }
+        let mut valid_fh = false;
+
+        // read
+        let ctx = { self.read_handles.write().await.remove(&handle) };
+        if let Some(ctx) = ctx {
+            let ctx = ctx.lock().await;
+
+            {
+                let mut opened_files_for_read = self.opened_files_for_read.write().await;
+                opened_files_for_read
+                    .get_mut(&ctx.ino)
+                    .expect("handle is missing")
+                    .remove(&handle);
+                if opened_files_for_read
+                    .get(&ctx.ino)
+                    .expect("handle is missing")
+                    .is_empty()
+                {
+                    opened_files_for_read.remove(&ctx.ino);
+                }
+            }
+
+            // write attr only here to avoid serializing it multiple times while reading
+            // it will merge time fields with existing data because it might got change while we kept the handle
+            let set_attr: SetFileAttr = ctx.attr.clone().into();
+            let ino = ctx.ino;
+            drop(ctx);
+            self.set_attr(ino, set_attr).await?;
+
+            valid_fh = true;
+        }
+
+        // write
+        let ctx = { self.write_handles.write().await.remove(&handle) };
+        if let Some(ctx) = ctx {
+            if self.read_only {
+                return Err(FsError::ReadOnly);
+            }
+            let mut ctx = ctx.lock().await;
+
+            let mut writer = ctx.writer.take().unwrap();
+            let lock = self
+                .read_write_locks
+                .get_or_insert_with(ctx.ino, || RwLock::new(false));
+            let write_guard = lock.write().await;
+            let file = writer.finish()?;
+            file.sync_all()?;
+            File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+            // write attr only here to avoid serializing it multiple times while writing
+            // it will merge time fields with existing data because it might got change while we kept the handle
+            let ino = ctx.ino;
+            let attr = ctx.attr.clone();
+            drop(ctx);
+            self.set_attr(ino, attr.into()).await?;
+            let attr = self.get_attr(ino).await?;
+            {
+                let write_size = self
+                    .sizes_write
+                    .lock()
+                    .await
+                    .get(&ino)
+                    .unwrap()
+                    .load(Ordering::SeqCst);
+                info!("written for {ino} {write_size}");
+                if attr.size != write_size {
+                    error!("size mismatch write {} {}", write_size, attr.size);
+                }
+                let requested_read = self
+                    .requested_read
+                    .lock()
+                    .await
+                    .get(&ino)
+                    .unwrap()
+                    .load(Ordering::SeqCst);
+                let read = self
+                    .sizes_read
+                    .lock()
+                    .await
+                    .get(&ino)
+                    .unwrap()
+                    .load(Ordering::SeqCst);
+                if requested_read != read {
+                    error!(
+                        "size mismatch read, size {} requested {} read {}",
+                        attr.size, requested_read, read
+                    );
+                }
+            }
+            self.sizes_write.lock().await.remove(&ino);
+            self.sizes_read.lock().await.remove(&ino);
+            self.requested_read.lock().await.remove(&ino);
+            drop(write_guard);
+            self.opened_files_for_write.write().await.remove(&ino);
+            self.reset_handles(ino, Some(handle), true).await?;
+
+            valid_fh = true;
+        }
+
+        if !valid_fh {
+            return Err(FsError::InvalidFileHandle);
+        }
+        Ok(())
+    }
+
+    async fn is_read_handle(&self, fh: u64) -> bool {
+        self.read_handles.read().await.contains_key(&fh)
+    }
+
+    async fn is_write_handle(&self, fh: u64) -> bool {
+        self.write_handles.read().await.contains_key(&fh)
+    }
+
+    #[instrument(skip(self, buf), fields(len = %buf.len()), ret(level = Level::DEBUG))]
+    async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
+        if !self.exists(ino) {
+            return Err(FsError::InodeNotFound);
+        }
+        if !self.is_file(ino) {
+            return Err(FsError::InvalidInodeType);
+        }
+        {
+            if !self.write_handles.read().await.contains_key(&handle) {
+                return Err(FsError::InvalidFileHandle);
+            }
+        }
+        {
+            let guard = self.write_handles.read().await;
+            let ctx = guard.get(&handle).unwrap().lock().await;
+            if ctx.ino != ino {
+                return Err(FsError::InvalidFileHandle);
+            }
+        }
+        if buf.is_empty() {
+            // no-op
+            return Ok(0);
+        }
+
+        let lock = self
+            .read_write_locks
+            .get_or_insert_with(ino, || RwLock::new(false));
+        let write_guard = lock.write().await;
+
+        let guard = self.write_handles.read().await;
+        let mut ctx = guard.get(&handle).unwrap().lock().await;
+
+        // write new data
+        let (pos, len) = {
+            if offset > self.cipher.max_plaintext_len() as u64 {
+                return Err(FsError::MaxFilesizeExceeded(
+                    self.cipher.max_plaintext_len(),
+                ));
+            }
+            let writer = ctx.writer.as_mut().unwrap();
+            let pos = writer.seek(SeekFrom::Start(offset)).map_err(|err| {
+                error!(err = %err, "seeking");
+                err
+            })?;
+            if offset != pos {
+                // we could not seek to the desired position
+                return Ok(0);
+            }
+            // keep block size to max the cipher can handle
+            #[allow(clippy::cast_possible_truncation)]
+            let buf = if offset + buf.len() as u64 > self.cipher.max_plaintext_len() as u64 {
+                warn!("writing more than max block size, truncating");
+                &buf[..(self.cipher.max_plaintext_len() - offset as usize)]
+            } else {
+                buf
+            };
+            let len = writer.write(buf).map_err(|err| {
+                error!(err = %err, "writing");
+                err
+            })?;
+            (writer.stream_position()?, len)
+        };
+
+        let size = ctx.attr.size;
+        if pos > ctx.attr.size {
+            // if we write pass file size set the new size
+            debug!("setting new file size {}", pos);
+            ctx.attr.size = pos;
+        }
+        let now = SystemTime::now();
+        ctx.attr.mtime = now;
+        ctx.attr.ctime = now;
+        ctx.attr.atime = now;
+        drop(ctx);
+
+        drop(write_guard);
+        self.reset_handles(ino, Some(handle), true).await?;
+
+        self.sizes_write
+            .lock()
+            .await
+            .get_mut(&ino)
+            .unwrap()
+            .fetch_add(len as u64, Ordering::SeqCst);
+        if buf.len() != len {
+            error!(
+                "size mismatch in write(), size {size} offset {offset} buf_len {} len {len}",
+                buf.len()
+            );
+        }
+        info!(
+            "written uncommited for {ino} size {}",
+            self.sizes_write
+                .lock()
+                .await
+                .get(&ino)
+                .unwrap()
+                .load(Ordering::SeqCst)
+        );
+
+        Ok(len)
+    }
+
+    async fn flush(&self, handle: u64) -> FsResult<()> {
+        if handle == 0 {
+            // in the case of directory or if the file was crated without being opened we don't use a handle
+            return Ok(());
+        }
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
+        let lock = self.read_handles.read().await;
+        let mut valid_fh = lock.get(&handle).is_some();
+        let lock = self.write_handles.read().await;
+        if let Some(ctx) = lock.get(&handle) {
+            let mut ctx = ctx.lock().await;
+            let lock = self
+                .read_write_locks
+                .get_or_insert_with(ctx.ino, || RwLock::new(false));
+            let write_guard = lock.write().await;
+            ctx.writer.as_mut().expect("writer is missing").flush()?;
+            File::open(self.contents_path(ctx.ino))?.sync_all()?;
+            File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+            drop(write_guard);
+            let ino = ctx.ino;
+            drop(ctx);
+            self.reset_handles(ino, Some(handle), true).await?;
+            valid_fh = true;
+        }
+
+        if !valid_fh {
+            return Err(FsError::InvalidFileHandle);
+        }
+
+        Ok(())
+    }
+
+    async fn copy_file_range(
+        &self,
+        file_range_req: &CopyFileRangeReq,
+        size: usize,
+    ) -> FsResult<usize> {
+        if self.is_dir(file_range_req.src_ino) || self.is_dir(file_range_req.dest_ino) {
+            return Err(FsError::InvalidInodeType);
+        }
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
+
+        let mut buf = vec![0; size];
+        let len = self
+            .read(
+                file_range_req.src_ino,
+                file_range_req.src_offset,
+                &mut buf,
+                file_range_req.src_fh,
+            )
+            .await?;
+        if len == 0 {
+            return Ok(0);
+        }
+        let mut copied = 0;
+        while copied < size {
+            let len = self
+                .write(
+                    file_range_req.dest_ino,
+                    file_range_req.dest_offset,
+                    &buf[copied..len],
+                    file_range_req.dest_fh,
+                )
+                .await?;
+            if len == 0 && copied < size {
+                error!(len, "Failed to copy all read bytes");
+                return Err(FsError::Other("Failed to copy all read bytes"));
+            }
+            copied += len;
+        }
+        Ok(len)
+    }
+
+    async fn open(&self, ino: u64, read: bool, write: bool) -> FsResult<u64> {
+        if write && self.read_only {
+            return Err(FsError::ReadOnly);
+        }
+        if !read && !write {
+            return Err(FsError::InvalidInput(
+                "read and write cannot be false at the same time",
+            ));
+        }
+        if self.is_dir(ino) {
+            return Err(FsError::InvalidInodeType);
+        }
+
+        let mut handle: Option<u64> = None;
+        if read {
+            handle = Some(self.next_handle());
+            self.do_with_read_handle(
+                *handle.as_ref().unwrap(),
+                ReadHandleContextOperation::Create { ino },
+            )
+            .await?;
+        }
+        if write {
+            if self.opened_files_for_write.read().await.contains_key(&ino) {
+                return Err(FsError::AlreadyOpenForWrite);
+            }
+            if handle.is_none() {
+                handle = Some(self.next_handle());
+            }
+            let res = self
+                .do_with_write_handle(
+                    *handle.as_ref().expect("handle is missing"),
+                    WriteHandleContextOperation::Create { ino },
+                )
+                .await;
+            if res.is_err() && read {
+                // on error remove the read handle if it was added above,
+                // remove the read handle if it was added above
+                self.read_handles
+                    .write()
+                    .await
+                    .remove(handle.as_ref().unwrap());
+            }
+            res?;
+        }
+        let fh = handle.unwrap();
+        self.sizes_write
+            .lock()
+            .await
+            .entry(ino)
+            .or_insert(AtomicU64::new(0));
+        self.sizes_read
+            .lock()
+            .await
+            .entry(ino)
+            .or_insert(AtomicU64::new(0));
+        self.requested_read
+            .lock()
+            .await
+            .entry(ino)
+            .or_insert(AtomicU64::new(0));
+        Ok(fh)
+    }
+
+    async fn set_len(&self, ino: u64, size: u64) -> FsResult<()> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
+        info!("truncate {ino} to {size}");
+        let attr = self.get_attr(ino).await?;
+        if matches!(attr.kind, FileType::Directory) {
+            return Err(FsError::InvalidInodeType);
+        }
+
+        if size == attr.size {
+            // no-op
+            return Ok(());
+        }
+
+        let lock = self
+            .read_write_locks
+            .get_or_insert_with(ino, || RwLock::new(false));
+        let _write_guard = lock.write().await;
+
+        // flush writers
+        self.flush_and_reset_writers(ino).await?;
+
+        let file_path = self.contents_path(ino);
+        if size == 0 {
+            debug!("truncate to zero");
+            // truncate to zero
+            let file = File::create(&file_path)?;
+            file.set_len(0)?;
+            file.sync_all()?;
+        } else {
+            debug!("truncate size to {}", size.to_formatted_string(&Locale::en));
+
+            let mut file = fs_util::open_atomic_write(&file_path)?;
+            {
+                // have a new scope, so we drop the reader before moving new content files
+                let mut reader = self.create_read(File::open(file_path.as_path())?).await?;
+
+                let mut writer = self.create_write(file).await?;
+
+                let len = if size > attr.size {
+                    // increase size, copy existing data until existing size
+                    attr.size
+                } else {
+                    // decrease size, copy existing data until new size
+                    size
+                };
+                stream_util::copy_exact(&mut reader, &mut writer, len)?;
+                if size > attr.size {
+                    // increase size, seek to new size will write zeros
+                    stream_util::fill_zeros(&mut writer, size - attr.size)?;
+                }
+                file = writer.finish()?;
+            }
+            file.commit()?;
+        }
+        File::open(file_path.parent().unwrap())?.sync_all()?;
+
+        let now = SystemTime::now();
+        let set_attr = SetFileAttr::default()
+            .with_size(size)
+            .with_mtime(now)
+            .with_ctime(now)
+            .with_atime(now);
+        self.set_attr2(ino, set_attr, true).await?;
+
+        let attr = self.get_inode_from_storage(ino).await?;
+        println!("attr 1: {:?}", attr.size);
+        let attr = self.get_attr(ino).await?;
+        println!("attr 1: {:?}", attr.size);
+
+        // reset handles because the file has changed
+        self.reset_handles(attr.ino, None, false).await?;
+
+        let attr = self.get_inode_from_storage(ino).await?;
+        println!("attr 2: {:?}", attr.size);
+        let attr = self.get_attr(ino).await?;
+        println!("attr 2: {:?}", attr.size);
+
+        if size != attr.size {
+            error!("error truncating file expected {size} actual {}", attr.size);
+        }
+
+        Ok(())
+    }
+
+    #[allow(clippy::missing_panics_doc)]
+    async fn rename(
+        &self,
+        parent: u64,
+        name: &SecretBox<String>,
+        new_parent: u64,
+        new_name: &SecretBox<String>,
+    ) -> FsResult<()> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
+        if !self.exists(parent) {
+            return Err(FsError::InodeNotFound);
+        }
+        if !self.is_dir(parent) {
+            return Err(FsError::InvalidInodeType);
+        }
+        if !self.exists(new_parent) {
+            return Err(FsError::InodeNotFound);
+        }
+        if !self.is_dir(new_parent) {
+            return Err(FsError::InvalidInodeType);
+        }
+        if !self.exists_by_name(parent, name)? {
+            return Err(FsError::NotFound("name not found"));
+        }
+
+        if parent == new_parent && name.expose_secret() == new_name.expose_secret() {
+            // no-op
+            return Ok(());
+        }
+
+        // Only overwrite an existing directory if it's empty
+        if let Ok(Some(new_attr)) = self.find_by_name(new_parent, new_name).await {
+            if new_attr.kind == FileType::Directory && self.len(new_attr.ino)? > 0 {
+                return Err(FsError::NotEmpty);
+            }
+        }
+
+        let attr = self
+            .find_by_name(parent, name)
+            .await?
+            .ok_or(FsError::NotFound("name not found"))?;
+        // remove from parent contents
+        self.remove_directory_entry(parent, name).await?;
+        // remove from new_parent contents, if exists
+        if self.exists_by_name(new_parent, new_name)? {
+            self.remove_directory_entry(new_parent, new_name).await?;
+        }
+        // add to new parent contents
+        self.insert_directory_entry(
+            new_parent,
+            &DirectoryEntry {
+                ino: attr.ino,
+                name: new_name.clone(),
+                kind: attr.kind,
+            },
+        )
+        .await?;
+
+        if attr.kind == FileType::Directory {
+            // add the parent link to the new directory
+            self.insert_directory_entry(
+                attr.ino,
+                &DirectoryEntry {
+                    ino: new_parent,
+                    name: SecretBox::new(Box::new("$..".to_string())),
+                    kind: FileType::Directory,
+                },
+            )
+            .await?;
+        }
+
+        let now = SystemTime::now();
+        let set_attr = SetFileAttr::default()
+            .with_mtime(now)
+            .with_ctime(now)
+            .with_atime(now);
+        self.set_attr(parent, set_attr).await?;
+
+        let set_attr = SetFileAttr::default()
+            .with_mtime(now)
+            .with_ctime(now)
+            .with_atime(now);
+        self.set_attr(new_parent, set_attr).await?;
+
+        let set_attr = SetFileAttr::default().with_ctime(now).with_atime(now);
+        self.set_attr(attr.ino, set_attr).await?;
+
+        Ok(())
+    }
+
+    async fn create_write<W: CryptoInnerWriter + Seek + Send + Sync + 'static>(
+        &self,
+        file: W,
+    ) -> FsResult<Box<dyn CryptoWrite<W>>> {
+        Ok(Box::new(crypto::create_write(
+            file,
+            self.cipher,
+            &*self.key.get().await?,
+        )))
+    }
+
+    async fn create_write_seek<W: Write + Seek + Read + Send + Sync + 'static>(
+        &self,
+        file: W,
+    ) -> FsResult<Box<dyn CryptoWriteSeek<W>>> {
+        Ok(Box::new(crypto::create_write_seek(
+            file,
+            self.cipher,
+            &*self.key.get().await?,
+        )))
+    }
+
+    async fn create_read<R: Read + Send + Sync + 'static>(
+        &self,
+        reader: R,
+    ) -> FsResult<Box<dyn CryptoRead<R>>> {
+        Ok(Box::new(crypto::create_read(
+            reader,
+            self.cipher,
+            &*self.key.get().await?,
+        )))
+    }
+
+    async fn create_read_seek<R: Read + Seek + Send + Sync + 'static>(
+        &self,
+        reader: R,
+    ) -> FsResult<Box<dyn CryptoReadSeek<R>>> {
+        Ok(Box::new(crypto::create_read_seek(
+            reader,
+            self.cipher,
+            &*self.key.get().await?,
+        )))
+    }
+
+    async fn passwd(
+        data_dir: &Path,
+        old_password: SecretBox<String>,
+        new_password: SecretBox<String>,
+        cipher: Cipher,
+    ) -> FsResult<()> {
+        check_structure(data_dir, false).await?;
+        // decrypt key
+        let salt: Vec<u8> = bincode::deserialize_from(File::open(
+            data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME),
+        )?)?;
+        let initial_key = crypto::derive_key(&old_password, cipher, &salt)?;
+        let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
+        let reader = crypto::create_read(File::open(enc_file)?, cipher, &initial_key);
+        let key: Vec<u8> =
+            bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
+        let key = SecretBox::new(Box::new(key));
+        // encrypt it with a new key derived from new password
+        let new_key = crypto::derive_key(&new_password, cipher, &salt)?;
+        crypto::atomic_serialize_encrypt_into(
+            &data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
+            &*key.expose_secret(),
+            cipher,
+            &new_key,
+        )?;
+        Ok(())
+    }
+}
+
+impl EncryptedFs {
+    #[allow(clippy::missing_panics_doc)]
+    #[allow(clippy::missing_errors_doc)]
+    pub async fn new(
+        data_dir: PathBuf,
+        password_provider: Box<dyn PasswordProvider>,
+        cipher: Cipher,
+        read_only: bool,
+    ) -> FsResult<Arc<Self>> {
+        let key_provider = KeyProvider {
+            key_path: data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
+            salt_path: data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME),
+            password_provider,
+            cipher,
+        };
+        let key = ExpireValue::new(key_provider, Duration::from_secs(10 * 60));
+
+        ensure_structure_created(&data_dir.clone()).await?;
+        key.get().await?; // this will check the password
+
+        let fs = Self {
+            data_dir,
+            write_handles: RwLock::new(HashMap::new()),
+            read_handles: RwLock::new(HashMap::new()),
+            current_handle: AtomicU64::new(1),
+            cipher,
+            opened_files_for_read: RwLock::new(HashMap::new()),
+            opened_files_for_write: RwLock::new(HashMap::new()),
+            serialize_inode_locks: Arc::new(ArcHashMap::default()),
+            serialize_update_inode_locks: ArcHashMap::default(),
+            serialize_dir_entries_ls_locks: Arc::new(ArcHashMap::default()),
+            serialize_dir_entries_hash_locks: Arc::new(ArcHashMap::default()),
+            key,
+            self_weak: std::sync::Mutex::new(None),
+            read_write_locks: ArcHashMap::default(),
+            // todo: take duration from param
+            attr_cache: ExpireValue::new(AttrCacheProvider {}, Duration::from_secs(10 * 60)),
+            // todo: take duration from param
+            dir_entries_name_cache: ExpireValue::new(
+                DirEntryNameCacheProvider {},
+                Duration::from_secs(10 * 60),
+            ),
+            // todo: take duration from param
+            dir_entries_meta_cache: ExpireValue::new(
+                DirEntryMetaCacheProvider {},
+                Duration::from_secs(10 * 60),
+            ),
+            sizes_write: Mutex::default(),
+            sizes_read: Mutex::default(),
+            requested_read: Mutex::default(),
+            read_only,
+        };
+
+        let arc = Arc::new(fs);
+        arc.self_weak
+            .lock()
+            .expect("cannot obtain lock")
+            .replace(Arc::downgrade(&arc));
+
+        arc.ensure_root_exists().await?;
+
+        Ok(arc)
+    }
+
+    #[allow(dead_code)]
+    async fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     async fn create_directory_entry_plus(
@@ -1124,7 +1977,7 @@ impl EncryptedFs {
         let name = entry.file_name().to_string_lossy().to_string();
         let name = {
             if name == "$." {
-                SecretString::new(Box::new(".".into()))
+                SecretString::from_str(".").unwrap()
             } else if name == "$.." {
                 SecretString::from_str("..").unwrap()
             } else {
@@ -1257,50 +2110,6 @@ impl EncryptedFs {
         }
     }
 
-    /// Get metadata
-    #[allow(clippy::missing_errors_doc)]
-    pub async fn get_attr(&self, ino: u64) -> FsResult<FileAttr> {
-        let mut attr = self.get_inode_from_cache_or_storage(ino).await?;
-
-        // merge time info with any open read handles
-        let open_reads = { self.opened_files_for_read.read().await.contains_key(&ino) };
-        if open_reads {
-            let fhs = self.opened_files_for_read.read().await.get(&ino).cloned();
-            if let Some(fhs) = fhs {
-                for fh in fhs {
-                    let lock = self.read_handles.read().await;
-                    if let Some(ctx) = lock.get(&fh) {
-                        let set_atr: SetFileAttr = ctx.lock().await.attr.clone().into();
-                        merge_attr(&mut attr, &set_atr, false);
-                    }
-                }
-            }
-        }
-
-        // merge time info and size with any open write handles
-        let open_writes = { self.opened_files_for_write.read().await.contains_key(&ino) };
-        if open_writes {
-            let fh = self.opened_files_for_write.read().await.get(&ino).copied();
-            if let Some(fh) = fh {
-                let lock = self.write_handles.read().await;
-                if let Some(ctx) = lock.get(&fh) {
-                    let ctx = ctx.lock().await;
-                    merge_attr(&mut attr, &ctx.attr.clone().into(), false);
-                }
-            }
-        }
-
-        Ok(attr)
-    }
-
-    /// Set metadata
-    pub async fn set_attr(&self, ino: u64, set_attr: SetFileAttr) -> FsResult<()> {
-        if self.read_only {
-            return Err(FsError::ReadOnly);
-        }
-        self.set_attr2(ino, set_attr, false).await
-    }
-
     async fn set_attr2(
         &self,
         ino: u64,
@@ -1344,587 +2153,6 @@ impl EncryptedFs {
         Ok(())
     }
 
-    /// Read the contents from an `offset`.
-    ///
-    /// If we try to read outside of file size, we return zero bytes.
-    /// If the file is not opened for read, it will return an error of type [FsError::InvalidFileHandle].
-    #[instrument(skip(self, buf), fields(len = %buf.len()), ret(level = Level::DEBUG))]
-    #[allow(clippy::missing_errors_doc)]
-    #[allow(clippy::cast_possible_truncation)]
-    pub async fn read(
-        &self,
-        ino: u64,
-        offset: u64,
-        buf: &mut [u8],
-        handle: u64,
-    ) -> FsResult<usize> {
-        if !self.exists(ino) {
-            return Err(FsError::InodeNotFound);
-        }
-        if !self.is_file(ino) {
-            return Err(FsError::InvalidInodeType);
-        }
-        if !self.read_handles.read().await.contains_key(&handle) {
-            return Err(FsError::InvalidFileHandle);
-        }
-
-        let _size = self.get_attr(ino).await?.size;
-
-        let lock = self
-            .read_write_locks
-            .get_or_insert_with(ino, || RwLock::new(false));
-        let _read_guard = lock.read().await;
-
-        let guard = self.read_handles.read().await;
-        let mut ctx = guard.get(&handle).unwrap().lock().await;
-
-        if ctx.ino != ino {
-            return Err(FsError::InvalidFileHandle);
-        }
-        if self.is_dir(ino) {
-            return Err(FsError::InvalidInodeType);
-        }
-        if buf.is_empty() {
-            // no-op
-            return Ok(0);
-        }
-
-        // read data
-        let (_buf, len) = {
-            let reader = ctx.reader.as_mut().unwrap();
-
-            reader.seek(SeekFrom::Start(offset)).map_err(|err| {
-                error!(err = %err, "seeking");
-                err
-            })?;
-            let pos = reader.stream_position().map_err(|err| {
-                error!(err = %err, "getting position");
-                err
-            })?;
-            if pos != offset {
-                // we would need to seek after filesize
-                return Ok(0);
-            }
-            // keep block size to max the cipher can handle
-            #[allow(clippy::cast_possible_truncation)]
-            let buf = if offset + buf.len() as u64 > self.cipher.max_plaintext_len() as u64 {
-                warn!("reading more than max block size, truncating");
-                buf.split_at_mut(self.cipher.max_plaintext_len() - offset as usize)
-                    .0
-            } else {
-                buf
-            };
-            let len = stream_util::read(reader, buf).map_err(|err| {
-                error!(err = %err, "reading");
-                err
-            })?;
-            (buf, len)
-        };
-
-        ctx.attr.atime = SystemTime::now();
-        drop(ctx);
-
-        // self.sizes_read
-        //     .lock()
-        //     .await
-        //     .get_mut(&ino)
-        //     .unwrap()
-        //     .fetch_add(len as u64, Ordering::SeqCst);
-        // self.requested_read
-        //     .lock()
-        //     .await
-        //     .get_mut(&ino)
-        //     .unwrap()
-        //     .fetch_add(buf.len() as u64, Ordering::SeqCst);
-
-        // if buf.len() != len {
-        //     error!(
-        //         "size mismatch in read(), size {size} offset {offset} buf_len {} len {len}",
-        //         buf.len()
-        //     );
-        //     let lock = self.write_handles.read().await;
-        //     lock.iter().for_each(|(_, lock2)| {
-        //         call_async(async {
-        //             let ctx = lock2.lock().await;
-        //             if ctx.ino == ino && size != ctx.attr.size {
-        //                 error!("trying to read from a file which is not commited yet, ctx size {} actual size {size}", ctx.attr.size);
-        //             }
-        //         });
-        //     });
-        // }
-
-        Ok(len)
-    }
-
-    #[allow(clippy::missing_panics_doc)]
-    #[allow(clippy::too_many_lines)]
-    pub async fn release(&self, handle: u64) -> FsResult<()> {
-        if handle == 0 {
-            // in the case of directory or if the file was crated
-            // without being opened we don't use a handle
-            return Ok(());
-        }
-        let mut valid_fh = false;
-
-        // read
-        let ctx = { self.read_handles.write().await.remove(&handle) };
-        if let Some(ctx) = ctx {
-            let ctx = ctx.lock().await;
-
-            {
-                let mut opened_files_for_read = self.opened_files_for_read.write().await;
-                opened_files_for_read
-                    .get_mut(&ctx.ino)
-                    .expect("handle is missing")
-                    .remove(&handle);
-                if opened_files_for_read
-                    .get(&ctx.ino)
-                    .expect("handle is missing")
-                    .is_empty()
-                {
-                    opened_files_for_read.remove(&ctx.ino);
-                }
-            }
-
-            // write attr only here to avoid serializing it multiple times while reading
-            // it will merge time fields with existing data because it might got change while we kept the handle
-            let set_attr: SetFileAttr = ctx.attr.clone().into();
-            let ino = ctx.ino;
-            drop(ctx);
-            self.set_attr(ino, set_attr).await?;
-
-            valid_fh = true;
-        }
-
-        // write
-        let ctx = { self.write_handles.write().await.remove(&handle) };
-        if let Some(ctx) = ctx {
-            if self.read_only {
-                return Err(FsError::ReadOnly);
-            }
-            let mut ctx = ctx.lock().await;
-
-            let mut writer = ctx.writer.take().unwrap();
-            let lock = self
-                .read_write_locks
-                .get_or_insert_with(ctx.ino, || RwLock::new(false));
-            let write_guard = lock.write().await;
-            let file = writer.finish()?;
-            file.sync_all()?;
-            File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
-            // write attr only here to avoid serializing it multiple times while writing
-            // it will merge time fields with existing data because it might got change while we kept the handle
-            let ino = ctx.ino;
-            let attr = ctx.attr.clone();
-            drop(ctx);
-            self.set_attr(ino, attr.into()).await?;
-            let attr = self.get_attr(ino).await?;
-            {
-                let write_size = self
-                    .sizes_write
-                    .lock()
-                    .await
-                    .get(&ino)
-                    .unwrap()
-                    .load(Ordering::SeqCst);
-                info!("written for {ino} {write_size}");
-                if attr.size != write_size {
-                    error!("size mismatch write {} {}", write_size, attr.size);
-                }
-                let requested_read = self
-                    .requested_read
-                    .lock()
-                    .await
-                    .get(&ino)
-                    .unwrap()
-                    .load(Ordering::SeqCst);
-                let read = self
-                    .sizes_read
-                    .lock()
-                    .await
-                    .get(&ino)
-                    .unwrap()
-                    .load(Ordering::SeqCst);
-                if requested_read != read {
-                    error!(
-                        "size mismatch read, size {} requested {} read {}",
-                        attr.size, requested_read, read
-                    );
-                }
-            }
-            self.sizes_write.lock().await.remove(&ino);
-            self.sizes_read.lock().await.remove(&ino);
-            self.requested_read.lock().await.remove(&ino);
-            drop(write_guard);
-            self.opened_files_for_write.write().await.remove(&ino);
-            self.reset_handles(ino, Some(handle), true).await?;
-
-            valid_fh = true;
-        }
-
-        if !valid_fh {
-            return Err(FsError::InvalidFileHandle);
-        }
-        Ok(())
-    }
-
-    /// Check if a file is opened for reading with this handle.
-    pub async fn is_read_handle(&self, fh: u64) -> bool {
-        self.read_handles.read().await.contains_key(&fh)
-    }
-
-    /// Check if a file is opened for writing with this handle.
-    pub async fn is_write_handle(&self, fh: u64) -> bool {
-        self.write_handles.read().await.contains_key(&fh)
-    }
-
-    /// Writes the contents of `buf` to the file with `ino` starting at `offset`.
-    ///
-    /// If we write outside file size, we fill up with zeros until the `offset`.
-    /// If the file is not opened for writing,
-    /// it will return an error of type [FsError::InvalidFileHandle].
-    #[instrument(skip(self, buf), fields(len = %buf.len()), ret(level = Level::DEBUG))]
-    pub async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
-        if self.read_only {
-            return Err(FsError::ReadOnly);
-        }
-        if !self.exists(ino) {
-            return Err(FsError::InodeNotFound);
-        }
-        if !self.is_file(ino) {
-            return Err(FsError::InvalidInodeType);
-        }
-        {
-            if !self.write_handles.read().await.contains_key(&handle) {
-                return Err(FsError::InvalidFileHandle);
-            }
-        }
-        {
-            let guard = self.write_handles.read().await;
-            let ctx = guard.get(&handle).unwrap().lock().await;
-            if ctx.ino != ino {
-                return Err(FsError::InvalidFileHandle);
-            }
-        }
-        if buf.is_empty() {
-            // no-op
-            return Ok(0);
-        }
-
-        let lock = self
-            .read_write_locks
-            .get_or_insert_with(ino, || RwLock::new(false));
-        let write_guard = lock.write().await;
-
-        let guard = self.write_handles.read().await;
-        let mut ctx = guard.get(&handle).unwrap().lock().await;
-
-        // write new data
-        let (pos, len) = {
-            if offset > self.cipher.max_plaintext_len() as u64 {
-                return Err(FsError::MaxFilesizeExceeded(
-                    self.cipher.max_plaintext_len(),
-                ));
-            }
-            let writer = ctx.writer.as_mut().unwrap();
-            let pos = writer.seek(SeekFrom::Start(offset)).map_err(|err| {
-                error!(err = %err, "seeking");
-                err
-            })?;
-            if offset != pos {
-                // we could not seek to the desired position
-                return Ok(0);
-            }
-            // keep block size to max the cipher can handle
-            #[allow(clippy::cast_possible_truncation)]
-            let buf = if offset + buf.len() as u64 > self.cipher.max_plaintext_len() as u64 {
-                warn!("writing more than max block size, truncating");
-                &buf[..(self.cipher.max_plaintext_len() - offset as usize)]
-            } else {
-                buf
-            };
-            let len = writer.write(buf).map_err(|err| {
-                error!(err = %err, "writing");
-                err
-            })?;
-            (writer.stream_position()?, len)
-        };
-
-        let size = ctx.attr.size;
-        if pos > ctx.attr.size {
-            // if we write pass file size set the new size
-            debug!("setting new file size {}", pos);
-            ctx.attr.size = pos;
-        }
-        let now = SystemTime::now();
-        ctx.attr.mtime = now;
-        ctx.attr.ctime = now;
-        ctx.attr.atime = now;
-        drop(ctx);
-
-        drop(write_guard);
-        self.reset_handles(ino, Some(handle), true).await?;
-
-        self.sizes_write
-            .lock()
-            .await
-            .get_mut(&ino)
-            .unwrap()
-            .fetch_add(len as u64, Ordering::SeqCst);
-        if buf.len() != len {
-            error!(
-                "size mismatch in write(), size {size} offset {offset} buf_len {} len {len}",
-                buf.len()
-            );
-        }
-        info!(
-            "written uncommited for {ino} size {}",
-            self.sizes_write
-                .lock()
-                .await
-                .get(&ino)
-                .unwrap()
-                .load(Ordering::SeqCst)
-        );
-
-        Ok(len)
-    }
-
-    /// Flush the data to the underlying storage.
-    #[allow(clippy::missing_panics_doc)]
-    pub async fn flush(&self, handle: u64) -> FsResult<()> {
-        if handle == 0 {
-            // in the case of directory or if the file was crated without being opened we don't use a handle
-            return Ok(());
-        }
-        if self.read_only {
-            return Err(FsError::ReadOnly);
-        }
-        let lock = self.read_handles.read().await;
-        let mut valid_fh = lock.get(&handle).is_some();
-        let lock = self.write_handles.read().await;
-        if let Some(ctx) = lock.get(&handle) {
-            let mut ctx = ctx.lock().await;
-            let lock = self
-                .read_write_locks
-                .get_or_insert_with(ctx.ino, || RwLock::new(false));
-            let write_guard = lock.write().await;
-            ctx.writer.as_mut().expect("writer is missing").flush()?;
-            File::open(self.contents_path(ctx.ino))?.sync_all()?;
-            File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
-            drop(write_guard);
-            let ino = ctx.ino;
-            drop(ctx);
-            self.reset_handles(ino, Some(handle), true).await?;
-            valid_fh = true;
-        }
-
-        if !valid_fh {
-            return Err(FsError::InvalidFileHandle);
-        }
-
-        Ok(())
-    }
-
-    /// Helpful when we want to copy just some portions of the file.
-    pub async fn copy_file_range(
-        &self,
-        file_range_req: &CopyFileRangeReq,
-        size: usize,
-    ) -> FsResult<usize> {
-        if self.is_dir(file_range_req.src_ino) || self.is_dir(file_range_req.dest_ino) {
-            return Err(FsError::InvalidInodeType);
-        }
-        if self.read_only {
-            return Err(FsError::ReadOnly);
-        }
-
-        let mut buf = vec![0; size];
-        let len = self
-            .read(
-                file_range_req.src_ino,
-                file_range_req.src_offset,
-                &mut buf,
-                file_range_req.src_fh,
-            )
-            .await?;
-        if len == 0 {
-            return Ok(0);
-        }
-        let mut copied = 0;
-        while copied < size {
-            let len = self
-                .write(
-                    file_range_req.dest_ino,
-                    file_range_req.dest_offset,
-                    &buf[copied..len],
-                    file_range_req.dest_fh,
-                )
-                .await?;
-            if len == 0 && copied < size {
-                error!(len, "Failed to copy all read bytes");
-                return Err(FsError::Other("Failed to copy all read bytes"));
-            }
-            copied += len;
-        }
-        Ok(len)
-    }
-
-    /// Open a file. We can open multiple times for read but only one to write at a time.
-    #[allow(clippy::missing_panics_doc)]
-    pub async fn open(&self, ino: u64, read: bool, write: bool) -> FsResult<u64> {
-        if write && self.read_only {
-            return Err(FsError::ReadOnly);
-        }
-        if !read && !write {
-            return Err(FsError::InvalidInput(
-                "read and write cannot be false at the same time",
-            ));
-        }
-        if self.is_dir(ino) {
-            return Err(FsError::InvalidInodeType);
-        }
-
-        let mut handle: Option<u64> = None;
-        if read {
-            handle = Some(self.next_handle());
-            self.do_with_read_handle(
-                *handle.as_ref().unwrap(),
-                ReadHandleContextOperation::Create { ino },
-            )
-            .await?;
-        }
-        if write {
-            if self.opened_files_for_write.read().await.contains_key(&ino) {
-                return Err(FsError::AlreadyOpenForWrite);
-            }
-            if handle.is_none() {
-                handle = Some(self.next_handle());
-            }
-            let res = self
-                .do_with_write_handle(
-                    *handle.as_ref().expect("handle is missing"),
-                    WriteHandleContextOperation::Create { ino },
-                )
-                .await;
-            if res.is_err() && read {
-                // on error remove the read handle if it was added above,
-                // remove the read handle if it was added above
-                self.read_handles
-                    .write()
-                    .await
-                    .remove(handle.as_ref().unwrap());
-            }
-            res?;
-        }
-        let fh = handle.unwrap();
-        self.sizes_write
-            .lock()
-            .await
-            .entry(ino)
-            .or_insert(AtomicU64::new(0));
-        self.sizes_read
-            .lock()
-            .await
-            .entry(ino)
-            .or_insert(AtomicU64::new(0));
-        self.requested_read
-            .lock()
-            .await
-            .entry(ino)
-            .or_insert(AtomicU64::new(0));
-        Ok(fh)
-    }
-
-    /// Truncates or extends the underlying file, updating the size of this file to become size.
-    #[allow(clippy::missing_panics_doc)]
-    #[allow(clippy::too_many_lines)]
-    pub async fn set_len(&self, ino: u64, size: u64) -> FsResult<()> {
-        if self.read_only {
-            return Err(FsError::ReadOnly);
-        }
-        info!("truncate {ino} to {size}");
-        let attr = self.get_attr(ino).await?;
-        if matches!(attr.kind, FileType::Directory) {
-            return Err(FsError::InvalidInodeType);
-        }
-
-        if size == attr.size {
-            // no-op
-            return Ok(());
-        }
-
-        let lock = self
-            .read_write_locks
-            .get_or_insert_with(ino, || RwLock::new(false));
-        let _write_guard = lock.write().await;
-
-        // flush writers
-        self.flush_and_reset_writers(ino).await?;
-
-        let file_path = self.contents_path(ino);
-        if size == 0 {
-            debug!("truncate to zero");
-            // truncate to zero
-            let file = File::create(&file_path)?;
-            file.set_len(0)?;
-            file.sync_all()?;
-        } else {
-            debug!("truncate size to {}", size.to_formatted_string(&Locale::en));
-
-            let mut file = fs_util::open_atomic_write(&file_path)?;
-            {
-                // have a new scope, so we drop the reader before moving new content files
-                let mut reader = self.create_read(File::open(file_path.as_path())?).await?;
-
-                let mut writer = self.create_write(file).await?;
-
-                let len = if size > attr.size {
-                    // increase size, copy existing data until existing size
-                    attr.size
-                } else {
-                    // decrease size, copy existing data until new size
-                    size
-                };
-                stream_util::copy_exact(&mut reader, &mut writer, len)?;
-                if size > attr.size {
-                    // increase size, seek to new size will write zeros
-                    stream_util::fill_zeros(&mut writer, size - attr.size)?;
-                }
-                file = writer.finish()?;
-            }
-            file.commit()?;
-        }
-        File::open(file_path.parent().unwrap())?.sync_all()?;
-
-        let now = SystemTime::now();
-        let set_attr = SetFileAttr::default()
-            .with_size(size)
-            .with_mtime(now)
-            .with_ctime(now)
-            .with_atime(now);
-        self.set_attr2(ino, set_attr, true).await?;
-
-        let attr = self.get_inode_from_storage(ino).await?;
-        println!("attr 1: {:?}", attr.size);
-        let attr = self.get_attr(ino).await?;
-        println!("attr 1: {:?}", attr.size);
-
-        // reset handles because the file has changed
-        self.reset_handles(attr.ino, None, false).await?;
-
-        let attr = self.get_inode_from_storage(ino).await?;
-        println!("attr 2: {:?}", attr.size);
-        let attr = self.get_attr(ino).await?;
-        println!("attr 2: {:?}", attr.size);
-
-        if size != attr.size {
-            error!("error truncating file expected {size} actual {}", attr.size);
-        }
-
-        Ok(())
-    }
-
     /// This will write any dirty data to the file from all writers and reset them.
     /// Timestamps and size will be updated to the storage.
     /// > ⚠️ **Warning**
@@ -1964,180 +2192,11 @@ impl EncryptedFs {
                             .open(self.contents_path(ino))?,
                     )
                     .await?;
-                ctx.writer = Some(Box::new(writer));
+                ctx.writer = Some(writer);
                 let attr = self.get_inode_from_storage(ino).await?;
                 ctx.attr = attr.into();
             }
         }
-        Ok(())
-    }
-
-    #[allow(clippy::missing_panics_doc)]
-    pub async fn rename(
-        &self,
-        parent: u64,
-        name: &SecretBox<String>,
-        new_parent: u64,
-        new_name: &SecretBox<String>,
-    ) -> FsResult<()> {
-        if self.read_only {
-            return Err(FsError::ReadOnly);
-        }
-        if !self.exists(parent) {
-            return Err(FsError::InodeNotFound);
-        }
-        if !self.is_dir(parent) {
-            return Err(FsError::InvalidInodeType);
-        }
-        if !self.exists(new_parent) {
-            return Err(FsError::InodeNotFound);
-        }
-        if !self.is_dir(new_parent) {
-            return Err(FsError::InvalidInodeType);
-        }
-        if !self.exists_by_name(parent, name)? {
-            return Err(FsError::NotFound("name not found"));
-        }
-
-        if parent == new_parent && name.expose_secret() == new_name.expose_secret() {
-            // no-op
-            return Ok(());
-        }
-
-        // Only overwrite an existing directory if it's empty
-        if let Ok(Some(new_attr)) = self.find_by_name(new_parent, new_name).await {
-            if new_attr.kind == FileType::Directory && self.len(new_attr.ino)? > 0 {
-                return Err(FsError::NotEmpty);
-            }
-        }
-
-        let attr = self
-            .find_by_name(parent, name)
-            .await?
-            .ok_or(FsError::NotFound("name not found"))?;
-        // remove from parent contents
-        self.remove_directory_entry(parent, name).await?;
-        // remove from new_parent contents, if exists
-        if self.exists_by_name(new_parent, new_name)? {
-            self.remove_directory_entry(new_parent, new_name).await?;
-        }
-        // add to new parent contents
-        self.insert_directory_entry(
-            new_parent,
-            &DirectoryEntry {
-                ino: attr.ino,
-                name: new_name.clone(),
-                kind: attr.kind,
-            },
-        )
-        .await?;
-
-        if attr.kind == FileType::Directory {
-            // add the parent link to the new directory
-            self.insert_directory_entry(
-                attr.ino,
-                &DirectoryEntry {
-                    ino: new_parent,
-                    name: SecretBox::new(Box::new("$..".to_string())),
-                    kind: FileType::Directory,
-                },
-            )
-            .await?;
-        }
-
-        let now = SystemTime::now();
-        let set_attr = SetFileAttr::default()
-            .with_mtime(now)
-            .with_ctime(now)
-            .with_atime(now);
-        self.set_attr(parent, set_attr).await?;
-
-        let set_attr = SetFileAttr::default()
-            .with_mtime(now)
-            .with_ctime(now)
-            .with_atime(now);
-        self.set_attr(new_parent, set_attr).await?;
-
-        let set_attr = SetFileAttr::default().with_ctime(now).with_atime(now);
-        self.set_attr(attr.ino, set_attr).await?;
-
-        Ok(())
-    }
-
-    /// Create a crypto writer using internal encryption info.
-    pub async fn create_write<W: CryptoInnerWriter + Seek + Send + Sync + 'static>(
-        &self,
-        file: W,
-    ) -> FsResult<impl CryptoWrite<W>> {
-        Ok(crypto::create_write(
-            file,
-            self.cipher,
-            &*self.key.get().await?,
-        ))
-    }
-
-    /// Create a crypto writer with seek using internal encryption info.
-    pub async fn create_write_seek<W: Write + Seek + Read + Send + Sync + 'static>(
-        &self,
-        file: W,
-    ) -> FsResult<impl CryptoWriteSeek<W>> {
-        Ok(crypto::create_write_seek(
-            file,
-            self.cipher,
-            &*self.key.get().await?,
-        ))
-    }
-
-    /// Create a crypto reader using internal encryption info.
-    pub async fn create_read<R: Read + Send + Sync>(
-        &self,
-        reader: R,
-    ) -> FsResult<impl CryptoRead<R>> {
-        Ok(crypto::create_read(
-            reader,
-            self.cipher,
-            &*self.key.get().await?,
-        ))
-    }
-
-    /// Create a crypto reader with seek using internal encryption info.
-    pub async fn create_read_seek<R: Read + Seek + Send + Sync>(
-        &self,
-        reader: R,
-    ) -> FsResult<impl CryptoReadSeek<R>> {
-        Ok(crypto::create_read_seek(
-            reader,
-            self.cipher,
-            &*self.key.get().await?,
-        ))
-    }
-
-    /// Change the password of the filesystem used to access the encryption key.
-    pub async fn passwd(
-        data_dir: &Path,
-        old_password: SecretBox<String>,
-        new_password: SecretBox<String>,
-        cipher: Cipher,
-    ) -> FsResult<()> {
-        check_structure(data_dir, false).await?;
-        // decrypt key
-        let salt: Vec<u8> = bincode::deserialize_from(File::open(
-            data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME),
-        )?)?;
-        let initial_key = crypto::derive_key(&old_password, cipher, &salt)?;
-        let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
-        let reader = crypto::create_read(File::open(enc_file)?, cipher, &initial_key);
-        let key: Vec<u8> =
-            bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
-        let key = SecretBox::new(Box::new(key));
-        // encrypt it with a new key derived from new password
-        let new_key = crypto::derive_key(&new_password, cipher, &salt)?;
-        crypto::atomic_serialize_encrypt_into(
-            &data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
-            &*key.expose_secret(),
-            cipher,
-            &new_key,
-        )?;
         Ok(())
     }
 
@@ -2174,7 +2233,7 @@ impl EncryptedFs {
                 let attr = self.get_inode_from_storage(ino).await?;
                 let mut ctx = guard.get(handle).unwrap().lock().await;
                 let reader = self.create_read_seek(File::open(&path)?).await?;
-                ctx.reader = Some(Box::new(reader));
+                ctx.reader = Some(reader);
                 ctx.attr = attr.into();
             }
         }
@@ -2207,7 +2266,7 @@ impl EncryptedFs {
                     .create_write_seek(OpenOptions::new().read(true).write(true).open(&path)?)
                     .await?;
                 let mut ctx = lock.lock().await;
-                ctx.writer = Some(Box::new(writer));
+                ctx.writer = Some(writer);
                 let attr = self.get_inode_from_storage(ino).await?;
                 ctx.attr = attr.into();
             }
@@ -2231,7 +2290,7 @@ impl EncryptedFs {
                 let ctx = ReadHandleContext {
                     ino,
                     attr,
-                    reader: Some(Box::new(reader)),
+                    reader: Some(reader),
                 };
                 self.read_handles
                     .write()
@@ -2264,7 +2323,7 @@ impl EncryptedFs {
                 let ctx = WriteHandleContext {
                     ino,
                     attr,
-                    writer: Some(Box::new(writer)),
+                    writer: Some(writer),
                 };
                 self.write_handles
                     .write()
@@ -2446,6 +2505,7 @@ impl EncryptedFs {
         }
     }
 }
+
 pub struct CopyFileRangeReq {
     src_ino: u64,
     src_offset: u64,
