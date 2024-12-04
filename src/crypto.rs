@@ -29,6 +29,7 @@ use crate::{fs_util, stream_util};
 
 pub mod buf_mut;
 pub mod fs;
+pub mod path;
 pub mod read;
 pub mod write;
 
