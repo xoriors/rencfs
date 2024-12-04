@@ -168,7 +168,7 @@ impl File {
     }
 
     async fn init(init: FileInit, fs: Arc<EncryptedFs>) -> FsResult<FileContext> {
-        let paths = File::get_path_and_file_name(init.path);
+        let paths = get_path_and_file_name(init.path);
         let mut dir_inode = ROOT_INODE;
         let file_name = paths
             .last()
@@ -182,11 +182,11 @@ impl File {
 
         if paths.len() > 1 {
             for node in paths.iter().take(paths.len() - 1) {
-                let res = fs.find_by_name(dir_inode, node).await?;
-                match res {
-                    Some(res) => dir_inode = res.ino,
-                    None => return Err(FsError::InodeNotFound),
-                }
+                dir_inode = fs
+                    .find_by_name(dir_inode, node)
+                    .await?
+                    .ok_or(FsError::InodeNotFound)?
+                    .ino;
             }
         }
         let file_exists = fs.find_by_name(dir_inode, file_name).await?.is_some();
@@ -350,20 +350,6 @@ impl File {
             pos,
         })
     }
-
-    fn get_path_and_file_name(path: SecretBox<String>) -> Vec<SecretBox<String>> {
-        let input = path.expose_secret();
-        let path = input.strip_prefix(".").unwrap_or(&input);
-        let mut path_segments = Vec::new();
-        for segment in path.split("/") {
-            if segment.is_empty() {
-                continue;
-            }
-            let segment = SecretString::from_str(segment).unwrap();
-            path_segments.push(segment);
-        }
-        path_segments
-    }
 }
 
 impl AsyncRead for File {
@@ -484,6 +470,20 @@ impl AsyncSeek for File {
     }
 }
 
+pub fn get_path_and_file_name(path: SecretBox<String>) -> Vec<SecretBox<String>> {
+    let input = path.expose_secret();
+    let path = input.strip_prefix(".").unwrap_or(&input);
+    let mut path_segments = Vec::new();
+    for segment in path.split("/") {
+        if segment.is_empty() {
+            continue;
+        }
+        let segment = SecretString::from_str(segment).unwrap();
+        path_segments.push(segment);
+    }
+    path_segments
+}
+
 async fn get_fs() -> FsResult<Arc<EncryptedFs>> {
     OpenOptions::from_scope()
         .await
@@ -507,7 +507,7 @@ fn file_attr() -> CreateFileAttr {
     attr
 }
 
-fn map_err(err: FsError) -> std::io::Error {
+pub fn map_err(err: FsError) -> std::io::Error {
     match err {
         FsError::InodeNotFound => Error::new(ErrorKind::NotFound, "Inode not found"),
         FsError::AlreadyExists => Error::new(ErrorKind::AlreadyExists, "File already exists"),
