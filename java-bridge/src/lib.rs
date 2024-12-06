@@ -119,7 +119,8 @@ pub extern "system" fn Java_RustLibrary_mount(
     let mount_path: String = env.get_string(&mnt).unwrap().into();
     let data_dir_path: String = env.get_string(&data_dir).unwrap().into();
     let password: String = env.get_string(&password).unwrap().into();
-    let mut new_pass = SecretVec::from(password); // zeroize old pass
+    let new_pass = SecretVec::<u8>::new(password.as_bytes().to_vec()); // create new pass using secretvec
+    drop(password); // drop password after zeroize
 
     info!("mount_path: {}", mount_path);
     info!("data_dir_path: {}", data_dir_path);
@@ -177,7 +178,6 @@ pub extern "system" fn Java_RustLibrary_mount(
         fn get_password(&self) -> Option<SecretString> {
             let password_str = String::from_utf8_lossy(self.0.expose_secret()); 
             Some(SecretString::from_str(&password_str).unwrap())
-            drop(password_str); // drop password_str after use
         }
     }
 
