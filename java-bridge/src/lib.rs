@@ -120,7 +120,7 @@ pub extern "system" fn Java_RustLibrary_mount(
     let mount_path: String = env.get_string(&mnt).unwrap().into();
     let data_dir_path: String = env.get_string(&data_dir).unwrap().into();
     let password: String = env.get_string(&password).unwrap().into();
-    let new_pass = SecretVec::<u8>::new(password.as_bytes()); // create new pass using secretvec
+    let new_pass = SecretVec::<u8>::new(password.into_bytes()); // create new pass using secretvec
     // drop(password); // drop password after zeroize
 
     info!("mount_path: {}", mount_path);
