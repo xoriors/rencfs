@@ -1,0 +1,28 @@
+# Use the official Rust image as a base
+FROM rust:latest
+
+# Set the working directory inside the container
+WORKDIR /usr/src/app
+
+# Copy the current directory's contents to the container
+COPY . .
+
+# Install dependencies (if needed)
+RUN apt-get update && apt-get upgrade -y && apt-get install -y \
+    binutils \
+    build-essential \
+    ca-certificates \
+    curl \
+    file \
+    g++ \
+    gcc \
+    make \
+    patch \
+    --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build the Rust project
+RUN cargo build --release
+
+# Set the command to run the built binary
+CMD ["./target/release/rencfs"]

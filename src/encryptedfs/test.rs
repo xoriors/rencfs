@@ -966,7 +966,7 @@ async fn test_find_by_name() {
             );
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1002,7 +1002,7 @@ async fn test_exists_by_name() {
             }
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1046,7 +1046,7 @@ async fn test_remove_dir() {
             }
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1092,7 +1092,7 @@ async fn test_remove_file() {
             }
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1149,7 +1149,7 @@ async fn test_find_by_name_exists_by_name100files() {
                 .is_some());
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1185,7 +1185,7 @@ async fn test_create_structure_and_root() {
             assert!(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).is_dir());
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1376,7 +1376,7 @@ async fn test_create() {
             ));
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -2271,7 +2271,7 @@ async fn test_rename() {
             ));
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -2311,7 +2311,7 @@ async fn test_open() {
             ));
         },
     )
-    .await
+    .await;
 }
 
 // #[tokio::test]
@@ -2356,7 +2356,7 @@ async fn test_read_only_create() {
             assert!(matches!(create_file_result, Err(FsError::ReadOnly)));
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -2480,5 +2480,5 @@ async fn test_read_only_write() {
             assert!(matches!(flush_result, Err(FsError::ReadOnly)));
         },
     )
-    .await
+    .await;
 }

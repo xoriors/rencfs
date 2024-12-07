@@ -374,7 +374,6 @@ where
 {
     let parent = file.parent().ok_or(Error::Generic("file has no parent"))?;
     let mut file = fs_util::open_atomic_write(file)?;
-    // println!("file: {:#?}", file.as_file_mut().metadata()?);
     file = serialize_encrypt_into(file, value, cipher, key)?;
     file.commit()?;
     File::open(parent)?.sync_all()?;
@@ -540,7 +539,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_empty_string() {
         let key = SecretVec::from(vec![0; 32]);
-        let secret = SecretString::new(Box::new("".to_string()));
+        let secret = SecretString::new(Box::new(String::new()));
 
         let encrypted = encrypt(&secret, Cipher::ChaCha20Poly1305, &key).unwrap();
         let decrypted = decrypt(&encrypted, Cipher::ChaCha20Poly1305, &key).unwrap();
@@ -550,24 +549,24 @@ mod tests {
 
     #[test]
     fn test_hash_file_name_special_cases() {
-        let expected = "$.".to_string();
+        let expected = "$.".to_owned();
         let name = SecretString::new(Box::new(expected.clone()));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
 
-        let expected = "$..".to_string();
+        let expected = "$..".to_owned();
         let name = SecretString::new(Box::new(expected.clone()));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
 
-        let input = ".".to_string();
-        let expected = "$.".to_string();
+        let input = ".".to_owned();
+        let expected = "$.".to_owned();
         let name = SecretString::new(Box::new(input));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
 
-        let input = "..".to_string();
-        let expected = "$..".to_string();
+        let input = "..".to_owned();
+        let expected = "$..".to_owned();
         let name = SecretString::new(Box::new(input));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
@@ -575,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_hash_file_name_regular_case() {
-        let name = SecretString::new(Box::new("filename.txt".to_string()));
+        let name = SecretString::new(Box::new("filename.txt".to_owned()));
         let result = hash_file_name(&name);
         let expected_hash = hex::encode(hash_secret_string(&name));
         assert_eq!(result, expected_hash);
@@ -583,7 +582,7 @@ mod tests {
 
     #[test]
     fn test_hash_secret_string() {
-        let secret = SecretString::new(Box::new("hash this secret".to_string()));
+        let secret = SecretString::new(Box::new("hash this secret".to_owned()));
         let expected_hash_hex = "d820cbf278fc742d8ec30e43947674689cd06d5aa9b71a2f9afe162a4ce408dc";
 
         let hash_hex = hex::encode(hash_secret_string(&secret));

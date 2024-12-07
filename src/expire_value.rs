@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::marker::PhantomData;
-use std::string::ToString;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -63,7 +62,7 @@ impl<
         let value = self.provider.provide().await?;
         let v = Arc::new(value);
         self.cache
-            .insert(KEY.to_string(), v.clone(), self.duration)
+            .insert(KEY.to_owned(), v.clone(), self.duration)
             .await;
         let mut weak = self.weak.write().await;
         *weak = Some(Arc::downgrade(&v));
@@ -78,7 +77,7 @@ impl<
                 return Some(v.clone());
             }
             // try to take it from cache
-            if let Some(v) = self.cache.get(&KEY.to_string()).await {
+            if let Some(v) = self.cache.get(&KEY.to_owned()).await {
                 return Some(v.clone());
             }
         }
@@ -114,7 +113,7 @@ mod tests {
     impl ValueProvider<String, Infallible> for TestProvider {
         async fn provide(&self) -> Result<String, Infallible> {
             self.called.fetch_add(1, Ordering::SeqCst);
-            Ok("test".to_string())
+            Ok("test".to_owned())
         }
     }
 
@@ -149,6 +148,6 @@ mod tests {
         let _ = expire_value.get().await.unwrap();
         // ensure provider was called again
         let called = called.clone();
-        assert_eq!(called.load(Ordering::SeqCst), 3)
+        assert_eq!(called.load(Ordering::SeqCst), 3);
     }
 }

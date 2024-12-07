@@ -1,8 +1,8 @@
 /// This demonstrates the magic of blanket implementation.
 ///
-/// If we have a wrapper that wraps [Read] we don't have access to [Seek::seek] method, but
+/// If we have a wrapper that wraps [Read] we don't have access to [`Seek::seek`] method, but
 /// if we wrap [Read] + [Seek] we do.
-/// We use this in [rencfs::crypto::read] and also in [rencfs::crypto::write].
+/// We use this in [`rencfs::crypto::read`] and also in [`rencfs::crypto::write`].
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
 

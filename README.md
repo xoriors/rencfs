@@ -6,11 +6,9 @@
 [![build-and-tests](https://github.com/radumarias/rencfs/actions/workflows/build_and_tests.yaml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/build_and_tests.yaml)
 [![release](https://github.com/radumarias/rencfs/actions/workflows/release.yaml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/release.yaml)
 [![codecov](https://codecov.io/gh/radumarias/rencfs/graph/badge.svg?token=NUQI6XGF2Y)](https://codecov.io/gh/radumarias/rencfs)
-<a href="https://join.slack.com/t/rencfs/shared_invite/zt-2o4l1tdkk-VJeWIbO2p6zgeafDISPHbQ"><img src="website/resources/slack3.png" style = "width: 87px; height: 20px;"/></a>
-[![Matrix](https://img.shields.io/matrix/rencfs%3Amatrix.org?label=Matrix)](https://matrix.to/#/#rencfs:matrix.org)
-[![Discord](https://img.shields.io/discord/1236855443486277653?label=Discord)](https://discord.com/channels/1236855443486277653/1236855448515252306)
-[![Zulip](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg?label=Zulip)](https://rencfs.zulipchat.com)
+<a href="https://bit.ly/3UU1oXi"><img src="website/resources/slack3.png" style = "width: 87px; height: 20px;"/></a>
 [![Open Source Helpers](https://www.codetriage.com/radumarias/rencfs/badges/users.svg)](https://www.codetriage.com/radumarias/rencfs)
+<!-- [![Zulip](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg?label=Zulip)](https://rencfs.zulipchat.com) -->
 
 > [!WARNING]  
 > **This crate hasn't been audited; it's using `ring` crate, which is a well-known audited library, so in principle, at
@@ -42,14 +40,14 @@ Create a `simple,` `performant,` `modular` and `ergonomic` yet `very secure` `en
 
 There will be a [series](https://medium.com/@xorio42/list/828492b94c23) of articles about the evolution of this project, trying to keep it like a tutorial. This is the [first one](https://systemweakness.com/the-hitchhikers-guide-to-building-an-encrypted-filesystem-in-rust-4d678c57d65c).
 
-# Crate of the week in [This Week in Rust](https://this-week-in-rust.org/)
+# Crate of the week in [This Week in Rust](https://this-week-in-rust.org/blog/2024/08/07/this-week-in-rust-559/#cfp-projects)
 
 It was [crate of the week](https://this-week-in-rust.org/blog/2024/08/14/this-week-in-rust-560/#crate-of-the-week) in Aug 2024.
 
 # Talks
 
-- [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://startech-rd.io/hitchhikers-guide-to/)
-- [Basics of cryptography and FUSE for building a filesystem in Rust](https://miro.com/app/board/uXjVLccxeCE=/?share_link_id=342563218323)
+- [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://startech-rd.io/hitchhikers-guide-to/) [@meetup.com/star-tech-rd-reloaded](https://www.meetup.com/star-tech-rd-reloaded/) and [@OmniOpenCon](https://omniopencon.org/)
+- [Basics of cryptography, Authenticated Encryption, Rust in cryptography and how to build an encrypted filesystem](https://www.youtube.com/live/HwmVxOl3pQg) @ITDays and [slides](https://miro.com/app/board/uXjVLccxeCE=/?share_link_id=342563218323).
 
 # Key features
 
@@ -98,7 +96,7 @@ changes at the next start. This makes the write operations atomic.
 
 [![rencfs](website/resources/layers.png)](website/resources/layers.png)
 
-For detailed description of the various sequence flows please look into [Flows](docs/flows.md). 
+For detailed description of the various sequence flows please look into [Flows](docs/flows.md).
 
 # Stack
 
@@ -116,14 +114,14 @@ For detailed description of the various sequence flows please look into [Flows](
 # Alternatives
 
 - [Alternatives](https://www.libhunt.com/r/rencfs)
-- [EncFS](https://vgough.github.io/encfs/) and [alternatives](https://alternativeto.net/software/encfs/)
-- [CryFS](https://www.cryfs.org/)
-- [gocryptfs](https://nuetzlich.net/gocryptfs/)
-- [fscrypt](https://www.kernel.org/doc/html/v4.18/filesystems/fscrypt.html)
-- [VeraCrypt](https://www.veracrypt.fr/code/VeraCrypt/?h=NewSysEncWizard)
 - [Cryptomator](https://cryptomator.org/)
+- [gocryptfs](https://nuetzlich.net/gocryptfs/)
+- [VeraCrypt](https://www.veracrypt.fr/code/VeraCrypt/?h=NewSysEncWizard)
 - [TrueCrypt](https://truecrypt.sourceforge.net/)
 - [DroidFS, F-Droid](https://f-droid.org/en/packages/sushi.hardcore.droidfs/)
+- [EncFS](https://vgough.github.io/encfs/) and [alternatives](https://alternativeto.net/software/encfs/)
+- [CryFS](https://www.cryfs.org/)
+- [fscrypt](https://www.kernel.org/doc/html/v4.18/filesystems/fscrypt.html)
 - [LUKS, dm-crypt](https://guardianproject.info/archive/luks/)
 - [AES Crypt](https://www.aescrypt.com/)
 - [Windows BitLocker](https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/)
@@ -155,19 +153,21 @@ docker pull xorio42/rencfs
 Start a container to set up mount in it
 
 ```bash
-docker run -it --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined xorio42/rencfs:latest /bin/sh
+docker run -v ~/Downloads:/share -it --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined xorio42/rencfs:latest /bin/sh
 ```
+
+**Replace `~/Downloads` with a path you want to share with the container.**
 
 In the container, create mount and data directories
 
 ```bash
-mkdir fsmnt && mkdir fsdata
+mkdir mnt && mkdir data
 ```
 
 Start `rencfs`
 
 ```bash
-rencfs mount --mount-point fsmnt --data-dir fsdata
+rencfs mount --mount-point mnt --data-dir data -l WARN
 ```
 
 Enter a password for encryption.
@@ -181,17 +181,25 @@ docker ps
 In another terminal, attach to the running container with the above ID
 
 ```bash
-docker exec -it <ID> /bin/sh
+docker exec -it <CONTAINER-ID> /bin/sh
 ```
 
-From here, you can play with it by creating files in `fsmnt` directory
+From here, you can play with it by creating files in `mnt` directory
 
 ```bash
-cd fsmnt
+cd mnt
 mkdir 1
 ls
 echo "test" > 1/test
 cat 1/test
+```
+
+You can also copy files from `/share`.
+
+```bash
+cd mnt
+cp /share/file1.txt .
+file file1.txt
 ```
 
 ## As a library
@@ -291,7 +299,7 @@ You can see more [here](https://crates.io/crates/rencfs)
 
 ## Browser
 
-If you want to give it a quick try and not setup anything locally you can  
+If you want to give it a quick try and not setup anything locally, you can  
 [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/radumarias/rencfs)
 
 [![Open Rustlings On Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new/?repo=radumarias%2Frencfs&ref=main)
@@ -299,7 +307,7 @@ If you want to give it a quick try and not setup anything locally you can
 You can compile it, run it, and give it a quick try in the browser. After you start it from above
 
 ```bash
-sudo apt-get update && sudo apt-get install fuse3
+apt-get update && apt-get install fuse3
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 mkdir mnt && mkdir data
 cargo run --release -- mount -m mnt -d data
@@ -468,18 +476,18 @@ on most CPUs via AES-NI. However, where hardware acceleration is not available, 
 - `AES-GCM` can target multiple security levels (`128-bit`, `192-bit`, `256-bit`), whereas `ChaCha20-Poly1305` is only defined at
   the `256-bit` security level.
 - Nonce size:
-    - `AES-GCM`: Varies, but the standard is `96 bits` (`12 bytes`).
+    - `AES-GCM`: Varies, but the standard is `96-bit` (`12 bytes`).
       If you supply a longer nonce, this gets hashed down to `16 bytes`.
     - `ChaCha20-Poly1305`: The standardized version uses `96-bit` nonce (`12 bytes`), but the original used `64-bit`
       nonce (`8 bytes`).
 - Wear-out of a single (key, nonce) pair:
-    - `AES-GCM`: Messages must be less than `2^32 – 2` blocks (a.k.a. `2^36 – 32 bytes`, a.k.a. `2^39 – 256 bits`), that's
+    - `AES-GCM`: Messages must be less than `2^32 – 2` blocks (a.k.a. `2^36 – 32 bytes`, a.k.a. `2^39 – 256-bit`), that's
       roughly `64GB`.
       This also makes the security analysis of `AES-GCM` with long nonces complicated since the hashed nonce doesn’t
       start
       with the lower `4 bytes` set to `00 00 00 02`.
-    - `ChaCha20-Poly1305`: `ChaCha` has an internal counter (`32 bits` in the standardized IETF variant, `64 bits` in the
-      original design). Max message length is `2^39 - 256 bits`, about `256GB`
+    - `ChaCha20-Poly1305`: `ChaCha` has an internal counter (`32-bit` in the standardized IETF variant, `64-bit` in the
+      original design). Max message length is `2^39 - 256-bit`, about `256GB`
 - Neither algorithm is **nonce misuse-resistant**.
 - `ChaChaPoly1305` is better at `SIMD`
 
@@ -498,18 +506,7 @@ files. However, the content of the file could be bigger, and we read until the o
   pick up
   the new zeros bytes are written on truncating by increasing the size. If content is smaller, the read would stop and
   end-of-file of the actual content, so this would not be such a big issue
-- **What kind of metadata does it leak**: close to none. The filename, actual file size and other file attrs (times,
-  permissions, other flags) are kept encrypted. What it could possibly leak is the following
-    - If a directory has children, we keep those children in a directory with name as inode number and encrypted names
-      of children as files in it.
-      So we could see how many children a directory has.
-      However, we can't identify that actual directory name;
-      We can just see its inode number (internal representation like an ID for each file), but we cannot see the actual
-      filenames of the directory or children.
-      Also, we cannot identify which file content corresponds to a directory child
-    - Each file content is saved in a separate file, so we can see the size of the encrypted content but not the
-      actual filesize
-    - We can also see the last time the file was accessed
+- **What kind of metadata does it leak**: None, we encrypt filename, content, and metadata and we hide file count, size, and all-time fields
 - It's always recommended to use encrypted disks for at least your sensitive data; this project is not a replacement for
   that
 - To reduce the risk of the encryption key being exposed from memory, it's recommended to disable memory dumps on the
