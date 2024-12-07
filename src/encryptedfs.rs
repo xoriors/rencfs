@@ -669,6 +669,9 @@ impl EncryptedFs {
         read: bool,
         write: bool,
     ) -> FsResult<(u64, FileAttr)> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
         if *name.expose_secret() == "." || *name.expose_secret() == ".." {
             return Err(FsError::InvalidInput("name cannot be '.' or '..'"));
         }
@@ -677,9 +680,6 @@ impl EncryptedFs {
         }
         if self.exists_by_name(parent, name)? {
             return Err(FsError::AlreadyExists);
-        }
-        if self.read_only {
-            return Err(FsError::ReadOnly);
         }
 
         // spawn on a dedicated runtime to not interfere with other higher priority tasks
@@ -872,11 +872,11 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
     pub async fn remove_dir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
-        if !self.is_dir(parent) {
-            return Err(FsError::InvalidInodeType);
-        }
         if self.read_only {
             return Err(FsError::ReadOnly);
+        }
+        if !self.is_dir(parent) {
+            return Err(FsError::InvalidInodeType);
         }
 
         if !self.exists_by_name(parent, name)? {
@@ -949,14 +949,14 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
     pub async fn remove_file(&self, parent: u64, name: &SecretString) -> FsResult<()> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
         if !self.exists_by_name(parent, name)? {
             return Err(FsError::NotFound("name not found"));
-        }
-        if self.read_only {
-            return Err(FsError::ReadOnly);
         }
 
         let attr = self
@@ -1529,7 +1529,7 @@ impl EncryptedFs {
                     .load(Ordering::SeqCst);
                 info!("written for {ino} {write_size}");
                 if attr.size != write_size {
-                    error!("size mismatch write {} {}", write_size, attr.size);
+                    // error!("size mismatch write {} {}", write_size, attr.size);
                 }
                 let requested_read = self
                     .requested_read
@@ -1650,7 +1650,7 @@ impl EncryptedFs {
             (writer.stream_position()?, len)
         };
 
-        let size = ctx.attr.size;
+        // let size = ctx.attr.size;
         if pos > ctx.attr.size {
             // if we write pass file size set the new size
             debug!("setting new file size {}", pos);
@@ -1672,10 +1672,10 @@ impl EncryptedFs {
             .unwrap()
             .fetch_add(len as u64, Ordering::SeqCst);
         if buf.len() != len {
-            error!(
-                "size mismatch in write(), size {size} offset {offset} buf_len {} len {len}",
-                buf.len()
-            );
+            // error!(
+            //     "size mismatch in write(), size {size} offset {offset} buf_len {} len {len}",
+            //     buf.len()
+            // );
         }
         // warn!(
         //     "written uncommited for {ino} size {}",
@@ -1693,12 +1693,12 @@ impl EncryptedFs {
     /// Flush the data to the underlying storage.
     #[allow(clippy::missing_panics_doc)]
     pub async fn flush(&self, handle: u64) -> FsResult<()> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
         if handle == 0 {
             // in the case of directory or if the file was crated without being opened we don't use a handle
             return Ok(());
-        }
-        if self.read_only {
-            return Err(FsError::ReadOnly);
         }
         let lock = self.read_handles.read().await;
         let mut valid_fh = lock.get(&handle).is_some();
@@ -1732,11 +1732,11 @@ impl EncryptedFs {
         file_range_req: &CopyFileRangeReq,
         size: usize,
     ) -> FsResult<usize> {
-        if self.is_dir(file_range_req.src_ino) || self.is_dir(file_range_req.dest_ino) {
-            return Err(FsError::InvalidInodeType);
-        }
         if self.read_only {
             return Err(FsError::ReadOnly);
+        }
+        if self.is_dir(file_range_req.src_ino) || self.is_dir(file_range_req.dest_ino) {
+            return Err(FsError::InvalidInodeType);
         }
 
         let mut buf = vec![0; size];
