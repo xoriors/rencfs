@@ -13,6 +13,7 @@ use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::PasswordProvider;
 use rencfs::log::log_init;
 use rencfs::mount::{create_mount_point, umount, MountHandle};
+use secrets::SecretVec;
 use shush_rs::SecretString;
 use std::collections::BTreeMap;
 use std::ops::Add;
@@ -119,8 +120,8 @@ pub extern "system" fn Java_RustLibrary_mount(
     let mount_path: String = env.get_string(&mnt).unwrap().into();
     let data_dir_path: String = env.get_string(&data_dir).unwrap().into();
     let password: String = env.get_string(&password).unwrap().into();
-    let new_pass = SecretVec::<u8>::new(password.as_bytes().to_vec()); // create new pass using secretvec
-    drop(password); // drop password after zeroize
+    let new_pass = SecretVec::<u8>::new(password.as_bytes()); // create new pass using secretvec
+    // drop(password); // drop password after zeroize
 
     info!("mount_path: {}", mount_path);
     info!("data_dir_path: {}", data_dir_path);
