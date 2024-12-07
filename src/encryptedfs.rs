@@ -657,11 +657,14 @@ impl EncryptedFs {
         self.read_only
     }
 
-    fn validate_filename(&self, filename: &str) -> FsResult<bool> {
-        if filename.contains('/') || filename.contains('\\') {
-            return Err(FsError::InvalidInput("invalid file name"));
+    fn validate_filename(&self, filename: &str) -> FsResult<()> {
+        if filename.contains('/') {
+            Err(FsError::InvalidInput("'/' not allowed in the filename"))
+        } else if filename.contains('\\') {
+            Err(FsError::InvalidInput("'\\' not allowed in the filename"))
+        } else {
+            Ok(())
         }
-        Ok(true)
     }
 
     /// Create a new node in the filesystem
