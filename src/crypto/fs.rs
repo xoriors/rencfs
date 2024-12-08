@@ -87,7 +87,6 @@ impl OpenOptions {
             path: SecretString::from_str(path.as_ref().to_path_buf().to_str().unwrap()).unwrap(),
         })
         .await
-        .map_err(map_err)
     }
 
     pub async fn init_scope(
@@ -161,7 +160,7 @@ pub struct FileContext {
 }
 
 impl File {
-    async fn new(init: FileInit) -> FsResult<Self> {
+    async fn new(init: FileInit) -> io::Result<Self> {
         let fs = get_fs().await?;
         let context = File::init(init, fs.clone()).await?;
         Ok(File { fs, context })
@@ -384,7 +383,7 @@ impl AsyncRead for File {
 
                 Poll::Ready(Ok(()))
             }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(map_err(e))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -410,7 +409,7 @@ impl AsyncWrite for File {
                 self.context.pos += len as u64;
                 Poll::Ready(Ok(len))
             }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(map_err(e))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -422,7 +421,7 @@ impl AsyncWrite for File {
 
         match future.as_mut().poll(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(map_err(e))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -434,7 +433,7 @@ impl AsyncWrite for File {
 
         match future.as_mut().poll(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(map_err(e))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -442,9 +441,7 @@ impl AsyncWrite for File {
 
 impl AsyncSeek for File {
     fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> io::Result<()> {
-        let attr = async_util::call_async(async {
-            self.fs.get_attr(self.context.ino).await.map_err(map_err)
-        })?;
+        let attr = async_util::call_async(async { self.fs.get_attr(self.context.ino).await })?;
 
         let new_pos = match position {
             SeekFrom::Start(pos) => pos as i64,
@@ -505,14 +502,4 @@ fn file_attr() -> CreateFileAttr {
         attr.gid = libc::getgid();
     }
     attr
-}
-
-pub fn map_err(err: FsError) -> std::io::Error {
-    match err {
-        FsError::InodeNotFound => Error::new(ErrorKind::NotFound, "Inode not found"),
-        FsError::AlreadyExists => Error::new(ErrorKind::AlreadyExists, "File already exists"),
-        FsError::InvalidInput(msg) => Error::new(ErrorKind::InvalidInput, msg),
-        FsError::ReadOnly => Error::new(ErrorKind::PermissionDenied, "Read only."),
-        _ => Error::new(io::ErrorKind::Other, anyhow::Error::from(err)),
-    }
 }

@@ -4,9 +4,11 @@
 use crate::async_util;
 use shush_rs::SecretBox;
 
-use crate::crypto::fs::{map_err, OpenOptions};
+use crate::crypto::fs::OpenOptions;
 use crate::encryptedfs::{EncryptedFs, FileAttr, FileType, FsError, FsResult};
 use std::collections::TryReserveError;
+use std::ffi::OsStr;
+use std::ops::Deref;
 use std::{
     borrow::Cow,
     ffi::OsString,
@@ -17,12 +19,15 @@ use std::{
     time::SystemTime,
 };
 
+#[cfg(test)]
+mod test;
+
 pub struct Metadata {
     pub attr: FileAttr,
 }
 
 impl std::fmt::Debug for Metadata {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::fmt::Result {
         f.debug_struct("Metadata")
             .field("ino", &self.attr.ino)
             .field("size", &self.attr.size)
@@ -74,29 +79,19 @@ impl Metadata {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Path {
-    inner: std::ffi::OsString,
+#[derive(PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct Path<'a> {
+    inner: &'a OsStr,
 }
 
-impl std::fmt::Debug for Path {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.inner)
-    }
-}
-
-impl Path {
-    pub fn new<S: Into<OsString>>(path: S) -> Self {
-        let inner = path.into();
-        Self { inner }
+impl<'a> Path<'a> {
+    pub fn new<S: AsRef<OsStr> + ?Sized>(s: &'a S) -> &'a Path<'a> {
+        unsafe { &*(s.as_ref() as *const OsStr as *const Path) }
     }
 
-    pub fn as_os_str(&self) -> &std::ffi::OsStr {
+    pub fn as_os_str(&self) -> &OsStr {
         &self.inner
-    }
-
-    pub fn as_mut_os_str(&mut self) -> &mut std::ffi::OsStr {
-        &mut self.inner
     }
 
     pub fn to_str(&self) -> Option<&str> {
@@ -126,61 +121,57 @@ impl Path {
         std::path::Path::has_root(path)
     }
 
-    pub fn parent(&self) -> Option<Self> {
-        let path = std::path::Path::new(&self.inner);
-        path.parent().map(|parent| Path {
-            inner: parent.as_os_str().to_os_string(),
-        })
+    pub fn parent(&self) -> Option<&Path> {
+        let path = std::path::Path::new(self.inner);
+        path.parent().map(|parent| Path::new(parent.as_os_str()))
     }
 
-    pub fn ancestors(&self) -> impl Iterator<Item = Path> + '_ {
-        let path = std::path::Path::new(&self.inner);
-        path.ancestors().map(|ancestor| Path {
-            inner: ancestor.as_os_str().to_os_string(),
-        })
+    pub fn ancestors(&self) -> impl Iterator<Item = &Path<'a>> + '_ {
+        let path = std::path::Path::new(self.inner);
+
+        path.ancestors()
+            .map(|ancestor| Path::new(ancestor.as_os_str()))
     }
 
-    pub fn file_name(&self) -> Option<&str> {
+    pub fn file_name(&self) -> Option<&OsStr> {
         let path = std::path::Path::new(&self.inner);
-        path.file_name()?.to_str()
+        path.file_name()
     }
 
-    pub fn strip_prefix<P>(&self, base: P) -> std::result::Result<Path, StripPrefixError>
+    pub fn strip_prefix<P>(&'a self, base: P) -> std::result::Result<&'a Path<'a>, StripPrefixError>
     where
         P: AsRef<std::path::Path>,
     {
         let path = std::path::Path::new(&self.inner);
-        path.strip_prefix(base.as_ref()).map(|p| Path {
-            inner: p.to_path_buf().into_os_string(),
-        })
+
+        match path.strip_prefix(base.as_ref()) {
+            Ok(stripped) => {
+                Ok(Path::new(stripped.as_os_str()))
+            }
+            Err(e) => Err(e),
+        }
     }
 
-    pub fn starts_with<P: AsRef<Path>>(&self, base: P) -> bool
-    where
-        P: AsRef<std::path::Path>,
-    {
+    pub fn starts_with<P: AsRef<std::path::Path>>(&self, base: P) -> bool {
         let path = std::path::Path::new(&self.inner);
-        let base_path: &std::path::Path = base.as_ref();
+        let base_path = base.as_ref();
         path.starts_with(base_path)
     }
 
-    pub fn ends_with<P: AsRef<Path>>(&self, child: P) -> bool
-    where
-        P: AsRef<std::path::Path>,
-    {
+    pub fn ends_with<P: AsRef<std::path::Path>>(&self, base: P) -> bool {
         let path = std::path::Path::new(&self.inner);
-        let child_path: &std::path::Path = child.as_ref();
+        let child_path = base.as_ref();
         path.ends_with(child_path)
     }
 
-    pub fn file_stem(&self) -> Option<&std::ffi::OsStr> {
+    pub fn file_stem(&self) -> Option<&OsStr> {
         let path = std::path::Path::new(&self.inner);
         path.file_stem()
     }
 
-    pub fn extension(&self) -> Option<&str> {
+    pub fn extension(&self) -> Option<&OsStr> {
         let path = std::path::Path::new(&self.inner);
-        path.extension()?.to_str()
+        path.extension()
     }
 
     pub fn join<S: AsRef<str>>(&self, subpath: S) -> PathBuf {
@@ -189,13 +180,13 @@ impl Path {
         PathBuf::from(path.join(sub_path))
     }
 
-    pub fn with_file_name<S: AsRef<std::ffi::OsStr>>(&self, file_name: S) -> PathBuf {
+    pub fn with_file_name<S: AsRef<OsStr>>(&self, file_name: S) -> PathBuf {
         let path = std::path::Path::new(&self.inner);
         let file_name = std::path::Path::new(file_name.as_ref());
         PathBuf::from(path.with_file_name(file_name))
     }
 
-    pub fn with_extension<S: AsRef<std::ffi::OsStr>>(&self, extension: S) -> PathBuf {
+    pub fn with_extension<S: AsRef<OsStr>>(&self, extension: S) -> PathBuf {
         let path = std::path::Path::new(&self.inner);
         let extension = std::path::Path::new(extension.as_ref());
         PathBuf::from(path.with_extension(extension))
@@ -219,31 +210,29 @@ impl Path {
     pub fn metadata(&self) -> Result<Metadata> {
         let mut dir_inode = 1;
 
-        let fs = async_util::call_async(get_fs()).map_err(|e| map_err(e))?;
-        
+        let fs = async_util::call_async(get_fs())?;
+
         let paths = get_path_and_file_name(
             &self
                 .to_str()
-                .ok_or_else(|| map_err(FsError::InvalidInput("Invalid path")))?,
+                .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
         );
 
         if paths.len() > 1 {
             for node in paths.iter().take(paths.len() - 1) {
-                dir_inode = async_util::call_async(fs.find_by_name(dir_inode, node))
-                    .map_err(|e| map_err(e))?
-                    .ok_or_else(|| map_err(FsError::InodeNotFound))?
+                dir_inode = async_util::call_async(fs.find_by_name(dir_inode, node))?
+                    .ok_or_else(|| FsError::InodeNotFound)?
                     .ino;
             }
         }
 
         let file_name = paths
             .last()
-            .ok_or_else(|| map_err(FsError::InvalidInput("No filename")))?;
-        let attr = async_util::call_async(fs.find_by_name(dir_inode, file_name))
-            .map_err(|e| map_err(e))?
-            .ok_or_else(|| map_err(FsError::InodeNotFound))?;
-        let file_attr = async_util::call_async(fs.get_attr(attr.ino)).map_err(|e| map_err(e))?;
-        
+            .ok_or_else(|| FsError::InvalidInput("No filename"))?;
+        let attr = async_util::call_async(fs.find_by_name(dir_inode, file_name))?
+            .ok_or_else(|| FsError::InodeNotFound)?;
+        let file_attr = async_util::call_async(fs.get_attr(attr.ino))?;
+
         let metadata = Metadata { attr: file_attr };
         Ok(metadata)
     }
@@ -269,27 +258,24 @@ impl Path {
     }
 
     pub async fn try_exists(&self) -> Result<bool> {
-        let fs = async_util::call_async(get_fs()).map_err(|e| map_err(e))?;
+        let fs = async_util::call_async(get_fs())?;
         let paths = get_path_and_file_name(
             &self
                 .to_str()
-                .ok_or_else(|| map_err(FsError::InvalidInput("Invalid path")))?,
+                .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
         );
         let file_name = paths
             .last()
-            .ok_or_else(|| map_err(FsError::InvalidInput("No filename")))?;
+            .ok_or_else(|| FsError::InvalidInput("No filename"))?;
         let mut dir_inode = 1;
         if paths.len() > 1 {
             for node in paths.iter().take(paths.len() - 1) {
-                dir_inode = async_util::call_async(fs.find_by_name(dir_inode, node))
-                    .map_err(|e| map_err(e))?
-                    .ok_or_else(|| map_err(FsError::InodeNotFound))?
+                dir_inode = async_util::call_async(fs.find_by_name(dir_inode, node))?
+                    .ok_or_else(|| FsError::InodeNotFound)?
                     .ino;
             }
         }
-        let file_exists = async_util::call_async(fs.find_by_name(dir_inode, file_name))
-            .map_err(|e| map_err(e))?
-            .is_some();
+        let file_exists = async_util::call_async(fs.find_by_name(dir_inode, file_name))?.is_some();
         Ok(file_exists)
     }
 
@@ -305,19 +291,88 @@ impl Path {
     //     Path::metadata(&self).unwrap().is_symlink()
     // }
 
-    pub async fn into_path_buf(self: Box<Path>) -> PathBuf {
+    pub async fn into_path_buf(self: Box<Path<'a>>) -> PathBuf {
         PathBuf::from(self.inner)
     }
 }
 
+impl<'a> std::fmt::Debug for Path<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.inner)
+    }
+}
+
+impl<'a> AsRef<std::path::Path> for Path<'a> {
+    fn as_ref(&self) -> &std::path::Path {
+        std::path::Path::new(&self.inner)
+    }
+}
+
+impl<'a> AsRef<OsStr> for Path<'a> {
+    fn as_ref(&self) -> &OsStr {
+        self.inner.as_ref()
+    }
+}
+
+impl<'a> From<&'a String> for Path<'a> {
+    fn from(s: &'a String) -> Self {
+        Path {
+            inner: &OsStr::new(s),
+        }
+    }
+}
+
+impl<'a> From<&'a str> for Path<'a> {
+    fn from(s: &'a str) -> Self {
+        Path {
+            inner: &OsStr::new(s),
+        }
+    }
+}
+
+impl<'a> From<&'a std::path::Path> for Path<'a> {
+    fn from(p: &'a std::path::Path) -> Self {
+        Path {
+            inner: p.as_os_str(),
+        }
+    }
+}
+
+impl<'a> From<&'a std::path::PathBuf> for Path<'a> {
+    fn from(p: &'a std::path::PathBuf) -> Self {
+        let inner = p.as_os_str();
+        Path { inner }
+    }
+}
+
+impl<'a> Into<OsString> for Path<'a> {
+    fn into(self) -> OsString {
+        self.inner.to_owned()
+    }
+}
+
+impl<'a> PartialEq<PathBuf> for Path<'a> {
+    fn eq(&self, other: &PathBuf) -> bool {
+        self.inner == other.inner.as_os_str()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PathBuf {
     inner: OsString,
 }
 
+impl std::fmt::Debug for PathBuf {
+    fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::fmt::Result {
+        write!(f, "{:?}", self.inner)
+    }
+}
+
 impl PathBuf {
-    pub fn new<S: Into<OsString>>(path: S) -> Self {
-        let inner = path.into();
-        Self { inner }
+    pub fn new() -> Self {
+        PathBuf {
+            inner: OsString::new(),
+        }
     }
 
     pub fn from<S: Into<OsString>>(path: S) -> Self {
@@ -332,7 +387,7 @@ impl PathBuf {
         todo!()
     }
 
-    pub fn push<P: AsRef<Path>>(&mut self, path: P) {
+    pub fn push<'a, P: AsRef<Path<'a>>>(&mut self, path: P) {
         todo!()
     }
 
@@ -340,15 +395,15 @@ impl PathBuf {
         todo!()
     }
 
-    pub fn set_file_name<S: AsRef<std::ffi::OsStr>>(&mut self, file_name: S) {
+    pub fn set_file_name<S: AsRef<OsStr>>(&mut self, file_name: S) {
         todo!()
     }
 
-    pub fn set_extension<S: AsRef<std::ffi::OsStr>>(&mut self, extension: S) -> bool {
+    pub fn set_extension<S: AsRef<OsStr>>(&mut self, extension: S) -> bool {
         todo!()
     }
 
-    pub fn as_mut_os_string(&mut self) -> &mut OsString {
+    pub fn as_mut_os_str(&mut self) -> &mut OsString {
         todo!()
     }
 
@@ -356,7 +411,7 @@ impl PathBuf {
         todo!()
     }
 
-    pub fn into_boxed_path(self) -> Box<Path> {
+    pub fn into_boxed_path(self) -> Box<Path<'static>> {
         todo!()
     }
 
@@ -393,6 +448,44 @@ impl PathBuf {
 
     pub fn shrink_to(&mut self, min_capacity: usize) {
         todo!()
+    }
+}
+
+impl<'a> PartialEq<&Path<'a>> for PathBuf {
+    fn eq(&self, other: &&Path) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl AsRef<std::path::Path> for PathBuf {
+    fn as_ref(&self) -> &std::path::Path {
+        self.inner.as_ref()
+    }
+}
+
+impl AsRef<OsStr> for PathBuf {
+    fn as_ref(&self) -> &OsStr {
+        self.inner.as_os_str()
+    }
+}
+
+impl Into<OsString> for PathBuf {
+    fn into(self) -> OsString {
+        self.inner
+    }
+}
+
+impl<'a> AsRef<Path<'a>> for PathBuf {
+    fn as_ref(&self) -> &Path<'a> {
+        Path::new(self)
+    }
+}
+
+impl Deref for PathBuf {
+    type Target = Path<'static>;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
     }
 }
 
