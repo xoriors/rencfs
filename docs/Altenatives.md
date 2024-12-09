@@ -1,4 +1,4 @@
-#Alternatives
+# Alternatives
 
 - [Alternatives](https://www.libhunt.com/r/rencfs)
 - [Cryptomator](https://cryptomator.org/)

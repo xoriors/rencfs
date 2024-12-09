@@ -1,4 +1,4 @@
-Cipher comparison
+# Cipher comparison
 
 ## AES-GCM vs. ChaCha20-Poly1305
 
