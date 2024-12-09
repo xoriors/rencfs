@@ -153,6 +153,14 @@ impl EncryptedFsFuse3 {
         (mode & !(libc::S_ISUID | libc::S_ISGID)) as u16
     }
 
+    fn validate_filename(&self, filename: &OsStr) -> Result<bool> {
+        let name_str = filename.to_str().unwrap();
+        if name_str.contains('/') || name_str.contains('\\') {
+            return Err(libc::EINVAL.into());
+        }
+        Ok(true)
+    }
+
     #[instrument(skip(self, name), fields(name = name.to_str().unwrap()), err(level = Level::WARN), ret(level = Level::DEBUG))]
     async fn create_nod(
         &self,
@@ -181,6 +189,8 @@ impl EncryptedFsFuse3 {
         ) {
             return Err(EACCES);
         }
+
+        self.validate_filename(name)?;
 
         if req.uid != 0 {
             mode &= !(libc::S_ISUID | libc::S_ISGID);
@@ -545,6 +555,8 @@ impl Filesystem for EncryptedFsFuse3 {
             return Err(libc::ENOSYS.into());
         }
 
+        self.validate_filename(name)?;
+
         self.create_nod(parent, mode, &req, name, false, false)
             .await
             .map_err(|err| {
@@ -590,6 +602,8 @@ impl Filesystem for EncryptedFsFuse3 {
         ) {
             return Err(EACCES.into());
         }
+
+        self.validate_filename(name)?;
 
         let mut attr = dir_attr();
 
@@ -799,6 +813,8 @@ impl Filesystem for EncryptedFsFuse3 {
         ) {
             return Err(EACCES.into());
         }
+
+        self.validate_filename(new_name)?;
 
         // "Sticky bit" handling
         #[allow(clippy::cast_possible_truncation)]
@@ -1150,6 +1166,8 @@ impl Filesystem for EncryptedFsFuse3 {
         flags: u32,
     ) -> Result<ReplyCreated> {
         trace!("");
+
+        self.validate_filename(name)?;
 
         #[allow(clippy::cast_possible_wrap)]
         let (read, write) = match flags as i32 & libc::O_ACCMODE {
