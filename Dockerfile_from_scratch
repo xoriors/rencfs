@@ -2,7 +2,7 @@
 ##### Builder
 FROM alpine:3.19.1 AS builder
 
-RUN apk update && apk upgrade && apk add binutils build-base ca-certificates curl file g++ gcc make patch
+RUN apk update && apk upgrade && apk add binutils build-base ca-certificates curl file g++ gcc make patch fuse3
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
@@ -27,29 +27,27 @@ RUN . ~/.cargo/env &&  \
     cd /usr/src/rencfs/ &&  \
     cargo build --target x86_64-unknown-linux-musl --release
 
+#Copy the fusermount3 binary and libraries into a directory
+RUN mkdir /fusermount3dep && \
+    cp $(which fusermount3) /fusermount3dep/ && \
+    ldd $(which fusermount3) | awk '{ print $3 }' | xargs -I {} cp {} /fusermount3dep/
+
+
 ################
 ##### Runtime
-FROM alpine:3.19.1 AS runtime
+FROM scratch AS runtime
 
-RUN apk update && apk upgrade && apk add fuse3
-RUN apk upgrade busybox --repository=http://dl-cdn.alpinelinux.org/alpine/edge/main
+# Copy fusermount3
+COPY --from=builder /fusermount3dep/fusermount3 /usr/bin/
+
+# Copy busybox
+COPY --from=builder /bin/ /bin/
+
+# Copy ld-musl (fusermount3 & busybox dep)
+COPY --from=builder /fusermount3dep/ld* /lib/
 
 # Copy application binary from builder image
-COPY --from=builder /usr/src/rencfs/target/x86_64-unknown-linux-musl/release/rencfs /usr/local/bin
-
-ARG USER=rencfs
-ENV HOME /home/$USER
-
-# install sudo as rootdocker
-RUN apk add --update sudo
-
-# add new user
-RUN adduser -D $USER \
-    && echo "$USER ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USER \
-    && chmod 0440 /etc/sudoers.d/$USER
-
-USER $USER
-WORKDIR $HOME
+COPY --from=builder /usr/src/rencfs/target/x86_64-unknown-linux-musl/release/rencfs /usr/bin/
 
 # Run the application
 CMD ["rencfs", "--help"]
