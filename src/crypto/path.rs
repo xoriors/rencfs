@@ -475,19 +475,19 @@ impl Into<OsString> for PathBuf {
     }
 }
 
-impl<'a> AsRef<Path<'a>> for PathBuf {
-    fn as_ref(&self) -> &Path<'a> {
-        Path::new(self)
-    }
-}
+// impl<'a> AsRef<Path<'a>> for PathBuf {
+//     fn as_ref(&self) -> &Path<'a> {
+//         Path::new(self)
+//     }
+// }
 
-impl Deref for PathBuf {
-    type Target = Path<'static>;
+// impl Deref for PathBuf {
+//     type Target = Path<'static>;
 
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
+//     fn deref(&self) -> &Self::Target {
+//         self.as_ref()
+//     }
+// }
 
 async fn get_fs() -> FsResult<Arc<EncryptedFs>> {
     OpenOptions::from_scope()
