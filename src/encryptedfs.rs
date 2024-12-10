@@ -657,6 +657,17 @@ impl EncryptedFs {
         self.read_only
     }
 
+    fn validate_filename(&self, secret_filename: &SecretBox<String>) -> FsResult<()> {
+        let filename = secret_filename.expose_secret().to_string();
+        if filename.contains('/') {
+            Err(FsError::InvalidInput("'/' not allowed in the filename"))
+        } else if filename.contains('\\') {
+            Err(FsError::InvalidInput("'\\' not allowed in the filename"))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Create a new node in the filesystem
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
@@ -681,6 +692,7 @@ impl EncryptedFs {
         if self.exists_by_name(parent, name)? {
             return Err(FsError::AlreadyExists);
         }
+        self.validate_filename(&name)?;
 
         // spawn on a dedicated runtime to not interfere with other higher priority tasks
         let self_clone = self
@@ -1150,6 +1162,9 @@ impl EncryptedFs {
                 }
             }
         };
+
+        self.validate_filename(&name)?;
+
         let file_path = entry.path().to_str().unwrap().to_owned();
         // try from cache
         let lock = self.dir_entries_meta_cache.get().await?;
@@ -1998,6 +2013,7 @@ impl EncryptedFs {
         if !self.exists_by_name(parent, name)? {
             return Err(FsError::NotFound("name not found"));
         }
+        self.validate_filename(&new_name)?;
 
         if parent == new_parent && name.expose_secret() == new_name.expose_secret() {
             // no-op
