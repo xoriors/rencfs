@@ -40,11 +40,8 @@ You can use it as CLI or as a library to build your custom FUSE implementation o
 
 - A short story
 
-[The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](docs/The_Hitchhiker_s_Guide_to_Building_an_Encrypted_Filesystem_in_Rust_2.pdf)
+  [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](docs/The_Hitchhiker_s_Guide_to_Building_an_Encrypted_Filesystem_in_Rust_2.pdf)
 
-- Blog and tutorial
-
-  There will be a [series](https://medium.com/@xorio42/list/828492b94c23) of articles about the evolution of this project, trying to keep it like a tutorial. This is the [first one](https://systemweakness.com/the-hitchhikers-guide-to-building-an-encrypted-filesystem-in-rust-4d678c57d65c).
 
 - Talks
 
@@ -62,11 +59,27 @@ You can use it as CLI or as a library to build your custom FUSE implementation o
 
 # Features 
 
-- [KEY features](docs/Key_features.md)
+- Key features
 
-- GUI
-
-There is a [GUI](https://github.com/radumarias/rencfs-desktop/blob/main/demo.gif) too.
+  Some of these are still being worked on and marked with `[WIP]`.
+    - `Security` using well-known audited `AEAD` cryptography primitives;
+   - [WIP] [Data integrity, data is written with WAL to ensure integrity even on crash or power loss](https://github.com/radumarias/rencfs/issues/48)
+   - [WIP] [Hide all info for enhanced privacy; all metadata, content, file name, file size, *time fields, files count, and directory structure is encrypted](https://github.com/radumarias/rencfs/issues/53)
+   - `Safely` manage `credentials` in memory with `mlock(2)`, `mprotect`, `zeroize`, and `expiry` to mitigate cold boot attacks;
+   - `Memory safety`, `performance`, and `optimized` for `concurrency` with Rust;
+   - Simplicity;
+   - Encryption key generated from password;
+  - Password saved in OS's `keyring`;
+  - `Change password` without re-encrypting all data;
+  - [WIP] [Generate unique nonce in offline mode](https://github.com/radumarias/rencfs/issues/47)
+   - [WIP] [Add file inode and chunk index to AAD](https://github.com/radumarias/rencfs/issues/49) This prevents blocks from being copied between or within files by an attacker.
+  - `Fast seek` on both reads and writes;
+  - `Writes in parallel`;
+  - Exposed with `FUSE`;
+  - Fully `concurrent` for all operations;
+  - [WIP] [Handle long file names](https://github.com/radumarias/rencfs/issues/47)
+  - [WIP] [Abstraction layer for Rust File and fs API to use it as lib to switch to using encrypted files by just changing the use statements](https://github.com/radumarias/rencfs/issues/97)
+  - [WIP] [Abstraction layer to access the storage with implementations for desktop, Wasm, Android, and iOS and the ability to write your own implementation](https://github.com/radumarias/rencfs/issues/111)
 
 - [Alternatives](docs/Alternatives.md)
 
@@ -82,17 +95,14 @@ There is a [GUI](https://github.com/radumarias/rencfs-desktop/blob/main/demo.gif
 
 # Documentation
 
-- Docs
+- [Docs](docs/)
 
 [![rencfs](website/resources/layers.png)](website/resources/layers.png)
 
 For detailed description of the various sequence flows please look into [Flows](docs/flows.md).
 
 
-- What separates us
 
-  [Asked](https://chatgpt.com/share/66e7a5a5-d254-8003-9359-9b1556b75fe9) ChatGPT if there are other solutions out there which offer all the key functionalities we do, seems like there are none :)  
-You can see the [key features](README.md#key-features) that separate us.
   
 
 
@@ -109,33 +119,36 @@ You can see the [key features](README.md#key-features) that separate us.
 
 
 
-# Future and Considerations
+# Next steps
 
-- Future
 
-    The plan is to implement it also on macOS and Windows
+   -  The plan is to implement it also on macOS and Windows
    - **Systemd service** is being worked on [rencfs-daemon](https://github.com/radumarias/rencfs-daemon)
    - **GUI** is being worked on [rencfs-desktop](https://github.com/radumarias/rencfs-desktop) and [rencfs-kotlin](https://github.com/radumarias/rencfs-kotlin)
    - **Mobile apps** for **Android** and **iOS** are being worked on [rencfs-kotlin](https://github.com/radumarias/rencfs-kotlin)
 
-- Performance
+# Considerations
+  - Performance
 
-  `Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of **1.28** on average. This is because of the hardware acceleration of AES 
+    `Aes256Gcm` is slightly faster than `ChaCha20Poly1305` by a factor of **1.28** on average. This is because of the hardware acceleration of AES 
 on most CPUs via AES-NI. However, where hardware acceleration is not available, `ChaCha20Poly1305` is faster. Also `ChaChaPoly1305` is better at `SIMD`.
 
-- [Cipher comparison](docs/Cipher_comparison.md)
-
 - [⚠️ Security ](docs/Security.md)
-
-- [Considerations](docs/Considerations.md)
+- [Cipher comparison](docs/Cipher_comparison.md)
+- [Others](docs/Considerations.md)
 
 
 
 # Contribute
 
-Feel free to fork it, change and use it however you want. If you build something interesting and feel like sharing 
+- Feel free to fork it, change and use it however you want. If you build something interesting and feel like sharing 
 pull requests are always appreciated.
 
-## How to contribute
+- How to contribute
 
-Please see [CONTRIBUTING.md](CONTRIBUTING.md).
+   Please see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+# Follow us
+- Blog and tutorial
+
+  There will be a [series](https://medium.com/@xorio42/list/828492b94c23) of articles about the evolution of this project, trying to keep it like a tutorial. This is the [first one](https://systemweakness.com/the-hitchhikers-guide-to-building-an-encrypted-filesystem-in-rust-4d678c57d65c).
