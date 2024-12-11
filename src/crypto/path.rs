@@ -6,9 +6,13 @@ use shush_rs::SecretBox;
 
 use crate::crypto::fs::OpenOptions;
 use crate::encryptedfs::{EncryptedFs, FileAttr, FileType, FsError, FsResult};
+use std::borrow::Borrow;
 use std::collections::TryReserveError;
 use std::ffi::OsStr;
+use std::hash::{Hash, Hasher};
 use std::ops::Deref;
+use std::rc::Rc;
+use std::str::FromStr;
 use std::{
     borrow::Cow,
     ffi::OsString,
@@ -22,12 +26,13 @@ use std::{
 #[cfg(test)]
 mod test;
 
+#[allow(clippy::new_without_default)]
 pub struct Metadata {
     pub attr: FileAttr,
 }
 
 impl std::fmt::Debug for Metadata {
-    fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Metadata")
             .field("ino", &self.attr.ino)
             .field("size", &self.attr.size)
@@ -81,12 +86,13 @@ impl Metadata {
 
 #[derive(PartialEq, Eq, Hash)]
 #[repr(transparent)]
-pub struct Path<'a> {
-    inner: &'a OsStr,
+#[allow(clippy::new_without_default)]
+pub struct Path {
+    inner: OsStr,
 }
 
-impl<'a> Path<'a> {
-    pub fn new<S: AsRef<OsStr> + ?Sized>(s: &'a S) -> &'a Path<'a> {
+impl Path {
+    pub fn new<S: AsRef<OsStr> + ?Sized>(s: &S) -> &Path {
         unsafe { &*(s.as_ref() as *const OsStr as *const Path) }
     }
 
@@ -122,12 +128,12 @@ impl<'a> Path<'a> {
     }
 
     pub fn parent(&self) -> Option<&Path> {
-        let path = std::path::Path::new(self.inner);
+        let path = std::path::Path::new(&self.inner);
         path.parent().map(|parent| Path::new(parent.as_os_str()))
     }
 
-    pub fn ancestors(&self) -> impl Iterator<Item = &Path<'a>> + '_ {
-        let path = std::path::Path::new(self.inner);
+    pub fn ancestors(&self) -> impl Iterator<Item = &Path> + '_ {
+        let path = std::path::Path::new(&self.inner);
 
         path.ancestors()
             .map(|ancestor| Path::new(ancestor.as_os_str()))
@@ -138,16 +144,14 @@ impl<'a> Path<'a> {
         path.file_name()
     }
 
-    pub fn strip_prefix<P>(&'a self, base: P) -> std::result::Result<&'a Path<'a>, StripPrefixError>
+    pub fn strip_prefix<P>(&self, base: P) -> std::result::Result<&Path, StripPrefixError>
     where
         P: AsRef<std::path::Path>,
     {
         let path = std::path::Path::new(&self.inner);
 
         match path.strip_prefix(base.as_ref()) {
-            Ok(stripped) => {
-                Ok(Path::new(stripped.as_os_str()))
-            }
+            Ok(stripped) => Ok(Path::new(stripped.as_os_str())),
             Err(e) => Err(e),
         }
     }
@@ -208,19 +212,23 @@ impl<'a> Path<'a> {
     }
 
     pub fn metadata(&self) -> Result<Metadata> {
+        async_util::call_async(Path::_metadata(self))
+    }
+
+    async fn _metadata(&self) -> Result<Metadata> {
         let mut dir_inode = 1;
 
-        let fs = async_util::call_async(get_fs())?;
+        let fs = get_fs().await?;
 
         let paths = get_path_and_file_name(
-            &self
+            self
                 .to_str()
                 .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
         );
 
         if paths.len() > 1 {
             for node in paths.iter().take(paths.len() - 1) {
-                dir_inode = async_util::call_async(fs.find_by_name(dir_inode, node))?
+                dir_inode = fs.find_by_name(dir_inode, node).await?
                     .ok_or_else(|| FsError::InodeNotFound)?
                     .ino;
             }
@@ -229,9 +237,9 @@ impl<'a> Path<'a> {
         let file_name = paths
             .last()
             .ok_or_else(|| FsError::InvalidInput("No filename"))?;
-        let attr = async_util::call_async(fs.find_by_name(dir_inode, file_name))?
+        let attr = fs.find_by_name(dir_inode, file_name).await?
             .ok_or_else(|| FsError::InodeNotFound)?;
-        let file_attr = async_util::call_async(fs.get_attr(attr.ino))?;
+        let file_attr = fs.get_attr(attr.ino).await?;
 
         let metadata = Metadata { attr: file_attr };
         Ok(metadata)
@@ -242,25 +250,32 @@ impl<'a> Path<'a> {
     // }
 
     pub fn canonicalize(&self) -> Result<PathBuf> {
-        todo!()
+        let path = std::path::Path::new(&self.inner);
+        Ok(PathBuf::from(path.canonicalize()))
     }
 
     pub fn read_link(&self) -> Result<PathBuf> {
-        todo!()
+        let path = std::path::Path::new(&self.inner);
+        Ok(PathBuf::from(path.read_link()))
     }
 
     pub fn read_dir(&self) -> Result<ReadDir> {
-        todo!()
+        let path = std::path::Path::new(&self.inner);
+        path.read_dir()
     }
 
     pub fn exists(&self) -> bool {
-        Path::metadata(&self).is_ok()
+        Path::metadata(self).is_ok()
     }
 
-    pub async fn try_exists(&self) -> Result<bool> {
-        let fs = async_util::call_async(get_fs())?;
+    pub fn try_exists(&self) -> Result<bool> {
+        async_util::call_async(Path::_try_exists(self))
+    }
+
+    async fn _try_exists(&self) -> Result<bool> {
+        let fs = get_fs().await?;
         let paths = get_path_and_file_name(
-            &self
+            self
                 .to_str()
                 .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
         );
@@ -270,133 +285,228 @@ impl<'a> Path<'a> {
         let mut dir_inode = 1;
         if paths.len() > 1 {
             for node in paths.iter().take(paths.len() - 1) {
-                dir_inode = async_util::call_async(fs.find_by_name(dir_inode, node))?
+                dir_inode = fs.find_by_name(dir_inode, node).await?
                     .ok_or_else(|| FsError::InodeNotFound)?
                     .ino;
             }
         }
-        let file_exists = async_util::call_async(fs.find_by_name(dir_inode, file_name))?.is_some();
+        let file_exists = fs.find_by_name(dir_inode, file_name).await?.is_some();
+        dbg!(&file_exists);
         Ok(file_exists)
     }
 
-    pub async fn is_file(&self) -> bool {
-        Path::metadata(&self).unwrap().is_file()
+    pub fn is_file(&self) -> bool {
+        match Path::metadata(self) {
+            Ok(metadata) => {metadata.is_file()},
+            Err(_) => false
+        }
     }
 
-    pub async fn is_dir(&self) -> bool {
-        Path::metadata(&self).unwrap().is_dir()
+    pub fn is_dir(&self) -> bool {
+        match Path::metadata(self) {
+            Ok(metadata) => {metadata.is_dir()},
+            Err(_) => false
+        }
     }
 
-    // pub async fn is_symlink(&self) -> bool {
-    //     Path::metadata(&self).unwrap().is_symlink()
+    // pub fn is_symlink(&self) -> bool {
+        // match Path::metadata(&self) {
+        //     Ok(metadata) => {metadata.is_symlink()},
+        //     Err(_) => false
+        // }
     // }
 
-    pub async fn into_path_buf(self: Box<Path<'a>>) -> PathBuf {
-        PathBuf::from(self.inner)
+    pub fn into_path_buf(self: Box<Path>) -> PathBuf {
+        PathBuf::from(&self.inner)
     }
 }
 
-impl<'a> std::fmt::Debug for Path<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.inner)
+impl Deref for Path {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &Self::Target {
+        std::path::Path::new(&self.inner)
     }
 }
 
-impl<'a> AsRef<std::path::Path> for Path<'a> {
+impl AsRef<std::path::Path> for Path {
     fn as_ref(&self) -> &std::path::Path {
         std::path::Path::new(&self.inner)
     }
 }
 
-impl<'a> AsRef<OsStr> for Path<'a> {
+impl AsRef<OsStr> for Path {
     fn as_ref(&self) -> &OsStr {
-        self.inner.as_ref()
+        &self.inner
     }
 }
 
-impl<'a> From<&'a String> for Path<'a> {
-    fn from(s: &'a String) -> Self {
-        Path {
-            inner: &OsStr::new(s),
-        }
+impl AsRef<Path> for Cow<'_, OsStr> {
+    fn as_ref(&self) -> &Path {
+        Path::new(self)
     }
 }
 
-impl<'a> From<&'a str> for Path<'a> {
-    fn from(s: &'a str) -> Self {
-        Path {
-            inner: &OsStr::new(s),
-        }
+// impl AsRef<Path> for Iter<'_> {
+//     fn as_ref(&self) -> &Path {
+//         let a = self;
+//         self.as_path()
+//     }
+// }
+
+impl AsRef<Path> for OsStr {
+    fn as_ref(&self) -> &Path {
+        Path::new(self)
     }
 }
 
-impl<'a> From<&'a std::path::Path> for Path<'a> {
-    fn from(p: &'a std::path::Path) -> Self {
-        Path {
-            inner: p.as_os_str(),
-        }
+impl AsRef<Path> for OsString {
+    fn as_ref(&self) -> &Path {
+        Path::new(self)
     }
 }
 
-impl<'a> From<&'a std::path::PathBuf> for Path<'a> {
-    fn from(p: &'a std::path::PathBuf) -> Self {
-        let inner = p.as_os_str();
-        Path { inner }
+impl AsRef<Path> for Path {
+    fn as_ref(&self) -> &Path {
+        self
     }
 }
 
-impl<'a> Into<OsString> for Path<'a> {
-    fn into(self) -> OsString {
-        self.inner.to_owned()
+impl AsRef<Path> for PathBuf {
+    fn as_ref(&self) -> &Path {
+        Path::new(self)
     }
 }
 
-impl<'a> PartialEq<PathBuf> for Path<'a> {
+impl AsRef<Path> for String {
+    fn as_ref(&self) -> &Path {
+        Path::new(self)
+    }
+}
+
+impl AsRef<Path> for str {
+    fn as_ref(&self) -> &Path {
+        Path::new(self)
+    }
+}
+
+impl Borrow<Path> for PathBuf {
+    fn borrow(&self) -> &Path {
+        self.deref()
+    }
+}
+
+impl Clone for Box<Path> {
+    fn clone(&self) -> Self {
+        self.to_path_buf().into_boxed_path()
+    }
+}
+
+impl From<&Path> for Arc<Path> {
+    fn from(s: &Path) -> Arc<Path> {
+        let arc: Arc<OsStr> = Arc::from(s.as_os_str());
+        unsafe { Arc::from_raw(Arc::into_raw(arc) as *const Path) }
+    }
+}
+
+impl From<&Path> for Box<Path> {
+    fn from(path: &Path) -> Box<Path> {
+        let boxed: Box<OsStr> = path.inner.into();
+        let rw = Box::into_raw(boxed) as *mut Path;
+        unsafe { Box::from_raw(rw) }
+    }
+}
+
+impl<'a> From<&'a Path> for Cow<'a, Path> {
+    fn from(s: &'a Path) -> Cow<'a, Path> {
+        Cow::Borrowed(s)
+    }
+}
+
+impl ToOwned for Path {
+    type Owned = PathBuf;
+    fn to_owned(&self) -> PathBuf {
+        self.to_path_buf()
+    }
+    fn clone_into(&self, target: &mut PathBuf) {
+        self.inner.clone_into(&mut target.inner);
+    }
+}
+
+impl std::fmt::Debug for Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", &self.inner)
+    }
+}
+
+impl PartialEq<PathBuf> for Path {
     fn eq(&self, other: &PathBuf) -> bool {
-        self.inner == other.inner.as_os_str()
+        &self.inner == other.inner.as_os_str()
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+
+impl PartialEq<PathBuf> for &Path {
+    fn eq(&self, other: &PathBuf) -> bool {
+        (*self).eq(other)
+    }
+}
+
+impl PartialEq<std::path::Path> for Path {
+    fn eq(&self, other: &std::path::Path) -> bool {
+        &self.inner == other.as_os_str()
+    }
+}
+
+#[allow(clippy::new_without_default)]
+#[derive(PartialEq, Eq)]
 pub struct PathBuf {
     inner: OsString,
 }
 
 impl std::fmt::Debug for PathBuf {
-    fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self.inner)
     }
 }
 
+impl Default for PathBuf {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PathBuf {
-    pub fn new() -> Self {
+    pub fn new() -> PathBuf {
         PathBuf {
             inner: OsString::new(),
         }
     }
 
-    pub fn from<S: Into<OsString>>(path: S) -> Self {
-        Self { inner: path.into() }
-    }
-
     pub fn with_capacity(capacity: usize) -> PathBuf {
-        todo!()
+        PathBuf {
+            inner: OsString::with_capacity(capacity),
+        }
     }
 
-    pub fn as_path(&self) -> Self {
-        todo!()
+    pub fn as_path(&self) -> &Path {
+        self
     }
 
-    pub fn push<'a, P: AsRef<Path<'a>>>(&mut self, path: P) {
-        todo!()
+    pub fn push<P: AsRef<Path>>(&mut self, path: P) {
+        let mut path_buf = std::path::PathBuf::from(&self.inner);
+        path_buf.push(path.as_ref());
+        self.inner = path_buf.into();
     }
 
     pub fn pop(&mut self) -> bool {
-        todo!()
+        let mut path_buf = std::path::PathBuf::from(&self.inner);
+        path_buf.pop()
     }
 
     pub fn set_file_name<S: AsRef<OsStr>>(&mut self, file_name: S) {
-        todo!()
+        let mut path_buf = std::path::PathBuf::from(&self.inner);
+        path_buf.set_file_name(file_name)
     }
 
     pub fn set_extension<S: AsRef<OsStr>>(&mut self, extension: S) -> bool {
@@ -411,7 +521,7 @@ impl PathBuf {
         todo!()
     }
 
-    pub fn into_boxed_path(self) -> Box<Path<'static>> {
+    pub fn into_boxed_path(self) -> Box<Path> {
         todo!()
     }
 
@@ -451,9 +561,143 @@ impl PathBuf {
     }
 }
 
-impl<'a> PartialEq<&Path<'a>> for PathBuf {
+impl Clone for PathBuf {
+    fn clone(&self) -> Self {
+        PathBuf {
+            inner: self.inner.clone(),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.inner.clone_from(&source.inner)
+    }
+}
+
+impl<'a> From<&'a PathBuf> for Cow<'a, Path> {
+    fn from(p: &'a PathBuf) -> Cow<'a, Path> {
+        Cow::Borrowed(p.as_path())
+    }
+}
+
+impl<T: ?Sized + AsRef<OsStr>> From<&T> for PathBuf {
+    fn from(s: &T) -> PathBuf {
+        PathBuf::from(s.as_ref().to_os_string())
+    }
+}
+
+impl From<std::result::Result<std::path::PathBuf, std::io::Error>> for PathBuf {
+    fn from(value: std::result::Result<std::path::PathBuf, std::io::Error>) -> Self {
+        match value {
+            Ok(path) => PathBuf::from(path),
+            Err(err) => PathBuf::new(),
+        }
+    }
+}
+
+#[allow(clippy::boxed_local)]
+impl From<Box<Path>> for PathBuf {
+    fn from(boxed: Box<Path>) -> PathBuf {
+        boxed.into_path_buf()
+    }
+}
+
+impl<'a> From<Cow<'a, Path>> for PathBuf {
+    fn from(p: Cow<'a, Path>) -> Self {
+        p.into_owned()
+    }
+}
+
+impl From<OsString> for PathBuf {
+    fn from(s: OsString) -> PathBuf {
+        PathBuf { inner: s }
+    }
+}
+
+impl From<PathBuf> for Arc<Path> {
+    fn from(s: PathBuf) -> Arc<Path> {
+        let arc: Arc<OsStr> = Arc::from(s.into_os_string());
+        unsafe { Arc::from_raw(Arc::into_raw(arc) as *const Path) }
+    }
+}
+
+impl From<PathBuf> for Box<Path> {
+    fn from(p: PathBuf) -> Box<Path> {
+        p.into_boxed_path()
+    }
+}
+
+impl<'a> From<PathBuf> for Cow<'a, Path> {
+    fn from(s: PathBuf) -> Cow<'a, Path> {
+        Cow::Owned(s)
+    }
+}
+
+impl From<PathBuf> for OsString {
+    fn from(path_buf: PathBuf) -> OsString {
+        path_buf.inner
+    }
+}
+
+impl From<PathBuf> for Rc<Path> {
+    fn from(s: PathBuf) -> Rc<Path> {
+        let rc: Rc<OsStr> = Rc::from(s.into_os_string());
+        unsafe { Rc::from_raw(Rc::into_raw(rc) as *const Path) }
+    }
+}
+
+impl From<String> for PathBuf {
+    fn from(s: String) -> PathBuf {
+        PathBuf::from(OsString::from(s))
+    }
+}
+
+// impl<P: AsRef<Path>> FromIterator<P> for PathBuf {
+//     fn from_iter<I: IntoIterator<Item = P>>(iter: I) -> PathBuf {
+//         let mut buf = PathBuf::new();
+//         buf.extend(iter);
+//         buf
+//     }
+// }
+
+impl FromStr for PathBuf {
+    type Err = core::convert::Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(PathBuf::from(s))
+    }
+}
+
+impl From<std::path::PathBuf> for PathBuf {
+    fn from(value: std::path::PathBuf) -> Self {
+        PathBuf {
+            inner: value.as_os_str().to_os_string(),
+        }
+    }
+}
+
+impl Hash for PathBuf {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        self.as_path().hash(h)
+    }
+}
+
+impl<'a> IntoIterator for &'a PathBuf {
+    type Item = &'a OsStr;
+    type IntoIter = Iter<'a>;
+    fn into_iter(self) -> Iter<'a> {
+        self.iter()
+    }
+}
+
+impl PartialEq<&Path> for PathBuf {
     fn eq(&self, other: &&Path) -> bool {
-        self.inner == other.inner
+        self.inner == other.inner.to_os_string()
+    }
+}
+
+impl PartialEq<std::path::Path> for PathBuf {
+    fn eq(&self, other: &std::path::Path) -> bool {
+        &self.inner == other.as_os_str()
     }
 }
 
@@ -469,25 +713,12 @@ impl AsRef<OsStr> for PathBuf {
     }
 }
 
-impl Into<OsString> for PathBuf {
-    fn into(self) -> OsString {
-        self.inner
+impl Deref for PathBuf {
+    type Target = Path;
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
     }
 }
-
-// impl<'a> AsRef<Path<'a>> for PathBuf {
-//     fn as_ref(&self) -> &Path<'a> {
-//         Path::new(self)
-//     }
-// }
-
-// impl Deref for PathBuf {
-//     type Target = Path<'static>;
-
-//     fn deref(&self) -> &Self::Target {
-//         self.as_ref()
-//     }
-// }
 
 async fn get_fs() -> FsResult<Arc<EncryptedFs>> {
     OpenOptions::from_scope()
