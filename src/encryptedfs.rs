@@ -407,7 +407,7 @@ impl From<TimesFileAttr> for SetFileAttr {
 #[derive(Debug, Clone)]
 pub struct DirectoryEntry {
     pub ino: u64,
-    pub name: SecretBox<String>,
+    pub name: SecretString,
     pub kind: FileType,
 }
 
@@ -423,7 +423,7 @@ impl PartialEq for DirectoryEntry {
 #[derive(Debug)]
 pub struct DirectoryEntryPlus {
     pub ino: u64,
-    pub name: SecretBox<String>,
+    pub name: SecretString,
     pub kind: FileType,
     pub attr: FileAttr,
 }
@@ -567,7 +567,7 @@ pub struct EncryptedFs {
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
     attr_cache: ExpireValue<RwLock<LruCache<u64, FileAttr>>, FsError, AttrCacheProvider>,
     dir_entries_name_cache:
-        ExpireValue<Mutex<LruCache<String, SecretBox<String>>>, FsError, DirEntryNameCacheProvider>,
+        ExpireValue<Mutex<LruCache<String, SecretString>>, FsError, DirEntryNameCacheProvider>,
     dir_entries_meta_cache:
         ExpireValue<Mutex<DirEntryMetaCache>, FsError, DirEntryMetaCacheProvider>,
     sizes_write: Mutex<HashMap<u64, AtomicU64>>,
@@ -657,6 +657,17 @@ impl EncryptedFs {
         self.read_only
     }
 
+    fn validate_filename(&self, secret_filename: &SecretBox<String>) -> FsResult<()> {
+        let filename = secret_filename.expose_secret().to_string();
+        if filename.contains('/') {
+            Err(FsError::InvalidInput("'/' not allowed in the filename"))
+        } else if filename.contains('\\') {
+            Err(FsError::InvalidInput("'\\' not allowed in the filename"))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Create a new node in the filesystem
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
@@ -681,6 +692,7 @@ impl EncryptedFs {
         if self.exists_by_name(parent, name)? {
             return Err(FsError::AlreadyExists);
         }
+        self.validate_filename(&name)?;
 
         // spawn on a dedicated runtime to not interfere with other higher priority tasks
         let self_clone = self
@@ -966,6 +978,7 @@ impl EncryptedFs {
         if !matches!(attr.kind, FileType::RegularFile) {
             return Err(FsError::InvalidInodeType);
         }
+        // todo move to method
         let self_clone = self
             .self_weak
             .lock()
@@ -1150,6 +1163,9 @@ impl EncryptedFs {
                 }
             }
         };
+
+        self.validate_filename(&name)?;
+
         let file_path = entry.path().to_str().unwrap().to_owned();
         // try from cache
         let lock = self.dir_entries_meta_cache.get().await?;
@@ -1976,9 +1992,9 @@ impl EncryptedFs {
     pub async fn rename(
         &self,
         parent: u64,
-        name: &SecretBox<String>,
+        name: &SecretString,
         new_parent: u64,
-        new_name: &SecretBox<String>,
+        new_name: &SecretString,
     ) -> FsResult<()> {
         if self.read_only {
             return Err(FsError::ReadOnly);
@@ -1998,6 +2014,7 @@ impl EncryptedFs {
         if !self.exists_by_name(parent, name)? {
             return Err(FsError::NotFound("name not found"));
         }
+        self.validate_filename(&new_name)?;
 
         if parent == new_parent && name.expose_secret() == new_name.expose_secret() {
             // no-op
@@ -2115,8 +2132,8 @@ impl EncryptedFs {
     /// Change the password of the filesystem used to access the encryption key.
     pub async fn passwd(
         data_dir: &Path,
-        old_password: SecretBox<String>,
-        new_password: SecretBox<String>,
+        old_password: SecretString,
+        new_password: SecretString,
         cipher: Cipher,
     ) -> FsResult<()> {
         check_structure(data_dir, false).await?;
