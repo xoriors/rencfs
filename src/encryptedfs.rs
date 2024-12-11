@@ -978,6 +978,7 @@ impl EncryptedFs {
         if !matches!(attr.kind, FileType::RegularFile) {
             return Err(FsError::InvalidInodeType);
         }
+        // todo move to method
         let self_clone = self
             .self_weak
             .lock()
