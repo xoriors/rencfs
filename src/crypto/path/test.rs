@@ -1,4 +1,5 @@
 use std::ffi::OsStr;
+use std::path::Component;
 
 use crate::crypto::path::*;
 use crate::test_common::{get_fs, run_test, TestSetup};
@@ -13,7 +14,7 @@ async fn test_path_methods() {
         },
         async {
             let fs = get_fs().await;
-
+            OpenOptions::set_scope(fs.clone()).await;
             // Test the `new` method
             let path = Path::new("test/path");
             assert_eq!(path.as_os_str(), std::ffi::OsStr::new("test/path"));
@@ -171,16 +172,151 @@ async fn test_path_methods() {
             assert_eq!(path.with_file_name("var"), PathBuf::from("/var"));
 
             // Test the `with_extension` method
-            // let path = Path::new("foo.rs");
-            // assert_eq!(path.with_extension("txt"), PathBuf::from("foo.txt"));
+            let path = Path::new("foo.rs");
+            assert_eq!(path.with_extension("txt"), PathBuf::from("foo.txt"));
 
-            // let path = Path::new("foo.tar.gz");
-            // assert_eq!(path.with_extension(""), PathBuf::from("foo.tar"));
-            // assert_eq!(path.with_extension("xz"), PathBuf::from("foo.tar.xz"));
+            let path = Path::new("foo.tar.gz");
+            assert_eq!(path.with_extension(""), PathBuf::from("foo.tar"));
+            assert_eq!(path.with_extension("xz"), PathBuf::from("foo.tar.xz"));
+            assert_eq!(
+                path.with_extension("").with_extension("txt"),
+                PathBuf::from("foo.txt")
+            );
+
+            // Test the `components` method
+            let mut components = Path::new("/tmp/foo.txt").components();
+
+            assert_eq!(components.next(), Some(Component::RootDir));
+            assert_eq!(
+                components.next(),
+                Some(Component::Normal(OsStr::new("tmp")))
+            );
+            assert_eq!(
+                components.next(),
+                Some(Component::Normal(OsStr::new("foo.txt")))
+            );
+            assert_eq!(components.next(), None);
+
+            // Test the `iter` method
+            let mut it = Path::new("/tmp/foo.txt").iter();
+            assert_eq!(
+                it.next(),
+                Some(OsStr::new(&std::path::MAIN_SEPARATOR.to_string()))
+            );
+            assert_eq!(it.next(), Some(OsStr::new("tmp")));
+            assert_eq!(it.next(), Some(OsStr::new("foo.txt")));
+            assert_eq!(it.next(), None);
+
+            // Test the `display` method
+            // ???
+
+            // Test the `metadata` method
+            // ???
+
+            // Test the `display` method
+            // todo!
+
+            // Test the `canonicalize` method
+            // TODO: Needs a mock filesystem
+            // let path = Path::new("/foo/test/../test/bar.rs");
             // assert_eq!(
-            //     path.with_extension("").with_extension("txt"),
-            //     PathBuf::from("foo.txt")
+            //     path.canonicalize().unwrap(),
+            //     PathBuf::from("/foo/test/bar.rs")
             // );
+
+            // Test the `read_link` method
+            // ???
+
+            // Test the `read_dir` method
+            // ???
+
+            // Test the `exists` method
+            assert!(!Path::new("does_not_exist.txt").exists());
+
+            // Test the `try_exists` method
+            assert!(!Path::new("does_not_exist.txt")
+                .try_exists()
+                .expect("Can't check existence of file does_not_exist.txt"));
+            assert!(Path::new("/root/secret_file.txt").try_exists().is_err());
+
+            // Test the `is_dir` method
+            // TODO: Needs a mock filesystem
+            // assert_eq!(Path::new("./is_a_directory/").is_dir(), true);
+            // assert_eq!(Path::new("a_file.txt").is_dir(), false);
+
+            // Test the `is_symlink` method
+            // let link_path = Path::new("link");
+            // symlink("/origin_does_not_exist/", link_path).unwrap();
+            // assert_eq!(link_path.is_symlink(), true);
+            // assert_eq!(link_path.exists(), false);
+        },
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)]
+async fn test_pathbuf_methods() {
+    run_test(
+        TestSetup {
+            key: "test_pathbuf_methods",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            OpenOptions::set_scope(fs.clone()).await;
+
+            // Test the `new` method
+            let path = PathBuf::new();
+
+            // Test the `with_capacity` method
+            let mut path = PathBuf::with_capacity(10);
+            let capacity = path.capacity();
+            path.push(r"C:\");
+            assert_eq!(capacity, path.capacity());
+
+            // Test the `as_path` method
+            let p = PathBuf::from("/test");
+            assert_eq!(Path::new("/test"), p.as_path());
+
+            // Test the `push` method
+            let mut path = PathBuf::from("/tmp");
+            path.push("file.bk");
+            assert_eq!(path, PathBuf::from("/tmp/file.bk"));
+
+            let mut path = PathBuf::from("/tmp");
+            path.push("/etc");
+            assert_eq!(path, PathBuf::from("/etc"));
+
+            // Test the `pop` method
+            let mut p = PathBuf::from("/spirited/away.rs");
+            p.pop();
+            assert_eq!(Path::new("/spirited"), p);
+            p.pop();
+            assert_eq!(Path::new("/"), p);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         },
     )
     .await;
