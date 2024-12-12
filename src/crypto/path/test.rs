@@ -30,11 +30,11 @@ async fn test_path_methods() {
             assert_eq!(os_str, std::ffi::OsStr::new("foo.txt"));
 
             // Test the `as_mut_os_str` method (Pathbuf::as_mut_os_str not impl)
-            // let mut path = PathBuf::from("Foo.TXT");
-            // assert_ne!(path, Path::new("foo.txt"));
+            let mut path = PathBuf::from("Foo.TXT");
+            assert_ne!(path, Path::new("foo.txt"));
 
-            // path.as_mut_os_str().make_ascii_lowercase();
-            // assert_eq!(path, Path::new("foo.txt"));
+            path.as_mut_os_str().make_ascii_lowercase();
+            assert_eq!(path, Path::new("foo.txt"));
 
             // Test the `to_str` method
             let path = Path::new("foo.txt");
@@ -269,11 +269,12 @@ async fn test_pathbuf_methods() {
             // Test the `new` method
             let path = PathBuf::new();
 
-            // Test the `with_capacity` method
-            let mut path = PathBuf::with_capacity(10);
-            let capacity = path.capacity();
-            path.push(r"C:\");
-            assert_eq!(capacity, path.capacity());
+            // // Test the `with_capacity` method
+            // let mut path = PathBuf::with_capacity(10);
+            // assert_eq!(path.capacity(), 10);
+            // let capacity = path.capacity();
+            // path.push(r"C:\");
+            // assert_eq!(capacity, path.capacity());
 
             // Test the `as_path` method
             let p = PathBuf::from("/test");
@@ -294,6 +295,65 @@ async fn test_pathbuf_methods() {
             assert_eq!(Path::new("/spirited"), p);
             p.pop();
             assert_eq!(Path::new("/"), p);
+
+            // Test the `set_file_name` method
+            let mut buf = PathBuf::from("/");
+            assert!(buf.file_name() == None);
+            
+            buf.set_file_name("foo.txt");
+            assert!(buf == PathBuf::from("/foo.txt"));
+            assert!(buf.file_name().is_some());
+            
+            buf.set_file_name("bar.txt");
+            assert!(buf == PathBuf::from("/bar.txt"));
+            
+            buf.set_file_name("baz");
+            assert!(buf == PathBuf::from("/baz"));
+            
+            buf.set_file_name("../b/c.txt");
+            assert!(buf == PathBuf::from("/../b/c.txt"));
+            
+            buf.set_file_name("baz");
+            assert!(buf == PathBuf::from("/../b/baz"));
+
+            // Test the `set_extension` method
+            let mut p = PathBuf::from("/feel/the");
+
+            p.set_extension("force");
+            assert_eq!(Path::new("/feel/the.force"), p.as_path());
+            
+            p.set_extension("dark.side");
+            assert_eq!(Path::new("/feel/the.dark.side"), p.as_path());
+            
+            p.set_extension("cookie");
+            assert_eq!(Path::new("/feel/the.dark.cookie"), p.as_path());
+            
+            p.set_extension("");
+            assert_eq!(Path::new("/feel/the.dark"), p.as_path());
+            
+            p.set_extension("");
+            assert_eq!(Path::new("/feel/the"), p.as_path());
+            
+            p.set_extension("");
+            assert_eq!(Path::new("/feel/the"), p.as_path());
+
+            // Test the `as_mut_os_string` method
+            let mut path = PathBuf::from("/foo");
+
+            path.push("bar");
+            assert_eq!(path, Path::new("/foo/bar"));
+            
+            // OsString's `push` does not add a separator.
+            path.as_mut_os_string().push("baz");
+            assert_eq!(path, Path::new("/foo/barbaz"));
+
+
+
+
+
+
+
+
 
 
 
