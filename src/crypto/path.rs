@@ -10,7 +10,7 @@ use std::borrow::Borrow;
 use std::collections::TryReserveError;
 use std::ffi::OsStr;
 use std::hash::{Hash, Hasher};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::str::FromStr;
 use std::{
@@ -26,7 +26,7 @@ use std::{
 #[cfg(test)]
 mod test;
 
-#[allow(clippy::new_without_default)]
+#[allow(clippy::new_without_default, clippy::len_without_is_empty)]
 pub struct Metadata {
     pub attr: FileAttr,
 }
@@ -106,6 +106,10 @@ impl Path {
 
     pub fn to_string_lossy(&self) -> Cow<'_, str> {
         self.inner.to_string_lossy()
+    }
+
+    pub fn as_mut_os_str(&mut self) -> &mut OsStr {
+        &mut self.inner
     }
 
     pub fn to_path_buf(&self) -> PathBuf {
@@ -221,14 +225,15 @@ impl Path {
         let fs = get_fs().await?;
 
         let paths = get_path_and_file_name(
-            self
-                .to_str()
+            self.to_str()
                 .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
         );
 
         if paths.len() > 1 {
             for node in paths.iter().take(paths.len() - 1) {
-                dir_inode = fs.find_by_name(dir_inode, node).await?
+                dir_inode = fs
+                    .find_by_name(dir_inode, node)
+                    .await?
                     .ok_or_else(|| FsError::InodeNotFound)?
                     .ino;
             }
@@ -237,7 +242,9 @@ impl Path {
         let file_name = paths
             .last()
             .ok_or_else(|| FsError::InvalidInput("No filename"))?;
-        let attr = fs.find_by_name(dir_inode, file_name).await?
+        let attr = fs
+            .find_by_name(dir_inode, file_name)
+            .await?
             .ok_or_else(|| FsError::InodeNotFound)?;
         let file_attr = fs.get_attr(attr.ino).await?;
 
@@ -275,8 +282,7 @@ impl Path {
     async fn _try_exists(&self) -> Result<bool> {
         let fs = get_fs().await?;
         let paths = get_path_and_file_name(
-            self
-                .to_str()
+            self.to_str()
                 .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
         );
         let file_name = paths
@@ -285,7 +291,9 @@ impl Path {
         let mut dir_inode = 1;
         if paths.len() > 1 {
             for node in paths.iter().take(paths.len() - 1) {
-                dir_inode = fs.find_by_name(dir_inode, node).await?
+                dir_inode = fs
+                    .find_by_name(dir_inode, node)
+                    .await?
                     .ok_or_else(|| FsError::InodeNotFound)?
                     .ino;
             }
@@ -297,27 +305,33 @@ impl Path {
 
     pub fn is_file(&self) -> bool {
         match Path::metadata(self) {
-            Ok(metadata) => {metadata.is_file()},
-            Err(_) => false
+            Ok(metadata) => metadata.is_file(),
+            Err(_) => false,
         }
     }
 
     pub fn is_dir(&self) -> bool {
         match Path::metadata(self) {
-            Ok(metadata) => {metadata.is_dir()},
-            Err(_) => false
+            Ok(metadata) => metadata.is_dir(),
+            Err(_) => false,
         }
     }
 
     // pub fn is_symlink(&self) -> bool {
-        // match Path::metadata(&self) {
-        //     Ok(metadata) => {metadata.is_symlink()},
-        //     Err(_) => false
-        // }
+    // match Path::metadata(&self) {
+    //     Ok(metadata) => {metadata.is_symlink()},
+    //     Err(_) => false
+    // }
     // }
 
+    #[allow(clippy::boxed_local)]
     pub fn into_path_buf(self: Box<Path>) -> PathBuf {
         PathBuf::from(&self.inner)
+    }
+
+    
+    fn from_inner_mut(inner: &mut OsStr) -> &mut Path {
+        unsafe { &mut *(inner as *mut OsStr as *mut Path) }
     }
 }
 
@@ -445,7 +459,6 @@ impl PartialEq<PathBuf> for Path {
     }
 }
 
-
 impl PartialEq<PathBuf> for &Path {
     fn eq(&self, other: &PathBuf) -> bool {
         (*self).eq(other)
@@ -458,8 +471,8 @@ impl PartialEq<std::path::Path> for Path {
     }
 }
 
-#[allow(clippy::new_without_default)]
 #[derive(PartialEq, Eq)]
+#[allow(clippy::new_without_default)]
 pub struct PathBuf {
     inner: OsString,
 }
@@ -494,6 +507,7 @@ impl PathBuf {
     }
 
     pub fn push<P: AsRef<Path>>(&mut self, path: P) {
+        // TODO: FIX capacity
         let mut path_buf = std::path::PathBuf::from(&self.inner);
         path_buf.push(path.as_ref());
         self.inner = path_buf.into();
@@ -501,64 +515,72 @@ impl PathBuf {
 
     pub fn pop(&mut self) -> bool {
         let mut path_buf = std::path::PathBuf::from(&self.inner);
-        path_buf.pop()
+        let result = path_buf.pop();
+        self.inner = path_buf.into();
+        result
     }
 
     pub fn set_file_name<S: AsRef<OsStr>>(&mut self, file_name: S) {
         let mut path_buf = std::path::PathBuf::from(&self.inner);
-        path_buf.set_file_name(file_name)
+        path_buf.set_file_name(file_name);
+        self.inner = path_buf.into();
     }
 
     pub fn set_extension<S: AsRef<OsStr>>(&mut self, extension: S) -> bool {
-        todo!()
+        let mut path_buf = std::path::PathBuf::from(&self.inner);
+        let result = path_buf.set_extension(extension);
+        self.inner = path_buf.into();
+        result
     }
 
-    pub fn as_mut_os_str(&mut self) -> &mut OsString {
-        todo!()
+    pub fn as_mut_os_string(&mut self) -> &mut OsString {
+        &mut self.inner
     }
 
     pub fn into_os_string(self) -> OsString {
-        todo!()
+        self.inner
     }
 
     pub fn into_boxed_path(self) -> Box<Path> {
-        todo!()
+        let rw = Box::into_raw(self.inner.into_boxed_os_str()) as *mut Path;
+        unsafe { Box::from_raw(rw) }
     }
 
     pub fn capacity(&self) -> usize {
-        todo!()
+        self.inner.capacity()
     }
 
     pub fn clear(&mut self) {
-        todo!()
+        self.inner.clear()
     }
 
     pub fn reserve(&mut self, additional: usize) {
-        todo!()
+        self.inner.reserve(additional)
     }
 
     pub fn try_reserve(&mut self, additional: usize) -> std::result::Result<(), TryReserveError> {
-        todo!()
+        self.inner.try_reserve(additional)
     }
 
     pub fn reserve_exact(&mut self, additional: usize) {
-        todo!()
+        self.inner.reserve_exact(additional)
     }
 
     pub fn try_reserve_exact(
         &mut self,
         additional: usize,
     ) -> std::result::Result<(), TryReserveError> {
-        todo!()
+        self.inner.try_reserve_exact(additional)
     }
 
     pub fn shrink_to_fit(&mut self) {
-        todo!()
+        self.inner.shrink_to_fit()
     }
 
     pub fn shrink_to(&mut self, min_capacity: usize) {
-        todo!()
+        self.inner.shrink_to(min_capacity)
     }
+
 }
 
 impl Clone for PathBuf {
@@ -697,7 +719,7 @@ impl PartialEq<&Path> for PathBuf {
 
 impl PartialEq<std::path::Path> for PathBuf {
     fn eq(&self, other: &std::path::Path) -> bool {
-        &self.inner == other.as_os_str()
+        self.inner == other.as_os_str().to_os_string()
     }
 }
 
@@ -717,6 +739,12 @@ impl Deref for PathBuf {
     type Target = Path;
     fn deref(&self) -> &Self::Target {
         self.as_ref()
+    }
+}
+
+impl DerefMut for PathBuf {
+    fn deref_mut(&mut self) -> &mut Path {
+        Path::from_inner_mut(&mut self.inner)
     }
 }
 
