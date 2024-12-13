@@ -1,7 +1,10 @@
 use std::ffi::OsStr;
 use std::path::Component;
 
+use shush_rs::SecretString;
+
 use crate::crypto::path::*;
+use crate::encryptedfs::{CreateFileAttr, PasswordProvider};
 use crate::test_common::{get_fs, run_test, TestSetup};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -29,7 +32,7 @@ async fn test_path_methods() {
             let os_str = os_str.as_os_str();
             assert_eq!(os_str, std::ffi::OsStr::new("foo.txt"));
 
-            // Test the `as_mut_os_str` method (Pathbuf::as_mut_os_str not impl)
+            // Test the `as_mut_os_str` method
             let mut path = PathBuf::from("Foo.TXT");
             assert_ne!(path, Path::new("foo.txt"));
 
@@ -208,21 +211,86 @@ async fn test_path_methods() {
             assert_eq!(it.next(), None);
 
             // Test the `display` method
-            // ???
+            let path = Path::new("/spirited/away.rs");
+            let expected_display = std::path::Path::new("/spirited/away.rs")
+                .display()
+                .to_string();
+            let actual_display = path.display().to_string();
+
+            assert_eq!(expected_display, actual_display);
 
             // Test the `metadata` method
-            // ???
+            let mock_file = Path::new("mock_file");
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(mock_file)
+                .await;
+            let mock_metadata = mock_file.metadata().unwrap();
 
-            // Test the `display` method
-            // todo!
+            // Test the timestamps
+            let created = mock_metadata.created().unwrap();
+            let modified = mock_metadata.modified().unwrap();
+            let accessed = mock_metadata.accessed().unwrap();
 
-            // Test the `canonicalize` method
-            // TODO: Needs a mock filesystem
-            // let path = Path::new("/foo/test/../test/bar.rs");
-            // assert_eq!(
-            //     path.canonicalize().unwrap(),
-            //     PathBuf::from("/foo/test/bar.rs")
-            // );
+            assert!(created <= modified, "created should be <= modified");
+            assert!(modified <= accessed, "modified should be <= accessed");
+
+            let now = std::time::SystemTime::now();
+
+            assert!(
+                created <= now,
+                "created timestamp should not be in the future"
+            );
+            assert!(
+                modified <= now,
+                "modified timestamp should not be in the future"
+            );
+            assert!(
+                accessed <= now,
+                "accessed timestamp should not be in the future"
+            );
+
+            assert_ne!(
+                created
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                0
+            );
+            assert_ne!(
+                modified
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                0
+            );
+            assert_ne!(
+                accessed
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                0
+            );
+
+            let now = std::time::SystemTime::now();
+            let epsilon = std::time::Duration::from_secs(5);
+            let metadata = mock_file.metadata().unwrap();
+            let accessed = metadata.accessed().unwrap();
+
+            assert!(
+                accessed >= now - epsilon && accessed <= now + epsilon,
+                "accessed timestamp is not within expected range"
+            );
+
+            // Test the `file_type` field
+            assert_eq!(
+                mock_metadata.file_type(),
+                crate::encryptedfs::FileType::RegularFile
+            );
+
+            // Test the `len` field
+            assert_eq!(mock_metadata.len(), 0);
 
             // Test the `read_link` method
             // ???
@@ -233,6 +301,48 @@ async fn test_path_methods() {
             // Test the `exists` method
             assert!(!Path::new("does_not_exist.txt").exists());
 
+            let name_dir_foo = SecretBox::from_str("foo").unwrap();
+            let name_dir_test = SecretBox::from_str("test").unwrap();
+            let name_file_bar = SecretBox::from_str("bar.rs").unwrap();
+
+            let dir_foo = fs
+                .create(1, &name_dir_foo, dir_attr(), true, true)
+                .await
+                .unwrap();
+            let dir_foo_ino = fs
+                .find_by_name(1, &name_dir_foo)
+                .await
+                .unwrap()
+                .unwrap()
+                .ino;
+
+            let dir_test = fs
+                .create(dir_foo_ino, &name_dir_test, dir_attr(), true, true)
+                .await
+                .unwrap();
+            let dir_test_ino = fs
+                .find_by_name(dir_foo_ino, &name_dir_test)
+                .await
+                .unwrap()
+                .unwrap()
+                .ino;
+
+            let file_bar = fs
+                .create(dir_test_ino, &name_file_bar, file_attr(), true, true)
+                .await
+                .unwrap();
+            let file_bar_ino = fs
+                .find_by_name(dir_test_ino, &name_file_bar)
+                .await
+                .unwrap()
+                .unwrap()
+                .ino;
+
+            let path = Path::new("foo/");
+
+            let path = Path::new("foo/test/bar.rs");
+            assert!(path.exists());
+
             // Test the `try_exists` method
             assert!(!Path::new("does_not_exist.txt")
                 .try_exists()
@@ -240,15 +350,10 @@ async fn test_path_methods() {
             assert!(Path::new("/root/secret_file.txt").try_exists().is_err());
 
             // Test the `is_dir` method
-            // TODO: Needs a mock filesystem
-            // assert_eq!(Path::new("./is_a_directory/").is_dir(), true);
-            // assert_eq!(Path::new("a_file.txt").is_dir(), false);
+            assert_eq!(Path::new("foo/").is_dir(), true);
+            assert_eq!(Path::new("foo/test/").is_dir(), true);
+            assert_eq!(Path::new("foo/test/../test/bar.rs").is_dir(), false);
 
-            // Test the `is_symlink` method
-            // let link_path = Path::new("link");
-            // symlink("/origin_does_not_exist/", link_path).unwrap();
-            // assert_eq!(link_path.is_symlink(), true);
-            // assert_eq!(link_path.exists(), false);
         },
     )
     .await;
@@ -299,20 +404,20 @@ async fn test_pathbuf_methods() {
             // Test the `set_file_name` method
             let mut buf = PathBuf::from("/");
             assert!(buf.file_name() == None);
-            
+
             buf.set_file_name("foo.txt");
             assert!(buf == PathBuf::from("/foo.txt"));
             assert!(buf.file_name().is_some());
-            
+
             buf.set_file_name("bar.txt");
             assert!(buf == PathBuf::from("/bar.txt"));
-            
+
             buf.set_file_name("baz");
             assert!(buf == PathBuf::from("/baz"));
-            
+
             buf.set_file_name("../b/c.txt");
             assert!(buf == PathBuf::from("/../b/c.txt"));
-            
+
             buf.set_file_name("baz");
             assert!(buf == PathBuf::from("/../b/baz"));
 
@@ -321,19 +426,19 @@ async fn test_pathbuf_methods() {
 
             p.set_extension("force");
             assert_eq!(Path::new("/feel/the.force"), p.as_path());
-            
+
             p.set_extension("dark.side");
             assert_eq!(Path::new("/feel/the.dark.side"), p.as_path());
-            
+
             p.set_extension("cookie");
             assert_eq!(Path::new("/feel/the.dark.cookie"), p.as_path());
-            
+
             p.set_extension("");
             assert_eq!(Path::new("/feel/the.dark"), p.as_path());
-            
+
             p.set_extension("");
             assert_eq!(Path::new("/feel/the"), p.as_path());
-            
+
             p.set_extension("");
             assert_eq!(Path::new("/feel/the"), p.as_path());
 
@@ -342,42 +447,40 @@ async fn test_pathbuf_methods() {
 
             path.push("bar");
             assert_eq!(path, Path::new("/foo/bar"));
-            
-            // OsString's `push` does not add a separator.
+
             path.as_mut_os_string().push("baz");
             assert_eq!(path, Path::new("/foo/barbaz"));
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         },
     )
     .await;
+}
+
+struct PasswordProviderImpl {}
+
+impl PasswordProvider for PasswordProviderImpl {
+    fn get_password(&self) -> Option<SecretString> {
+        Some(SecretString::from_str("pass42").unwrap())
+    }
+}
+
+const fn file_attr() -> CreateFileAttr {
+    CreateFileAttr {
+        kind: FileType::RegularFile,
+        perm: 0o644,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        flags: 0,
+    }
+}
+
+const fn dir_attr() -> CreateFileAttr {
+    CreateFileAttr {
+        kind: FileType::Directory,
+        perm: 0o644,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        flags: 0,
+    }
 }
