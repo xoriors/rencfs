@@ -4,7 +4,7 @@
 use crate::async_util;
 use shush_rs::SecretBox;
 
-use crate::crypto::fs::OpenOptions;
+use crate::crypto::fs::{parse_path, OpenOptions};
 use crate::encryptedfs::{EncryptedFs, FileAttr, FileType, FsError, FsResult};
 use std::borrow::Borrow;
 use std::collections::TryReserveError;
@@ -33,15 +33,20 @@ pub struct Metadata {
 
 impl std::fmt::Debug for Metadata {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = format!(
+            "FileType {{ is_file: {}, is_dir: {}, is_symlink: {} }}",
+            self.is_file(),
+            self.is_dir(),
+            false
+        );
         f.debug_struct("Metadata")
             .field("ino", &self.attr.ino)
-            .field("size", &self.attr.size)
-            .field("blocks", &self.attr.blocks)
-            .field("kind", &self.attr.kind)
+            .field("kind", &kind)
             .field("perm", &format_args!("{:#o}", self.attr.perm))
-            .field("nlink", &self.attr.nlink)
-            .field("uid", &self.attr.uid)
-            .field("gid", &self.attr.gid)
+            .field("len", &self.attr.size)
+            .field("modified", &self.attr.mtime)
+            .field("accessed", &self.attr.atime)
+            .field("created", &self.attr.crtime)
             .finish()
     }
 }
@@ -64,16 +69,16 @@ impl Metadata {
     }
 
     pub fn is_dir(&self) -> bool {
-        matches!(self.attr.kind, FileType::RegularFile)
-    }
-
-    pub fn is_file(&self) -> bool {
         matches!(self.attr.kind, FileType::Directory)
     }
 
-    // pub fn is_symlink(&self) -> bool {
-    // matches!(self.attr.kind, FileType::Symlink)
-    // }
+    pub fn is_file(&self) -> bool {
+        matches!(self.attr.kind, FileType::RegularFile)
+    }
+
+    pub fn is_symlink(&self) -> bool {
+        todo!()
+    }
 
     pub fn len(&self) -> u64 {
         self.attr.size
@@ -84,9 +89,9 @@ impl Metadata {
     }
 }
 
+#[allow(clippy::new_without_default)]
 #[derive(PartialEq, Eq, Hash)]
 #[repr(transparent)]
-#[allow(clippy::new_without_default)]
 pub struct Path {
     inner: OsStr,
 }
@@ -252,13 +257,12 @@ impl Path {
         Ok(metadata)
     }
 
-    // pub fn symlink_metadata(&self) -> Result<Metadata> {
-    //     todo!()
-    // }
+    pub fn symlink_metadata(&self) -> Result<Metadata> {
+        todo!()
+    }
 
     pub fn canonicalize(&self) -> Result<PathBuf> {
-        let path = std::path::Path::new(&self.inner);
-        Ok(PathBuf::from(path.canonicalize()))
+        todo!()
     }
 
     pub fn read_link(&self) -> Result<PathBuf> {
@@ -299,7 +303,6 @@ impl Path {
             }
         }
         let file_exists = fs.find_by_name(dir_inode, file_name).await?.is_some();
-        dbg!(&file_exists);
         Ok(file_exists)
     }
 
@@ -317,19 +320,18 @@ impl Path {
         }
     }
 
-    // pub fn is_symlink(&self) -> bool {
-    // match Path::metadata(&self) {
-    //     Ok(metadata) => {metadata.is_symlink()},
-    //     Err(_) => false
-    // }
-    // }
+    pub fn is_symlink(&self) -> bool {
+        match Path::metadata(&self) {
+            Ok(metadata) => metadata.is_symlink(),
+            Err(_) => false,
+        }
+    }
 
     #[allow(clippy::boxed_local)]
     pub fn into_path_buf(self: Box<Path>) -> PathBuf {
         PathBuf::from(&self.inner)
     }
 
-    
     fn from_inner_mut(inner: &mut OsStr) -> &mut Path {
         unsafe { &mut *(inner as *mut OsStr as *mut Path) }
     }
@@ -580,7 +582,6 @@ impl PathBuf {
     pub fn shrink_to(&mut self, min_capacity: usize) {
         self.inner.shrink_to(min_capacity)
     }
-
 }
 
 impl Clone for PathBuf {
@@ -754,15 +755,8 @@ async fn get_fs() -> FsResult<Arc<EncryptedFs>> {
         .ok_or(FsError::Other("not initialized"))
 }
 
-pub fn get_path_and_file_name(path: &str) -> Vec<SecretBox<String>> {
+fn get_path_and_file_name(path: &str) -> Vec<SecretBox<String>> {
     let path = Path::new(path);
-    path.components()
-        .filter_map(|comp| {
-            if let std::path::Component::Normal(c) = comp {
-                Some(SecretBox::new(Box::new(c.to_string_lossy().to_string())))
-            } else {
-                None
-            }
-        })
-        .collect()
+
+    parse_path(path)
 }

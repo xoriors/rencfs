@@ -418,11 +418,6 @@ async fn test_async_file_options_paths() {
                     .unwrap();
                 fs.release(file_in_root.0).await.unwrap();
 
-                // TODO:
-                // Empty paths handling
-                // Current directory symbols: "././dir/test1"
-                // Paths with parent directory? "./../dir/test1"
-
                 // Test paths and sub directories
                 let file = OpenOptions::new()
                     .read(true)
@@ -441,10 +436,7 @@ async fn test_async_file_options_paths() {
                     .open(".test1")
                     .await
                     .map_err(|e| e.kind());
-                assert!(file.is_ok());
-                let file = file.unwrap();
-                fs.release(file.context.fh_write).await.unwrap();
-                fs.release(file.context.fh_read).await.unwrap();
+                assert!(file.is_err());
 
                 let file = OpenOptions::new()
                     .read(true)
@@ -491,6 +483,28 @@ async fn test_async_file_options_paths() {
                     .read(true)
                     .write(true)
                     .open(".//dir//test1")
+                    .await
+                    .map_err(|e| e.kind());
+                assert!(file.is_ok());
+                let file = file.unwrap();
+                fs.release(file.context.fh_write).await.unwrap();
+                fs.release(file.context.fh_read).await.unwrap();
+
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(".//dir//..//dir//test1")
+                    .await
+                    .map_err(|e| e.kind());
+                assert!(file.is_ok());
+                let file = file.unwrap();
+                fs.release(file.context.fh_write).await.unwrap();
+                fs.release(file.context.fh_read).await.unwrap();
+
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open("././dir//test1")
                     .await
                     .map_err(|e| e.kind());
                 assert!(file.is_ok());

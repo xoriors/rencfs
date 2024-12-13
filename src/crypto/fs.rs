@@ -467,18 +467,37 @@ impl AsyncSeek for File {
     }
 }
 
-pub fn get_path_and_file_name(path: SecretBox<String>) -> Vec<SecretBox<String>> {
+fn get_path_and_file_name(path: SecretBox<String>) -> Vec<SecretBox<String>> {
     let input = path.expose_secret();
-    let path = input.strip_prefix(".").unwrap_or(&input);
-    let mut path_segments = Vec::new();
-    for segment in path.split("/") {
-        if segment.is_empty() {
-            continue;
+    let input = input.to_string();
+    let path = Path::new(&input);
+
+    parse_path(path)
+}
+
+pub fn parse_path(path: &Path) -> Vec<SecretBox<String>> {
+    let mut stack: Vec<SecretBox<String>> = Vec::new();
+
+    // TODO. Introduce manual parsing.
+    for comp in path.components() {
+        match comp {
+            std::path::Component::Normal(c) => {
+                stack.push(SecretBox::new(Box::new(
+                    c.to_os_string().to_owned().into_string().unwrap(),
+                )));
+            }
+            std::path::Component::ParentDir => {
+                stack.pop();
+            }
+            std::path::Component::CurDir => {
+                continue;
+            }
+            _ => {
+                continue;
+            }
         }
-        let segment = SecretString::from_str(segment).unwrap();
-        path_segments.push(segment);
     }
-    path_segments
+    stack
 }
 
 async fn get_fs() -> FsResult<Arc<EncryptedFs>> {
