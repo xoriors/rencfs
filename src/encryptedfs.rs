@@ -44,7 +44,7 @@ pub(crate) const KEY_SALT_FILENAME: &str = "key.salt";
 pub(crate) const LS_DIR: &str = "ls";
 pub(crate) const HASH_DIR: &str = "hash";
 
-pub(crate) const ROOT_INODE: u64 = 1;
+pub const ROOT_INODE: u64 = 1;
 
 fn spawn_runtime() -> Runtime {
     let runtime = tokio::runtime::Builder::new_multi_thread()
