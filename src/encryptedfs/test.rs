@@ -2492,16 +2492,21 @@ async fn test_file_names() {
         },
         async {
             let fs = get_fs().await;
-            let test_file = SecretString::from_str("test\\file").unwrap();
-            let test_file2 = SecretString::from_str("test/file").unwrap();
-            let test_dir1 = SecretString::from_str("test\\dir").unwrap();
-            let test_dir2 = SecretString::from_str("test/dir").unwrap();
+            let test_file1 = SecretString::from_str("test\\file1").unwrap();
+            let test_file1_renamed = SecretString::from_str("test/file1_renamed").unwrap();
+            let test_file2 = SecretString::from_str("test/file2").unwrap();
+            let test_file2_renamed = SecretString::from_str("test\\file2_renamed").unwrap();
+            let test_dir1 = SecretString::from_str("test\\dir1").unwrap();
+            let test_dir1_renamed = SecretString::from_str("test/dir1_renamed").unwrap();
+            let test_dir2 = SecretString::from_str("test/dir2").unwrap();
+            let test_dir2_renamed = SecretString::from_str("test\\dir2_renamed").unwrap();
+            let new_parent = ROOT_INODE;
 
             // create file 1
             assert!(matches!(
                 fs.create(
                     ROOT_INODE,
-                    &test_file,
+                    &test_file1,
                     create_attr(FileType::RegularFile),
                     false,
                     true,
@@ -2514,9 +2519,9 @@ async fn test_file_names() {
             assert!(matches!(
                 fs.rename(
                     ROOT_INODE,
-                    &test_file,
-                    ROOT_INODE,
-                    &test_file2
+                    &test_file1,
+                    new_parent,
+                    &test_file1_renamed
                 )
                 .await,
                 Err(FsError::InvalidInput("'/' not allowed in the filename"))
@@ -2540,8 +2545,8 @@ async fn test_file_names() {
                 fs.rename(
                     ROOT_INODE,
                     &test_file2,
-                    ROOT_INODE,
-                    &test_file
+                    new_parent,
+                    &test_file2_renamed,
                 )
                 .await,
                 Err(FsError::InvalidInput("'\\' not allowed in the filename"))
@@ -2565,8 +2570,8 @@ async fn test_file_names() {
                 fs.rename(
                     ROOT_INODE,
                     &test_dir1,
-                    ROOT_INODE,
-                    &test_dir2,
+                    new_parent,
+                    &test_dir1_renamed,
                 )
                 .await,
                 Err(FsError::InvalidInput("'/' not allowed in the filename"))
@@ -2590,8 +2595,8 @@ async fn test_file_names() {
                 fs.rename(
                     ROOT_INODE,
                     &test_dir2,
-                    ROOT_INODE,
-                    &test_dir1,
+                    new_parent,
+                    &test_dir2_renamed,
                 )
                 .await,
                 Err(FsError::InvalidInput("'\\' not allowed in the filename"))
