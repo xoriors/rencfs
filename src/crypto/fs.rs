@@ -1,3 +1,4 @@
+use shush_rs::{ExposeSecret, SecretBox, SecretString};
 use std::future::Future;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -5,6 +6,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::SystemTime;
 
 use crate::async_util;
 use crate::crypto::Cipher;
@@ -12,7 +14,6 @@ use crate::encryptedfs::{
     CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult, PasswordProvider,
 };
 use anyhow::Result;
-use shush_rs::{ExposeSecret, SecretBox, SecretString};
 use thread_local::ThreadLocal;
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 use tokio::sync::Mutex;
@@ -167,7 +168,7 @@ impl File {
     }
 
     async fn init(init: FileInit, fs: Arc<EncryptedFs>) -> FsResult<FileContext> {
-        let paths = get_path_and_file_name(init.path);
+        let paths = get_path_from_secret(init.path);
         let mut dir_inode = ROOT_INODE;
         let file_name = paths
             .last()
@@ -349,6 +350,34 @@ impl File {
             pos,
         })
     }
+
+    pub async fn metadata(&self) -> Result<Metadata> {
+        let fs = get_fs().await?;
+        let attr = fs.get_attr(self.context.ino).await?;
+        Ok(Metadata { attr })
+    }
+}
+
+pub async fn metadata<P: AsRef<Path>>(path: P) -> std::io::Result<Metadata> {
+    let fs = get_fs().await?;
+
+    let (file_name, dir_inode) = validate_path_exists(&path).await?;
+
+    let attr = fs
+        .find_by_name(dir_inode, &file_name)
+        .await?
+        .ok_or_else(|| FsError::InodeNotFound)?;
+    let file_attr = fs.get_attr(attr.ino).await?;
+
+    let metadata = Metadata { attr: file_attr };
+    Ok(metadata)
+}
+
+pub async fn exists<P: AsRef<Path>>(path: P) -> std::io::Result<bool> {
+    let fs = get_fs().await?;
+    let (file_name, dir_inode) = validate_path_exists(&path).await?;
+    let file_exists = fs.find_by_name(dir_inode, &file_name).await?.is_some();
+    Ok(file_exists)
 }
 
 impl AsyncRead for File {
@@ -467,10 +496,83 @@ impl AsyncSeek for File {
     }
 }
 
-fn get_path_and_file_name(path: SecretBox<String>) -> Vec<SecretBox<String>> {
+/// Metadata information about a file.
+/// 
+/// Metadata is a wrapped for [`rencfs::encryptedfs::FileAttr`]
+/// 
+#[allow(clippy::new_without_default, clippy::len_without_is_empty)]
+pub struct Metadata {
+    pub attr: FileAttr,
+}
+
+impl std::fmt::Debug for Metadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = format!(
+            "FileType {{ is_file: {}, is_dir: {}, is_symlink: {} }}",
+            self.is_file(),
+            self.is_dir(),
+            false
+        );
+        f.debug_struct("Metadata")
+            .field("ino", &self.attr.ino)
+            .field("kind", &kind)
+            .field("perm", &format_args!("{:#o}", self.attr.perm))
+            .field("len", &self.attr.size)
+            .field("modified", &self.attr.mtime)
+            .field("accessed", &self.attr.atime)
+            .field("created", &self.attr.crtime)
+            .finish()
+    }
+}
+
+impl Metadata {
+    pub fn accessed(&self) -> Result<SystemTime> {
+        Ok(self.attr.atime)
+    }
+
+    pub fn modified(&self) -> Result<SystemTime> {
+        Ok(self.attr.mtime)
+    }
+
+    pub fn created(&self) -> Result<SystemTime> {
+        Ok(self.attr.crtime)
+    }
+
+    pub fn file_type(&self) -> FileType {
+        self.attr.kind
+    }
+
+    pub fn is_dir(&self) -> bool {
+        matches!(self.attr.kind, FileType::Directory)
+    }
+
+    pub fn is_file(&self) -> bool {
+        matches!(self.attr.kind, FileType::RegularFile)
+    }
+
+    pub fn is_symlink(&self) -> bool {
+        unimplemented!()
+    }
+
+    pub fn len(&self) -> u64 {
+        self.attr.size
+    }
+
+    pub fn permissions(&self) -> u64 {
+        self.attr.perm as u64
+    }
+}
+
+fn get_path_from_secret(path: SecretBox<String>) -> Vec<SecretBox<String>> {
     let input = path.expose_secret();
     let input = input.to_string();
     let path = Path::new(&input);
+
+    parse_path(path)
+}
+
+fn get_path_from_str(path: &str) -> Vec<SecretBox<String>> {
+    let path = Path::new(path);
 
     parse_path(path)
 }
@@ -498,6 +600,33 @@ pub fn parse_path(path: &Path) -> Vec<SecretBox<String>> {
         }
     }
     stack
+}
+
+
+async fn validate_path_exists(path: impl AsRef<Path>) -> std::io::Result<(SecretBox<String>, u64)> {
+    let mut dir_inode = 1;
+    let fs = get_fs().await?;
+
+    let paths = get_path_from_str(path.as_ref().to_str()
+    .ok_or_else(|| FsError::InvalidInput("Invalid path"))
+    ?);
+
+    if paths.len() > 1 {
+        for node in paths.iter().take(paths.len() - 1) {
+            dir_inode = fs
+                .find_by_name(dir_inode, node)
+                .await?
+                .ok_or_else(|| FsError::InodeNotFound)?
+                .ino;
+        }
+    }
+
+    let file_name = paths
+        .last()
+        .ok_or_else(|| FsError::InvalidInput("No filename"))?
+        .to_owned();
+
+    Ok((file_name, dir_inode))
 }
 
 async fn get_fs() -> FsResult<Arc<EncryptedFs>> {

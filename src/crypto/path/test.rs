@@ -1,10 +1,11 @@
 use std::ffi::OsStr;
 use std::path::Component;
+use std::time::SystemTime;
 
-use shush_rs::SecretString;
+use shush_rs::{SecretBox, SecretString};
 
 use crate::crypto::path::*;
-use crate::encryptedfs::{CreateFileAttr, PasswordProvider};
+use crate::encryptedfs::{CreateFileAttr, FileType, PasswordProvider};
 use crate::test_common::{get_fs, run_test, TestSetup};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -18,6 +19,7 @@ async fn test_path_methods() {
         async {
             let fs = get_fs().await;
             OpenOptions::set_scope(fs.clone()).await;
+
             // Test the `new` method
             let path = Path::new("test/path");
             assert_eq!(path.as_os_str(), std::ffi::OsStr::new("test/path"));
@@ -343,6 +345,12 @@ async fn test_path_methods() {
             let path = Path::new("foo/test/bar.rs");
             assert!(path.exists());
 
+            // Test the `canonicalize` method
+            let path = Path::new("../foo/test/../test/bar.rs");
+            assert!(path.canonicalize().is_ok());
+            let canon_path = path.canonicalize().unwrap();
+            assert_eq!(PathBuf::from("foo/test/bar.rs"), canon_path);
+
             // Test the `try_exists` method
             assert!(!Path::new("does_not_exist.txt")
                 .try_exists()
@@ -354,6 +362,60 @@ async fn test_path_methods() {
             assert_eq!(Path::new("foo/test/").is_dir(), true);
             assert_eq!(Path::new("foo/test/../test/bar.rs").is_dir(), false);
 
+        },
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)]
+async fn test_path_traits() {
+    run_test(
+        TestSetup {
+            key: "test_path_traits",
+            read_only: false,
+        },
+        async {},
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)]
+async fn test_pathbuf_traits() {
+    run_test(
+        TestSetup {
+            key: "test_pathbuf_traits",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            OpenOptions::set_scope(fs.clone()).await;
+
+            // Test for `push` method
+            let mut path = PathBuf::from("foo");
+            path.push("bar");
+            path.push("bee");
+            path.push("baa");
+            assert_eq!(path, PathBuf::from("foo/bar/bee/baa"));
+
+            // Test for `pop` method
+            path.pop();
+            path.pop();
+            assert_eq!(path, PathBuf::from("foo/bar"));
+            path.pop();
+            path.pop();
+            path.pop();
+            assert_eq!(path, PathBuf::from(""));
+
+            // Test for `AsRef<Path> for Iter<'_>`
+            let paths = vec![
+                PathBuf::from("foo/bar"),
+                PathBuf::from("baz"),
+                PathBuf::from("boo"),
+            ];
+            let iter: PathBuf = paths.iter().collect();
+            assert_eq!(iter, PathBuf::from("foo/bar/baz/boo"));
         },
     )
     .await;
@@ -373,13 +435,16 @@ async fn test_pathbuf_methods() {
 
             // Test the `new` method
             let path = PathBuf::new();
+            assert_eq!(path.as_os_str(), std::ffi::OsStr::new(""));
 
-            // // Test the `with_capacity` method
-            // let mut path = PathBuf::with_capacity(10);
-            // assert_eq!(path.capacity(), 10);
-            // let capacity = path.capacity();
-            // path.push(r"C:\");
-            // assert_eq!(capacity, path.capacity());
+            // Test the `with_capacity` method
+            let mut path = PathBuf::with_capacity(10);
+            assert_eq!(path.capacity(), 10);
+
+            let capacity = path.capacity();
+            path.push("/foo");
+            // TODO Fix push method capacity
+            assert_eq!(capacity, path.capacity());
 
             // Test the `as_path` method
             let p = PathBuf::from("/test");
@@ -450,6 +515,174 @@ async fn test_pathbuf_methods() {
 
             path.as_mut_os_string().push("baz");
             assert_eq!(path, Path::new("/foo/barbaz"));
+
+            // Test the `into_os_string` method
+            let path = PathBuf::from("/foo");
+            assert_eq!(path.into_os_string(), std::ffi::OsString::from("/foo"));
+
+            // Test the `into_os_string` method
+            let path = PathBuf::from("/foo/bar");
+            let boxed_path = path.into_boxed_path();
+
+            assert_eq!(boxed_path.to_str(), Some("/foo/bar"));
+
+            let as_path: &Path = &boxed_path;
+            assert_eq!(as_path.to_str(), Some("/foo/bar"));
+
+            // Test the `clear` method
+            let mut path = PathBuf::from("/foo/bar");
+            path.clear();
+            assert_eq!(path, PathBuf::new());
+
+            // Test the `reserve` method
+            let mut path = PathBuf::new();
+            path.reserve(10);
+            assert!(path.capacity() >= 10);
+
+            // Test the `try_reserve` method
+            let mut container = PathBuf::new();
+            assert!(container.try_reserve(10).is_ok());
+
+            let mut container = PathBuf::new();
+            let result = container.try_reserve(usize::MAX);
+            assert!(matches!(
+                result,
+                Err(std::collections::TryReserveError { .. })
+            ));
+
+            let mut container = PathBuf::new();
+            assert!(container.try_reserve(0).is_ok());
+
+            // Test the `reserve_exact` method
+            let mut container = PathBuf::new();
+            let initial_capacity = container.inner.capacity();
+
+            let additional = 10;
+            container.reserve_exact(additional);
+            let new_capacity = container.inner.capacity();
+
+            assert!(new_capacity >= initial_capacity + additional);
+            assert_eq!(
+                new_capacity,
+                initial_capacity + additional,
+                "reserve_exact should allocate exactly the requested additional capacity"
+            );
+
+            let mut container = PathBuf::new();
+            let initial_capacity = container.inner.capacity();
+
+            container.reserve_exact(0);
+            let new_capacity = container.inner.capacity();
+
+            assert_eq!(
+                new_capacity, initial_capacity,
+                "reserve_exact(0) should not change capacity"
+            );
+
+            // Test the `try_reserve_exact` method
+            let mut container = PathBuf::new();
+            let initial_capacity = container.inner.capacity();
+
+            let additional = 10;
+            let result = container.try_reserve_exact(additional);
+
+            assert!(
+                result.is_ok(),
+                "try_reserve_exact should succeed for valid allocation"
+            );
+
+            let new_capacity = container.inner.capacity();
+            assert_eq!(
+                new_capacity,
+                initial_capacity + additional,
+                "Capacity should increase by exactly the requested amount"
+            );
+
+            // try_reserve_exact zero
+            let mut container = PathBuf::new();
+            let initial_capacity = container.inner.capacity();
+
+            let result = container.try_reserve_exact(0);
+
+            assert!(result.is_ok(), "try_reserve_exact(0) should succeed");
+
+            let new_capacity = container.inner.capacity();
+            assert_eq!(
+                new_capacity, initial_capacity,
+                "Capacity should not change for try_reserve_exact(0)"
+            );
+
+            // try_reserve_exact failure
+            let mut container = PathBuf::new();
+
+            let additional = usize::MAX;
+
+            let result = container.try_reserve_exact(additional);
+
+            assert!(
+                result.is_err(),
+                "try_reserve_exact should fail for excessively large allocation"
+            );
+
+            if let Err(e) = result {
+                println!("Error: {:?}", e);
+
+                let error_str = format!("{:?}", e);
+                if error_str.contains("AllocError") {
+                    println!("Allocation error occurred.");
+                } else if error_str.contains("CapacityOverflow") {
+                    println!("Capacity overflow occurred.");
+                } else {
+                    panic!("Unexpected TryReserveError variant: {:?}", e);
+                }
+            }
+
+            // Test the `shrink_to_fit` method
+            let mut container = PathBuf::new();
+
+            for _ in 0..10 {
+                container.push("test".to_string());
+            }
+
+            let initial_capacity = container.capacity();
+
+            container.pop();
+            container.pop();
+
+            let reduced_length = container.to_string_lossy().len();
+            assert!(
+                container.capacity() > reduced_length,
+                "Capacity should be greater than length before shrinking"
+            );
+
+            container.shrink_to_fit();
+
+            assert_eq!(
+                container.capacity(),
+                reduced_length,
+                "Capacity should equal length after shrinking to fit"
+            );
+
+            // Test the `shrink_to` method
+            let mut container = PathBuf::from("/path/to/file");
+
+            let initial_capacity = container.inner.capacity();
+            assert!(initial_capacity > 0);
+
+            container.inner.push("foo".to_string());
+            container.inner.push("bar".to_string());
+
+            let expanded_capacity = container.inner.capacity();
+            assert!(expanded_capacity > initial_capacity);
+
+            let min_capacity = 5;
+            container.shrink_to(min_capacity);
+
+            let final_capacity = container.inner.capacity();
+            assert!(final_capacity >= min_capacity);
+            assert!(final_capacity < expanded_capacity);
+            let file = std::fs::OpenOptions::new().write(true).create(true).open("file").unwrap();
+
         },
     )
     .await;
