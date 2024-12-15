@@ -2,10 +2,9 @@
 #![allow(unused_variables)]
 
 use crate::async_util;
-use shush_rs::SecretBox;
 
-use crate::crypto::fs::{parse_path, OpenOptions};
-use crate::encryptedfs::{EncryptedFs, FileAttr, FileType, FsError, FsResult};
+use crate::crypto::fs::{OpenOptions, Metadata};
+use crate::encryptedfs::{EncryptedFs, FsError, FsResult};
 use std::borrow::Borrow;
 use std::collections::TryReserveError;
 use std::ffi::OsStr;
@@ -20,75 +19,13 @@ use std::{
     io::Result,
     path::{Components, Display, Iter, StripPrefixError},
     sync::Arc,
-    time::SystemTime,
 };
 
 #[cfg(test)]
 mod test;
 
-#[allow(clippy::new_without_default, clippy::len_without_is_empty)]
-pub struct Metadata {
-    pub attr: FileAttr,
-}
-
-impl std::fmt::Debug for Metadata {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let kind = format!(
-            "FileType {{ is_file: {}, is_dir: {}, is_symlink: {} }}",
-            self.is_file(),
-            self.is_dir(),
-            false
-        );
-        f.debug_struct("Metadata")
-            .field("ino", &self.attr.ino)
-            .field("kind", &kind)
-            .field("perm", &format_args!("{:#o}", self.attr.perm))
-            .field("len", &self.attr.size)
-            .field("modified", &self.attr.mtime)
-            .field("accessed", &self.attr.atime)
-            .field("created", &self.attr.crtime)
-            .finish()
-    }
-}
-
-impl Metadata {
-    pub fn accessed(&self) -> Result<SystemTime> {
-        Ok(self.attr.atime)
-    }
-
-    pub fn modified(&self) -> Result<SystemTime> {
-        Ok(self.attr.mtime)
-    }
-
-    pub fn created(&self) -> Result<SystemTime> {
-        Ok(self.attr.crtime)
-    }
-
-    pub fn file_type(&self) -> FileType {
-        self.attr.kind
-    }
-
-    pub fn is_dir(&self) -> bool {
-        matches!(self.attr.kind, FileType::Directory)
-    }
-
-    pub fn is_file(&self) -> bool {
-        matches!(self.attr.kind, FileType::RegularFile)
-    }
-
-    pub fn is_symlink(&self) -> bool {
-        todo!()
-    }
-
-    pub fn len(&self) -> u64 {
-        self.attr.size
-    }
-
-    pub fn permissions(&self) -> u64 {
-        self.attr.perm as u64
-    }
-}
-
+/// Wrapper around [`std::path::Path`] to allow use on EncryptedFs.
+/// 
 #[allow(clippy::new_without_default)]
 #[derive(PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -220,49 +157,62 @@ impl Path {
         path.display()
     }
 
+    /// Queries the EncryptedFs file system to get information about a file or directory.
+    /// 
+    /// Due to how the paths are canonicalized, they may leak.
+    /// 
+    /// Metadata is a wrapped for [`rencfs::encryptedfs::FileAttr`]
+    /// 
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use rencfs::crypto::path::Path;
+    ///
+    /// let path = Path::new("/Minas/tirith");
+    /// let metadata = path.metadata().expect("metadata call failed");
+    /// println!("{:?}", metadata.file_type());
+    /// ```
     pub fn metadata(&self) -> Result<Metadata> {
-        async_util::call_async(Path::_metadata(self))
-    }
-
-    async fn _metadata(&self) -> Result<Metadata> {
-        let mut dir_inode = 1;
-
-        let fs = get_fs().await?;
-
-        let paths = get_path_and_file_name(
-            self.to_str()
-                .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
-        );
-
-        if paths.len() > 1 {
-            for node in paths.iter().take(paths.len() - 1) {
-                dir_inode = fs
-                    .find_by_name(dir_inode, node)
-                    .await?
-                    .ok_or_else(|| FsError::InodeNotFound)?
-                    .ino;
-            }
-        }
-
-        let file_name = paths
-            .last()
-            .ok_or_else(|| FsError::InvalidInput("No filename"))?;
-        let attr = fs
-            .find_by_name(dir_inode, file_name)
-            .await?
-            .ok_or_else(|| FsError::InodeNotFound)?;
-        let file_attr = fs.get_attr(attr.ino).await?;
-
-        let metadata = Metadata { attr: file_attr };
-        Ok(metadata)
+        async_util::call_async(crate::crypto::fs::metadata(self))
     }
 
     pub fn symlink_metadata(&self) -> Result<Metadata> {
-        todo!()
+        unimplemented!()
     }
 
+    /// Returns the canonical form of the path with all intermediate
+    /// components normalized and symbolic links resolved.
+    /// 
+    /// Will not reveal the canonical base directory.
+    /// 
+    /// Due to how the paths are canonicalized, they may leak.
+    /// 
+    /// ```no_run
+    /// use rencfs::crypto::path::{Path, PathBuf};
+    ///
+    /// let path = Path::new("/foo/test/../test/bar.rs");
+    /// assert_eq!(path.canonicalize().unwrap(), PathBuf::from("/foo/test/bar.rs"));
+    /// ```
     pub fn canonicalize(&self) -> Result<PathBuf> {
-        todo!()
+        let mut stack = vec![];
+        for comp in self.components() {
+            match comp {
+                std::path::Component::Normal(c) => {
+                    stack.push(c);
+                }
+                std::path::Component::ParentDir => {
+                    stack.pop();
+                }
+                std::path::Component::CurDir => {
+                    continue;
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+
+        Ok(stack.iter().collect::<PathBuf>())
     }
 
     pub fn read_link(&self) -> Result<PathBuf> {
@@ -275,35 +225,18 @@ impl Path {
         path.read_dir()
     }
 
+    /// Returns `true` if the path points at an existing entity.
+    /// 
+    /// Due to how the paths are canonicalized, they may leak.
     pub fn exists(&self) -> bool {
         Path::metadata(self).is_ok()
     }
 
+    /// Returns `Ok(true)` if the path points at an existing entity.
+    /// 
+    /// Due to how the paths are canonicalized, they may leak.
     pub fn try_exists(&self) -> Result<bool> {
-        async_util::call_async(Path::_try_exists(self))
-    }
-
-    async fn _try_exists(&self) -> Result<bool> {
-        let fs = get_fs().await?;
-        let paths = get_path_and_file_name(
-            self.to_str()
-                .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
-        );
-        let file_name = paths
-            .last()
-            .ok_or_else(|| FsError::InvalidInput("No filename"))?;
-        let mut dir_inode = 1;
-        if paths.len() > 1 {
-            for node in paths.iter().take(paths.len() - 1) {
-                dir_inode = fs
-                    .find_by_name(dir_inode, node)
-                    .await?
-                    .ok_or_else(|| FsError::InodeNotFound)?
-                    .ino;
-            }
-        }
-        let file_exists = fs.find_by_name(dir_inode, file_name).await?.is_some();
-        Ok(file_exists)
+        async_util::call_async(crate::crypto::fs::exists(self))
     }
 
     pub fn is_file(&self) -> bool {
@@ -321,7 +254,7 @@ impl Path {
     }
 
     pub fn is_symlink(&self) -> bool {
-        match Path::metadata(&self) {
+        match Path::metadata(self) {
             Ok(metadata) => metadata.is_symlink(),
             Err(_) => false,
         }
@@ -363,12 +296,11 @@ impl AsRef<Path> for Cow<'_, OsStr> {
     }
 }
 
-// impl AsRef<Path> for Iter<'_> {
-//     fn as_ref(&self) -> &Path {
-//         let a = self;
-//         self.as_path()
-//     }
-// }
+impl AsRef<Path> for Iter<'_> {
+    fn as_ref(&self) -> &Path {
+        Path::new(self.as_path())
+    }
+}
 
 impl AsRef<Path> for OsStr {
     fn as_ref(&self) -> &Path {
@@ -473,8 +405,9 @@ impl PartialEq<std::path::Path> for Path {
     }
 }
 
+/// Wrapper around [`std::path::PathBuf`] to allow use on EncryptedFs.
+/// 
 #[derive(PartialEq, Eq)]
-#[allow(clippy::new_without_default)]
 pub struct PathBuf {
     inner: OsString,
 }
@@ -485,12 +418,7 @@ impl std::fmt::Debug for PathBuf {
     }
 }
 
-impl Default for PathBuf {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
+#[allow(clippy::new_without_default)]
 impl PathBuf {
     pub fn new() -> PathBuf {
         PathBuf {
@@ -508,12 +436,12 @@ impl PathBuf {
         self
     }
 
-    pub fn push<P: AsRef<Path>>(&mut self, path: P) {
-        // TODO: FIX capacity
-        let mut path_buf = std::path::PathBuf::from(&self.inner);
-        path_buf.push(path.as_ref());
-        self.inner = path_buf.into();
-    }
+        pub fn push<P: AsRef<Path>>(&mut self, path: P) {
+            let mut path_buf = std::path::PathBuf::with_capacity(self.capacity());
+            path_buf.push(&self.inner);
+            path_buf.push(path.as_ref());
+            self.inner = path_buf.into_os_string();
+        }
 
     pub fn pop(&mut self) -> bool {
         let mut path_buf = std::path::PathBuf::from(&self.inner);
@@ -674,13 +602,17 @@ impl From<String> for PathBuf {
     }
 }
 
-// impl<P: AsRef<Path>> FromIterator<P> for PathBuf {
-//     fn from_iter<I: IntoIterator<Item = P>>(iter: I) -> PathBuf {
-//         let mut buf = PathBuf::new();
-//         buf.extend(iter);
-//         buf
-//     }
-// }
+impl<P: AsRef<Path>> FromIterator<P> for PathBuf {
+    fn from_iter<I: IntoIterator<Item = P>>(iter: I) -> PathBuf {
+        let mut path_buf = PathBuf {
+            inner: OsString::new(),
+        };
+        for component in iter {
+            path_buf.push(component.as_ref());
+        }
+        path_buf
+    }
+}
 
 impl FromStr for PathBuf {
     type Err = core::convert::Infallible;
@@ -736,6 +668,13 @@ impl AsRef<OsStr> for PathBuf {
     }
 }
 
+impl AsRef<str> for PathBuf {
+    fn as_ref(&self) -> &str {
+        let a = self.inner.to_str().unwrap_or("");
+        a
+    }
+}
+
 impl Deref for PathBuf {
     type Target = Path;
     fn deref(&self) -> &Self::Target {
@@ -753,10 +692,4 @@ async fn get_fs() -> FsResult<Arc<EncryptedFs>> {
     OpenOptions::from_scope()
         .await
         .ok_or(FsError::Other("not initialized"))
-}
-
-fn get_path_and_file_name(path: &str) -> Vec<SecretBox<String>> {
-    let path = Path::new(path);
-
-    parse_path(path)
 }
