@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use rencfs::crypto::fs::OpenOptions;
+use rencfs::crypto::fs_api::r#async::fs::OpenOptions;
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{
     CreateFileAttr, EncryptedFs, FileType, FsError, FsResult, PasswordProvider,
