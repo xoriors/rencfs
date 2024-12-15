@@ -741,11 +741,6 @@ async fn test_pathbuf_methods() {
             let final_capacity = container.inner.capacity();
             assert!(final_capacity >= min_capacity);
             assert!(final_capacity < expanded_capacity);
-            let file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open("file")
-                .unwrap();
         },
     )
     .await;
