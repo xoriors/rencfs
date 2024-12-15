@@ -835,19 +835,19 @@ async fn test_pathbuf_traits() {
             // Test Hash trait
             let path1 = PathBuf::from("foo/bar");
             let path2 = PathBuf::from("foo/bar");
-            
+
             // Create a DefaultHasher instance
             let mut hasher1 = DefaultHasher::new();
             let mut hasher2 = DefaultHasher::new();
-            
+
             path1.hash(&mut hasher1);
             path2.hash(&mut hasher2);
-            
+
             let hash1 = hasher1.finish();
             let hash2 = hasher2.finish();
-            
+
             assert_eq!(hash1, hash2, "Hashes should be equal for the same paths");
-            
+
             println!("Hash 1: {}, Hash 2: {}", hash1, hash2);
 
             // Test PartialEq trait with std::path::Path
