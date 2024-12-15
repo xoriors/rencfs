@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use shush_rs::{SecretBox, SecretString};
 
-use crate::crypto::path::*;
+use crate::crypto::fs_api::path::*;
 use crate::encryptedfs::{CreateFileAttr, FileType, PasswordProvider};
 use crate::test_common::{get_fs, run_test, TestSetup};
 

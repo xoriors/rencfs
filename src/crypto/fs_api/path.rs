@@ -3,7 +3,7 @@
 
 use crate::async_util;
 
-use crate::crypto::fs::{Metadata, OpenOptions};
+use crate::crypto::fs_api::r#async::fs::{Metadata, OpenOptions};
 use crate::encryptedfs::{EncryptedFs, FsError, FsResult};
 use std::borrow::Borrow;
 use std::collections::TryReserveError;
@@ -166,14 +166,14 @@ impl Path {
     /// # Examples
     ///
     /// ```no_run
-    /// use rencfs::crypto::path::Path;
+    /// use rencfs::crypto::fs_api::path::Path;
     ///
     /// let path = Path::new("/Minas/tirith");
     /// let metadata = path.metadata().expect("metadata call failed");
     /// println!("{:?}", metadata.file_type());
     /// ```
     pub fn metadata(&self) -> Result<Metadata> {
-        async_util::call_async(crate::crypto::fs::metadata(self))
+        async_util::call_async(crate::crypto::fs_api::r#async::fs::metadata(self))
     }
 
     pub fn symlink_metadata(&self) -> Result<Metadata> {
@@ -188,7 +188,7 @@ impl Path {
     /// Due to how the paths are canonicalized, they may leak.
     ///
     /// ```no_run
-    /// use rencfs::crypto::path::{Path, PathBuf};
+    /// use rencfs::crypto::fs_api::path::{Path, PathBuf};
     ///
     /// let path = Path::new("/foo/test/../test/bar.rs");
     /// assert_eq!(path.canonicalize().unwrap(), PathBuf::from("/foo/test/bar.rs"));
@@ -236,7 +236,7 @@ impl Path {
     ///
     /// Due to how the paths are canonicalized, they may leak.
     pub fn try_exists(&self) -> Result<bool> {
-        async_util::call_async(crate::crypto::fs::exists(self))
+        async_util::call_async(crate::crypto::fs_api::r#async::fs::exists(self))
     }
 
     pub fn is_file(&self) -> bool {

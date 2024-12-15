@@ -5,7 +5,7 @@ use std::path::Path;
 use std::str::FromStr;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 // use tokio::fs::OpenOptions;
-use rencfs::crypto::fs::OpenOptions;
+use rencfs::crypto::fs_api::r#async::fs::OpenOptions;
 use rencfs::encryptedfs::PasswordProvider;
 
 static ROOT_CIPHER_FS_DATA_DIR: &str = "/tmp/rencfs/file_layer/fs_cipher";
