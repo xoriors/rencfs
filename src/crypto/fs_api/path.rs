@@ -161,7 +161,7 @@ impl Path {
     ///
     /// Due to how the paths are canonicalized, they may leak.
     ///
-    /// Metadata is a wrapped for [`rencfs::encryptedfs::FileAttr`]
+    /// Metadata is a wrapped for rencfs::encryptedfs::FileAttr
     ///
     /// # Examples
     ///
@@ -179,7 +179,6 @@ impl Path {
     pub fn symlink_metadata(&self) -> Result<Metadata> {
         unimplemented!()
     }
-
 
     /// Returns the canonical form of the path with all intermediate
     /// components normalized and symbolic links resolved.

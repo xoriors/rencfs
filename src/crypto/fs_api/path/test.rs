@@ -359,9 +359,9 @@ async fn test_path_methods() {
             assert!(Path::new("/root/secret_file.txt").try_exists().is_err());
 
             // Test the `is_dir` method
-            assert_eq!(Path::new("foo/").is_dir(), true);
-            assert_eq!(Path::new("foo/test/").is_dir(), true);
-            assert_eq!(Path::new("foo/test/../test/bar.rs").is_dir(), false);
+            assert!(Path::new("foo/").is_dir());
+            assert!(Path::new("foo/test/").is_dir());
+            assert!(!Path::new("foo/test/../test/bar.rs").is_dir());
         },
     )
     .await;
@@ -528,7 +528,7 @@ async fn test_pathbuf_methods() {
 
             // Test the `set_file_name` method
             let mut buf = PathBuf::from("/");
-            assert!(buf.file_name() == None);
+            assert!(buf.file_name().is_none());
 
             buf.set_file_name("foo.txt");
             assert!(buf == PathBuf::from("/foo.txt"));
@@ -701,7 +701,7 @@ async fn test_pathbuf_methods() {
             let mut container = PathBuf::new();
 
             for _ in 0..10 {
-                container.push("test".to_string());
+                container.push("test");
             }
 
             let initial_capacity = container.capacity();
@@ -729,8 +729,8 @@ async fn test_pathbuf_methods() {
             let initial_capacity = container.inner.capacity();
             assert!(initial_capacity > 0);
 
-            container.inner.push("foo".to_string());
-            container.inner.push("bar".to_string());
+            container.inner.push("foo");
+            container.inner.push("bar");
 
             let expanded_capacity = container.inner.capacity();
             assert!(expanded_capacity > initial_capacity);
