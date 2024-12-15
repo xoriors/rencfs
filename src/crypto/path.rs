@@ -436,28 +436,31 @@ impl PathBuf {
         self
     }
 
-        pub fn push<P: AsRef<Path>>(&mut self, path: P) {
-            let mut path_buf = std::path::PathBuf::with_capacity(self.capacity());
-            path_buf.push(&self.inner);
-            path_buf.push(path.as_ref());
-            self.inner = path_buf.into_os_string();
-        }
+    pub fn push<P: AsRef<Path>>(&mut self, path: P) {
+        let mut path_buf = std::path::PathBuf::with_capacity(self.capacity());
+        path_buf.push(&self.inner);
+        path_buf.push(path.as_ref());
+        self.inner = path_buf.into_os_string();
+    }
 
     pub fn pop(&mut self) -> bool {
-        let mut path_buf = std::path::PathBuf::from(&self.inner);
+        let mut path_buf = std::path::PathBuf::with_capacity(self.capacity());
+        path_buf.push(&self.inner);
         let result = path_buf.pop();
         self.inner = path_buf.into();
         result
     }
 
     pub fn set_file_name<S: AsRef<OsStr>>(&mut self, file_name: S) {
-        let mut path_buf = std::path::PathBuf::from(&self.inner);
+        let mut path_buf = std::path::PathBuf::with_capacity(self.capacity());
+        path_buf.push(&self.inner);
         path_buf.set_file_name(file_name);
         self.inner = path_buf.into();
     }
 
     pub fn set_extension<S: AsRef<OsStr>>(&mut self, extension: S) -> bool {
-        let mut path_buf = std::path::PathBuf::from(&self.inner);
+        let mut path_buf = std::path::PathBuf::with_capacity(self.capacity());
+        path_buf.push(&self.inner);
         let result = path_buf.set_extension(extension);
         self.inner = path_buf.into();
         result
