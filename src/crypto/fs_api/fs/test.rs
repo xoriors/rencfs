@@ -6,7 +6,7 @@ use std::str::FromStr;
 use shush_rs::SecretString;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::crypto::fs_api::r#async::fs::OpenOptions;
+use crate::crypto::fs_api::fs::OpenOptions;
 use crate::encryptedfs::{CreateFileAttr, FileType, PasswordProvider};
 use crate::test_common::{get_fs, run_test, TestSetup};
 

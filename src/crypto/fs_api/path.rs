@@ -3,7 +3,7 @@
 
 use crate::async_util;
 
-use crate::crypto::fs_api::r#async::fs::{Metadata, OpenOptions};
+use crate::crypto::fs_api::fs::{Metadata, OpenOptions};
 use crate::encryptedfs::{EncryptedFs, FsError, FsResult};
 use std::borrow::Borrow;
 use std::collections::TryReserveError;
@@ -173,7 +173,7 @@ impl Path {
     /// println!("{:?}", metadata.file_type());
     /// ```
     pub fn metadata(&self) -> Result<Metadata> {
-        async_util::call_async(crate::crypto::fs_api::r#async::fs::metadata(self))
+        async_util::call_async(crate::crypto::fs_api::fs::metadata(self))
     }
 
     pub fn symlink_metadata(&self) -> Result<Metadata> {
@@ -236,7 +236,7 @@ impl Path {
     ///
     /// Due to how the paths are canonicalized, they may leak.
     pub fn try_exists(&self) -> Result<bool> {
-        async_util::call_async(crate::crypto::fs_api::r#async::fs::exists(self))
+        async_util::call_async(crate::crypto::fs_api::fs::exists(self))
     }
 
     pub fn is_file(&self) -> bool {

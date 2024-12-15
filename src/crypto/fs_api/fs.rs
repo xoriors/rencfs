@@ -358,13 +358,13 @@ impl File {
     }
 }
 
-pub async fn metadata<P: AsRef<Path>>(path: P) -> std::io::Result<Metadata> {
+pub async fn metadata<P: AsRef<Path>>(path: P) -> io::Result<Metadata> {
     let fs = get_fs().await?;
 
-    let (file_name, dir_inode) = validate_path_exists(&path).await?;
+    let (dir_inode, child) = get_parent_and_child(&path).await?;
 
     let attr = fs
-        .find_by_name(dir_inode, &file_name)
+        .find_by_name(dir_inode, &child)
         .await?
         .ok_or_else(|| FsError::InodeNotFound)?;
     let file_attr = fs.get_attr(attr.ino).await?;
@@ -373,10 +373,10 @@ pub async fn metadata<P: AsRef<Path>>(path: P) -> std::io::Result<Metadata> {
     Ok(metadata)
 }
 
-pub async fn exists<P: AsRef<Path>>(path: P) -> std::io::Result<bool> {
+pub async fn exists<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     let fs = get_fs().await?;
-    let (file_name, dir_inode) = validate_path_exists(&path).await?;
-    let file_exists = fs.find_by_name(dir_inode, &file_name).await?.is_some();
+    let (dir_inode, child) = get_parent_and_child(&path).await?;
+    let file_exists = fs.exists_by_name(dir_inode, &child)?;
     Ok(file_exists)
 }
 
@@ -565,9 +565,7 @@ impl Metadata {
 
 fn get_path_from_secret(path: SecretBox<String>) -> Vec<SecretBox<String>> {
     let input = path.expose_secret();
-    let input = input.to_string();
-    let path = Path::new(&input);
-
+    let path = Path::new(&*input);
     parse_path(path)
 }
 
@@ -602,7 +600,7 @@ pub fn parse_path(path: &Path) -> Vec<SecretBox<String>> {
     stack
 }
 
-async fn validate_path_exists(path: impl AsRef<Path>) -> std::io::Result<(SecretBox<String>, u64)> {
+async fn get_parent_and_child(path: impl AsRef<Path>) -> io::Result<(u64, SecretBox<String>)> {
     let mut dir_inode = 1;
     let fs = get_fs().await?;
 
@@ -627,7 +625,7 @@ async fn validate_path_exists(path: impl AsRef<Path>) -> std::io::Result<(Secret
         .ok_or_else(|| FsError::InvalidInput("No filename"))?
         .to_owned();
 
-    Ok((file_name, dir_inode))
+    Ok((dir_inode, file_name))
 }
 
 async fn get_fs() -> FsResult<Arc<EncryptedFs>> {

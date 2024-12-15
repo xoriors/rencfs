@@ -307,22 +307,16 @@ pub enum FsError {
     ReadOnly,
 }
 
-impl std::convert::From<FsError> for io::Error {
+impl From<FsError> for io::Error {
     fn from(err: FsError) -> Self {
         match err {
-            FsError::InodeNotFound => {
-                std::io::Error::new(std::io::ErrorKind::NotFound, "Inode not found")
-            }
+            FsError::InodeNotFound => io::Error::new(io::ErrorKind::NotFound, "not found"),
             FsError::AlreadyExists => {
-                std::io::Error::new(std::io::ErrorKind::AlreadyExists, "File already exists")
+                io::Error::new(io::ErrorKind::AlreadyExists, "already exists")
             }
-            FsError::InvalidInput(msg) => {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, msg)
-            }
-            FsError::ReadOnly => {
-                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Read only.")
-            }
-            _ => std::io::Error::new(io::ErrorKind::Other, err.to_string()),
+            FsError::InvalidInput(msg) => io::Error::new(io::ErrorKind::InvalidInput, msg),
+            FsError::ReadOnly => io::Error::new(std::io::ErrorKind::PermissionDenied, "read only."),
+            _ => io::Error::new(io::ErrorKind::Other, err.to_string()),
         }
     }
 }
