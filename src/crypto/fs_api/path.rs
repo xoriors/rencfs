@@ -180,6 +180,7 @@ impl Path {
         unimplemented!()
     }
 
+
     /// Returns the canonical form of the path with all intermediate
     /// components normalized and symbolic links resolved.
     ///
