@@ -637,6 +637,7 @@ async fn get_fs() -> FsResult<Arc<EncryptedFs>> {
 }
 
 fn file_attr() -> CreateFileAttr {
+    #[allow(unused_mut)]
     let mut attr = CreateFileAttr {
         kind: FileType::RegularFile,
         perm: 0o644,

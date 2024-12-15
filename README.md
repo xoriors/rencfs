@@ -6,7 +6,7 @@
 [![build-and-tests](https://github.com/radumarias/rencfs/actions/workflows/build_and_tests.yaml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/build_and_tests.yaml)
 [![release](https://github.com/radumarias/rencfs/actions/workflows/release.yaml/badge.svg)](https://github.com/radumarias/rencfs/actions/workflows/release.yaml)
 [![codecov](https://codecov.io/gh/radumarias/rencfs/graph/badge.svg?token=NUQI6XGF2Y)](https://codecov.io/gh/radumarias/rencfs)
-<a href="https://join.slack.com/t/rencfs/shared_invite/zt-2o4l1tdkk-VJeWIbO2p6zgeafDISPHbQ"><img src="website/resources/slack3.png" style = "width: 87px; height: 20px;"/></a>
+<a href="https://bit.ly/3UU1oXi"><img src="website/resources/slack3.png" style = "width: 87px; height: 20px;"/></a>
 [![Matrix](https://img.shields.io/matrix/rencfs%3Amatrix.org?label=Matrix)](https://matrix.to/#/#rencfs:matrix.org)
 [![Discord](https://img.shields.io/discord/1236855443486277653?label=Discord)](https://discord.com/channels/1236855443486277653/1236855448515252306)
 [![Zulip](https://img.shields.io/badge/zulip-join_chat-brightgreen.svg?label=Zulip)](https://rencfs.zulipchat.com)
@@ -42,14 +42,14 @@ Create a `simple,` `performant,` `modular` and `ergonomic` yet `very secure` `en
 
 There will be a [series](https://medium.com/@xorio42/list/828492b94c23) of articles about the evolution of this project, trying to keep it like a tutorial. This is the [first one](https://systemweakness.com/the-hitchhikers-guide-to-building-an-encrypted-filesystem-in-rust-4d678c57d65c).
 
-# Crate of the week in [This Week in Rust](https://this-week-in-rust.org/)
+# Crate of the week in [This Week in Rust](https://this-week-in-rust.org/blog/2024/08/07/this-week-in-rust-559/#cfp-projects)
 
 It was [crate of the week](https://this-week-in-rust.org/blog/2024/08/14/this-week-in-rust-560/#crate-of-the-week) in Aug 2024.
 
 # Talks
 
-- [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://startech-rd.io/hitchhikers-guide-to/)
-- [Basics of cryptography and FUSE for building a filesystem in Rust](https://miro.com/app/board/uXjVLccxeCE=/?share_link_id=342563218323)
+- [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://startech-rd.io/hitchhikers-guide-to/) [@meetup.com/star-tech-rd-reloaded](https://www.meetup.com/star-tech-rd-reloaded/) and [@OmniOpenCon](https://omniopencon.org/)
+- [Basics of cryptography, Authenticated Encryption, Rust in cryptography and how to build an encrypted filesystem](https://www.youtube.com/live/HwmVxOl3pQg) @ITDays and [slides](https://miro.com/app/board/uXjVLccxeCE=/?share_link_id=342563218323).
 
 # Key features
 
@@ -98,7 +98,7 @@ changes at the next start. This makes the write operations atomic.
 
 [![rencfs](website/resources/layers.png)](website/resources/layers.png)
 
-For detailed description of the various sequence flows please look into [Flows](docs/flows.md). 
+For detailed description of the various sequence flows please look into [Flows](docs/flows.md).
 
 # OpenOptions API
 
@@ -520,18 +520,7 @@ files. However, the content of the file could be bigger, and we read until the o
   pick up
   the new zeros bytes are written on truncating by increasing the size. If content is smaller, the read would stop and
   end-of-file of the actual content, so this would not be such a big issue
-- **What kind of metadata does it leak**: close to none. The filename, actual file size and other file attrs (times,
-  permissions, other flags) are kept encrypted. What it could possibly leak is the following
-    - If a directory has children, we keep those children in a directory with name as inode number and encrypted names
-      of children as files in it.
-      So we could see how many children a directory has.
-      However, we can't identify that actual directory name;
-      We can just see its inode number (internal representation like an ID for each file), but we cannot see the actual
-      filenames of the directory or children.
-      Also, we cannot identify which file content corresponds to a directory child
-    - Each file content is saved in a separate file, so we can see the size of the encrypted content but not the
-      actual filesize
-    - We can also see the last time the file was accessed
+- **What kind of metadata does it leak**: None, we encrypt filename, content, metadata and we hide files count, size and all time fields
 - It's always recommended to use encrypted disks for at least your sensitive data; this project is not a replacement for
   that
 - To reduce the risk of the encryption key being exposed from memory, it's recommended to disable memory dumps on the
