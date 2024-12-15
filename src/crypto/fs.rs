@@ -602,7 +602,6 @@ pub fn parse_path(path: &Path) -> Vec<SecretBox<String>> {
     stack
 }
 
-
 async fn validate_path_exists(path: impl AsRef<Path>) -> std::io::Result<(SecretBox<String>, u64)> {
     let mut dir_inode = 1;
     let fs = get_fs().await?;
