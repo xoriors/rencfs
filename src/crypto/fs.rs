@@ -497,9 +497,9 @@ impl AsyncSeek for File {
 }
 
 /// Metadata information about a file.
-/// 
+///
 /// Metadata is a wrapped for [`rencfs::encryptedfs::FileAttr`]
-/// 
+///
 #[allow(clippy::new_without_default, clippy::len_without_is_empty)]
 pub struct Metadata {
     pub attr: FileAttr,
@@ -606,9 +606,11 @@ async fn validate_path_exists(path: impl AsRef<Path>) -> std::io::Result<(Secret
     let mut dir_inode = 1;
     let fs = get_fs().await?;
 
-    let paths = get_path_from_str(path.as_ref().to_str()
-    .ok_or_else(|| FsError::InvalidInput("Invalid path"))
-    ?);
+    let paths = get_path_from_str(
+        path.as_ref()
+            .to_str()
+            .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
+    );
 
     if paths.len() > 1 {
         for node in paths.iter().take(paths.len() - 1) {

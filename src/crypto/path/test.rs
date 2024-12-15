@@ -1,4 +1,5 @@
 use std::ffi::OsStr;
+use std::hash::DefaultHasher;
 use std::path::Component;
 use std::time::SystemTime;
 
@@ -361,7 +362,6 @@ async fn test_path_methods() {
             assert_eq!(Path::new("foo/").is_dir(), true);
             assert_eq!(Path::new("foo/test/").is_dir(), true);
             assert_eq!(Path::new("foo/test/../test/bar.rs").is_dir(), false);
-
         },
     )
     .await;
@@ -379,147 +379,104 @@ async fn test_path_traits() {
             let fs = get_fs().await;
             OpenOptions::set_scope(fs.clone()).await;
 
-        // Tests below
+            // Test Deref trait
+            let path = Path::new("foo/bar");
+            assert_eq!(path.to_str().unwrap(), "foo/bar");
 
-        // Test Deref trait
-        let path = Path::new("foo/bar");
-        assert_eq!(path.to_str().unwrap(), "foo/bar");
+            // Test AsRef<OsStr>
+            let os_str: &OsStr = path.as_ref();
+            assert_eq!(os_str, OsStr::new("foo/bar"));
 
-        // Test AsRef<OsStr>
-        let os_str: &OsStr = path.as_ref();
-        assert_eq!(os_str, OsStr::new("foo/bar"));
+            // Test AsRef<std::path::Path>
+            let std_path: &std::path::Path = path.as_ref();
+            assert_eq!(std_path.to_str().unwrap(), "foo/bar");
 
-        // Test AsRef<std::path::Path>
-        let std_path: &std::path::Path = path.as_ref();
-        assert_eq!(std_path.to_str().unwrap(), "foo/bar");
+            // Test AsRef<Path> for PathBuf
+            let path_buf = PathBuf::from("foo/bar");
+            let path_ref: &Path = path_buf.as_ref();
+            assert_eq!(path_ref.to_str().unwrap(), "foo/bar");
 
-        // Test AsRef<Path> for PathBuf
-        let path_buf = PathBuf::from("foo/bar");
-        let path_ref: &Path = path_buf.as_ref();
-        assert_eq!(path_ref.to_str().unwrap(), "foo/bar");
+            // Test AsRef<Path> for String
+            let string = "foo/bar".to_string();
+            let path_ref: &Path = string.as_ref();
+            assert_eq!(path_ref.to_str().unwrap(), "foo/bar");
 
-        // Test AsRef<Path> for String
-        let string = "foo/bar".to_string();
-        let path_ref: &Path = string.as_ref();
-        assert_eq!(path_ref.to_str().unwrap(), "foo/bar");
+            // Test Borrow<Path> for PathBuf
+            let path_buf = PathBuf::from("foo/bar");
+            let borrowed: &Path = path_buf.borrow();
+            assert_eq!(borrowed.to_str().unwrap(), "foo/bar");
 
-        // Test Borrow<Path> for PathBuf
-        let path_buf = PathBuf::from("foo/bar");
-        let borrowed: &Path = path_buf.borrow();
-        assert_eq!(borrowed.to_str().unwrap(), "foo/bar");
+            // Test Clone for Box<Path>
+            let boxed_path: Box<Path> = PathBuf::from("foo/bar").into_boxed_path();
+            let cloned_boxed = boxed_path.clone();
+            assert_eq!(cloned_boxed.to_str().unwrap(), "foo/bar");
 
-        // Test Clone for Box<Path>
-        let boxed_path: Box<Path> = PathBuf::from("foo/bar").into_boxed_path();
-        let cloned_boxed = boxed_path.clone();
-        assert_eq!(cloned_boxed.to_str().unwrap(), "foo/bar");
+            // Test AsRef<Path> for OsStr
+            let os_str = OsStr::new("foo/bar");
+            let path_ref: &Path = os_str.as_ref();
+            assert_eq!(path_ref.to_str().unwrap(), "foo/bar");
 
-        // Test AsRef<Path> for OsStr
-        let os_str = OsStr::new("foo/bar");
-        let path_ref: &Path = os_str.as_ref();
-        assert_eq!(path_ref.to_str().unwrap(), "foo/bar");
+            // Test AsRef<Path> for OsString
+            let os_string = OsString::from("foo/bar");
+            let path_ref: &Path = os_string.as_ref();
+            assert_eq!(path_ref.to_str().unwrap(), "foo/bar");
 
-        // Test AsRef<Path> for OsString
-        let os_string = OsString::from("foo/bar");
-        let path_ref: &Path = os_string.as_ref();
-        assert_eq!(path_ref.to_str().unwrap(), "foo/bar");
+            // Test Path::new with different inputs
+            let str_path = Path::new("foo/bar");
+            assert_eq!(str_path.to_str().unwrap(), "foo/bar");
 
-        // Test Path::new with different inputs
-        let str_path = Path::new("foo/bar");
-        assert_eq!(str_path.to_str().unwrap(), "foo/bar");
+            let os_string = OsStr::new("foo/bar");
+            let os_str_path = Path::new(&os_string);
+            assert_eq!(os_str_path.to_str().unwrap(), "foo/bar");
 
-        let os_string = OsStr::new("foo/bar");
-        let os_str_path = Path::new(&os_string);
-        assert_eq!(os_str_path.to_str().unwrap(), "foo/bar");
+            let os_string = OsStr::new("foo/bar");
+            let os_string_path = Path::new(&os_string);
+            assert_eq!(os_string_path.to_str().unwrap(), "foo/bar");
 
-        let os_string = OsStr::new("foo/bar");
-        let os_string_path = Path::new(&os_string);
-        assert_eq!(os_string_path.to_str().unwrap(), "foo/bar");
+            let cow_path: Cow<OsStr> = Cow::Borrowed(OsStr::new("foo/bar"));
+            let cow_ref_path: &Path = cow_path.as_ref();
+            assert_eq!(cow_ref_path.to_str().unwrap(), "foo/bar");
 
-        let cow_path: Cow<OsStr> = Cow::Borrowed(OsStr::new("foo/bar"));
-        let cow_ref_path: &Path = cow_path.as_ref();
-        assert_eq!(cow_ref_path.to_str().unwrap(), "foo/bar");
+            let path_buf_path = PathBuf::from("foo/bar");
+            let path_buf_ref_path: &Path = path_buf_path.as_ref();
+            assert_eq!(path_buf_ref_path.to_str().unwrap(), "foo/bar");
 
-        let path_buf_path = PathBuf::from("foo/bar");
-        let path_buf_ref_path: &Path = path_buf_path.as_ref();
-        assert_eq!(path_buf_ref_path.to_str().unwrap(), "foo/bar");
+            // Test `From<&Path> for Arc<Path>`
+            let path = Path::new("foo/bar");
+            let arc_path: Arc<Path> = Arc::from(path);
+            assert_eq!(arc_path.as_ref(), path);
 
-        // Test `From<&Path> for Arc<Path>`
-        let path = Path::new("foo/bar");
-        let arc_path: Arc<Path> = Arc::from(path);
-        assert_eq!(arc_path.as_ref(), path);
+            // Test `From<&Path> for Box<Path>`
+            let boxed_path: Box<Path> = Box::from(path);
+            assert_eq!(boxed_path.as_ref(), path);
 
-        // Test `From<&Path> for Box<Path>`
-        let boxed_path: Box<Path> = Box::from(path);
-        assert_eq!(boxed_path.as_ref(), path);
+            // Test `From<&Path> for Cow<Path>`
+            let cow_path: Cow<Path> = Cow::from(path);
+            assert_eq!(cow_path.as_ref(), path);
 
-        // Test `From<&Path> for Cow<Path>`
-        let cow_path: Cow<Path> = Cow::from(path);
-        assert_eq!(cow_path.as_ref(), path);
+            // Test `ToOwned`
+            let owned_path = path.to_owned();
+            assert_eq!(owned_path.to_str().unwrap(), "foo/bar");
 
-        // Test `ToOwned`
-        let owned_path = path.to_owned();
-        assert_eq!(owned_path.to_str().unwrap(), "foo/bar");
+            // Test `ToOwned::clone_into`
+            let mut target = PathBuf::from("baz");
+            path.clone_into(&mut target);
+            assert_eq!(target.to_str().unwrap(), "foo/bar");
 
-        // Test `ToOwned::clone_into`
-        let mut target = PathBuf::from("baz");
-        path.clone_into(&mut target);
-        assert_eq!(target.to_str().unwrap(), "foo/bar");
+            // Test `Debug`
+            let debug_output = format!("{:?}", path);
+            assert_eq!(debug_output, r#""foo/bar""#);
 
-        // Test `Debug`
-        let debug_output = format!("{:?}", path);
-        assert_eq!(debug_output, r#""foo/bar""#);
+            // Test `PartialEq<PathBuf>` for `Path`
+            let path_buf = PathBuf::from("foo/bar");
+            assert_eq!(path, path_buf);
 
-        // Test `PartialEq<PathBuf>` for `Path`
-        let path_buf = PathBuf::from("foo/bar");
-        assert_eq!(path, path_buf);
+            // Test `PartialEq<PathBuf>` for `&Path`
+            assert_eq!(&path, &path_buf);
 
-        // Test `PartialEq<PathBuf>` for `&Path`
-        assert_eq!(&path, &path_buf);
-
-        // Test `PartialEq<std::path::Path>` for `Path`
-        let std_path = std::path::Path::new("foo/bar");
-        assert_eq!(path, std_path);
-        },
-    )
-    .await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[allow(clippy::too_many_lines)]
-async fn test_pathbuf_traits() {
-    run_test(
-        TestSetup {
-            key: "test_pathbuf_traits",
-            read_only: false,
-        },
-        async {
-            let fs = get_fs().await;
-            OpenOptions::set_scope(fs.clone()).await;
-
-            // Test for `push` method
-            let mut path = PathBuf::from("foo");
-            path.push("bar");
-            path.push("bee");
-            path.push("baa");
-            assert_eq!(path, PathBuf::from("foo/bar/bee/baa"));
-
-            // Test for `pop` method
-            path.pop();
-            path.pop();
-            assert_eq!(path, PathBuf::from("foo/bar"));
-            path.pop();
-            path.pop();
-            path.pop();
-            assert_eq!(path, PathBuf::from(""));
-
-            // Test for `AsRef<Path> for Iter<'_>`
-            let paths = vec![
-                PathBuf::from("foo/bar"),
-                PathBuf::from("baz"),
-                PathBuf::from("boo"),
-            ];
-            let iter: PathBuf = paths.iter().collect();
-            assert_eq!(iter, PathBuf::from("foo/bar/baz/boo"));
+            // Test `PartialEq<std::path::Path>` for `Path`
+            let std_path = std::path::Path::new("foo/bar");
+            assert_eq!(path, std_path);
         },
     )
     .await;
@@ -547,7 +504,6 @@ async fn test_pathbuf_methods() {
 
             let capacity = path.capacity();
             path.push("/foo");
-            // TODO Fix push method capacity
             assert_eq!(capacity, path.capacity());
 
             // Test the `as_path` method
@@ -785,8 +741,153 @@ async fn test_pathbuf_methods() {
             let final_capacity = container.inner.capacity();
             assert!(final_capacity >= min_capacity);
             assert!(final_capacity < expanded_capacity);
-            let file = std::fs::OpenOptions::new().write(true).create(true).open("file").unwrap();
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open("file")
+                .unwrap();
+        },
+    )
+    .await;
+}
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)]
+async fn test_pathbuf_traits() {
+    run_test(
+        TestSetup {
+            key: "test_pathbuf_traits",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            OpenOptions::set_scope(fs.clone()).await;
+
+            // Tests below
+            // Test `Clone` and `Clone::clone_from`
+            let path_buf = PathBuf::from("foo/bar");
+            let cloned = path_buf.clone();
+            assert_eq!(path_buf, cloned);
+
+            let mut target = PathBuf::from("baz");
+            target.clone_from(&path_buf);
+            assert_eq!(target, path_buf);
+
+            // Test `From<&PathBuf> for Cow<Path>`
+            let cow_path: Cow<Path> = Cow::from(&path_buf);
+            assert_eq!(cow_path.as_ref(), path_buf.as_path());
+
+            // Test `From<&T> for PathBuf`
+            let os_string = OsString::from("foo/bar");
+            let path_buf_from_os_string: PathBuf = PathBuf::from(&os_string);
+            assert_eq!(path_buf_from_os_string, path_buf);
+
+            // Test `From<std::result::Result<std::path::PathBuf, std::io::Error>>`
+            let std_path_buf = std::path::PathBuf::from("foo/bar");
+            let path_buf_from_result: PathBuf = PathBuf::from(Ok(std_path_buf.clone()));
+            assert_eq!(path_buf_from_result, path_buf);
+
+            let empty_path_buf: PathBuf =
+                PathBuf::from(Err(std::io::Error::new(std::io::ErrorKind::Other, "Error")));
+            assert!(empty_path_buf.inner.is_empty());
+
+            // Test `From<Box<Path>>`
+            let boxed_path: Box<Path> = Box::from(Path::new("foo/bar"));
+            let path_buf_from_box: PathBuf = PathBuf::from(boxed_path);
+            assert_eq!(path_buf_from_box, path_buf);
+
+            // Test `From<Cow<Path>>`
+            let owned_path_buf: PathBuf = PathBuf::from(Cow::Owned(path_buf.clone()));
+            assert_eq!(owned_path_buf, path_buf);
+
+            // Test `From<OsString>`
+            let path_buf_from_os_string_direct: PathBuf = PathBuf::from(os_string.clone());
+            assert_eq!(path_buf_from_os_string_direct, path_buf);
+
+            // Test `From<PathBuf> for Arc<Path>`
+            let arc_path: Arc<Path> = Arc::from(path_buf.clone());
+            assert_eq!(arc_path.as_ref(), path_buf.as_path());
+
+            // Test `From<PathBuf> for Box<Path>`
+            let boxed_path_buf: Box<Path> = Box::from(path_buf.clone());
+            assert_eq!(boxed_path_buf.as_ref(), path_buf.as_path());
+
+            // Test `From<PathBuf> for OsString`
+            let os_string_from_path_buf: OsString = OsString::from(path_buf.clone());
+            assert_eq!(os_string_from_path_buf, path_buf.inner);
+
+            // Test `From<PathBuf> for Rc<Path>`
+            let rc_path: Rc<Path> = Rc::from(path_buf.clone());
+            assert_eq!(rc_path.as_ref(), path_buf.as_path());
+
+            // Test `From<String>`
+            let string_path_buf: PathBuf = PathBuf::from("foo/bar".to_string());
+            assert_eq!(string_path_buf, path_buf);
+
+            // Test `FromIterator<P>`
+            let components = vec!["foo", "bar"];
+            let iter_path_buf: PathBuf = components.into_iter().collect();
+            assert_eq!(iter_path_buf, path_buf);
+
+            // Test `FromStr`
+            let from_str_path_buf: std::result::Result<PathBuf, _> = PathBuf::from_str("foo/bar");
+            assert_eq!(from_str_path_buf.unwrap(), path_buf);
+
+            // Test `From<std::path::PathBuf>`
+            let path_buf_from_std: PathBuf = PathBuf::from(std_path_buf);
+            assert_eq!(path_buf_from_std, path_buf);
+
+            // Test Hash trait
+            let path1 = PathBuf::from("foo/bar");
+            let path2 = PathBuf::from("foo/bar");
+            
+            // Create a DefaultHasher instance
+            let mut hasher1 = DefaultHasher::new();
+            let mut hasher2 = DefaultHasher::new();
+            
+            path1.hash(&mut hasher1);
+            path2.hash(&mut hasher2);
+            
+            let hash1 = hasher1.finish();
+            let hash2 = hasher2.finish();
+            
+            assert_eq!(hash1, hash2, "Hashes should be equal for the same paths");
+            
+            println!("Hash 1: {}, Hash 2: {}", hash1, hash2);
+
+            // Test PartialEq trait with std::path::Path
+            let path_buf = PathBuf::from("/test/path");
+            let std_path = std::path::Path::new("/test/path");
+
+            assert_eq!(
+                path_buf, std_path,
+                "PathBuf should be equal to std::path::Path"
+            );
+
+            // Test AsRef trait for std::path::Path
+            let path_buf = PathBuf::from("/test/path");
+            assert_eq!(
+                path_buf.as_ref() as &std::path::Path,
+                std::path::Path::new("/test/path"),
+                "AsRef<std::path::Path> should return the correct path"
+            );
+
+            // Test Deref trait
+            let path_buf = PathBuf::from("/test/path");
+            assert_eq!(
+                &*path_buf,
+                std::path::Path::new("/test/path"),
+                "Deref should behave like AsRef<std::path::Path>"
+            );
+
+            // Test IntoIterator trait
+            let path_buf = PathBuf::from("/test/path");
+            let components: Vec<&OsStr> = path_buf.into_iter().collect();
+            assert_eq!(
+                components,
+                vec![OsStr::new("/"), OsStr::new("test"), OsStr::new("path")],
+                "IntoIterator should iterate over path components"
+            );
         },
     )
     .await;

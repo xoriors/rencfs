@@ -3,7 +3,7 @@
 
 use crate::async_util;
 
-use crate::crypto::fs::{OpenOptions, Metadata};
+use crate::crypto::fs::{Metadata, OpenOptions};
 use crate::encryptedfs::{EncryptedFs, FsError, FsResult};
 use std::borrow::Borrow;
 use std::collections::TryReserveError;
@@ -25,7 +25,7 @@ use std::{
 mod test;
 
 /// Wrapper around [`std::path::Path`] to allow use on EncryptedFs.
-/// 
+///
 #[allow(clippy::new_without_default)]
 #[derive(PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -158,11 +158,11 @@ impl Path {
     }
 
     /// Queries the EncryptedFs file system to get information about a file or directory.
-    /// 
+    ///
     /// Due to how the paths are canonicalized, they may leak.
-    /// 
+    ///
     /// Metadata is a wrapped for [`rencfs::encryptedfs::FileAttr`]
-    /// 
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -182,11 +182,11 @@ impl Path {
 
     /// Returns the canonical form of the path with all intermediate
     /// components normalized and symbolic links resolved.
-    /// 
+    ///
     /// Will not reveal the canonical base directory.
-    /// 
+    ///
     /// Due to how the paths are canonicalized, they may leak.
-    /// 
+    ///
     /// ```no_run
     /// use rencfs::crypto::path::{Path, PathBuf};
     ///
@@ -226,14 +226,14 @@ impl Path {
     }
 
     /// Returns `true` if the path points at an existing entity.
-    /// 
+    ///
     /// Due to how the paths are canonicalized, they may leak.
     pub fn exists(&self) -> bool {
         Path::metadata(self).is_ok()
     }
 
     /// Returns `Ok(true)` if the path points at an existing entity.
-    /// 
+    ///
     /// Due to how the paths are canonicalized, they may leak.
     pub fn try_exists(&self) -> Result<bool> {
         async_util::call_async(crate::crypto::fs::exists(self))
@@ -406,7 +406,7 @@ impl PartialEq<std::path::Path> for Path {
 }
 
 /// Wrapper around [`std::path::PathBuf`] to allow use on EncryptedFs.
-/// 
+///
 #[derive(PartialEq, Eq)]
 pub struct PathBuf {
     inner: OsString,
@@ -655,6 +655,12 @@ impl PartialEq<&Path> for PathBuf {
 
 impl PartialEq<std::path::Path> for PathBuf {
     fn eq(&self, other: &std::path::Path) -> bool {
+        self.inner == other.as_os_str().to_os_string()
+    }
+}
+
+impl PartialEq<&std::path::Path> for PathBuf {
+    fn eq(&self, other: &&std::path::Path) -> bool {
         self.inner == other.as_os_str().to_os_string()
     }
 }
