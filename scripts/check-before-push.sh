@@ -21,6 +21,7 @@ cargo clippy --all-targets --release --target x86_64-unknown-linux-gnu -- \
     -A clippy::missing_errors_doc \
     -A clippy::type_complexity
 cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
+# cargo bench --workspace --all-targets --all-features --target x86_64-unknown-linux-gnu
 cargo doc --workspace --all-features --no-deps --target x86_64-unknown-linux-gnu
 
 # cargo publish --dry-run --allow-dirty --target x86_64-unknown-linux-gnu
@@ -43,5 +44,6 @@ cargo clippy --all-targets --release --target x86_64-unknown-linux-gnu -- \
     -A clippy::missing_errors_doc \
     -A clippy::type_complexity
 cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
+# cargo bench --workspace --all-targets --all-features --target x86_64-unknown-linux-gnu
 cargo doc --workspace --all-features --no-deps --target x86_64-unknown-linux-gnu
 cd ..

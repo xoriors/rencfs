@@ -28,6 +28,9 @@ REM if %errorlevel% neq 0 exit /b %errorlevel%
 cargo test --release --all --all-features
 if %errorlevel% neq 0 exit /b %errorlevel%
 
+REM cargo bench --workspace --all-targets --all-features --target x86_64-unknown-linux-gnu
+if %errorlevel% neq 0 exit /b %errorlevel%
+
 cargo doc --workspace --all-features --no-deps
 if %errorlevel% neq 0 exit /b %errorlevel%
 
@@ -66,6 +69,9 @@ cargo test --release --all --all-features
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 cargo doc --workspace --all-features --no-deps
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+REM cargo bench --workspace --all-targets --all-features --target x86_64-unknown-linux-gnu
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 cd ..
