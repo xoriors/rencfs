@@ -1,28 +1,16 @@
-#[allow(unused_imports)]
 use rand::Rng;
-#[allow(unused_imports)]
 use shush_rs::SecretString;
-#[allow(unused_imports)]
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-#[allow(unused_imports)]
-use rencfs::encryptedfs::{DirectoryEntry, DirectoryEntryPlus, FileType, ROOT_INODE};
-#[allow(unused_imports)]
-use rencfs::test_common::block_on;
-#[allow(unused_imports)]
-use rencfs::test_common::{create_attr, get_fs};
-#[allow(unused_imports)]
-use rencfs::{async_util, test_common};
-
-#[allow(unused_imports)]
 use criterion::{criterion_group, criterion_main, Criterion};
 use rand::thread_rng;
 use rencfs::encryptedfs::EncryptedFs;
+use rencfs::encryptedfs::{DirectoryEntry, DirectoryEntryPlus, FileType, ROOT_INODE};
+use rencfs::test_common::create_attr;
 use rencfs::test_common::{run_bench, TestSetup};
 
-#[allow(dead_code)]
 fn bench_create(c: &mut Criterion) {
     run_bench(
         TestSetup {
@@ -52,7 +40,6 @@ fn bench_create(c: &mut Criterion) {
     }
 }
 
-#[allow(dead_code)]
 fn bench_exists_by_name(c: &mut Criterion) {
     run_bench(
         TestSetup {
@@ -77,7 +64,6 @@ fn bench_exists_by_name(c: &mut Criterion) {
     }
 }
 
-#[allow(dead_code)]
 fn bench_find_by_name(c: &mut Criterion) {
     run_bench(
         TestSetup {
@@ -118,7 +104,6 @@ fn bench_find_by_name(c: &mut Criterion) {
     }
 }
 
-#[allow(dead_code)]
 fn bench_read_dir(c: &mut Criterion) {
     run_bench(
         TestSetup {
@@ -153,7 +138,6 @@ fn bench_read_dir(c: &mut Criterion) {
     }
 }
 
-#[allow(dead_code)]
 fn bench_read_dir_plus(c: &mut Criterion) {
     run_bench(
         TestSetup {

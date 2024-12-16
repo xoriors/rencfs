@@ -63,7 +63,7 @@ pub struct TestSetup {
     ///    - As a prefix to create a tmp dir for the fs.
     ///         It will add the timestamp in millis and a random number to the end of the key to make it unique.
     ///         This is useful if test fails, and you want to see the actual data, as if test fails,
-    ///    the tmp dir is not removed.
+    ///         the tmp dir is not removed.
     #[allow(dead_code)]
     pub id: &'static str,
     pub read_only_fs: bool,
@@ -268,8 +268,7 @@ pub fn bench_setup(setup_in: TestSetup) -> (Runtime, Arc<EncryptedFs>) {
             let mut s = s.lock().await;
             *s = res;
         }
-        let fs = get_fs().await;
-        fs
+        get_fs().await
     });
     (rt, fs)
 }
@@ -304,7 +303,7 @@ pub fn run_bench<'a, FSetup, FutSetup, FRun, FutRun>(
     c.bench_function(id, |b| {
         b.iter(|| {
             let z2 = z.swap(true, Ordering::SeqCst);
-            let _ = rt.block_on(async {
+            rt.block_on(async {
                 run_fn(fs.clone(), &ATOMIC).await;
             });
             black_box(z2);
