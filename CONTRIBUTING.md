@@ -26,7 +26,7 @@ defined in the Apache License shall be dual-licensed as above, without any addit
    save, [RustRover](https://www.jetbrains.com/help/rust/rustfmt.html)
    and [VSCode](https://code.visualstudio.com/docs/languages/rust#_formatting)
 10. `cargo clippy --all --release` and fix any errors
-11. **DON'T INCREASE THE VERSION NUMBER IN `Cargo.toml`, WE WILL DO THAN WHEN RELEASING**
+11. **DON'T INCREASE THE VERSION NUMBER IN `Cargo.toml`, WE WILL DO THAT WHEN RELEASING**
 12. Create a `git` `push hook` file in `.git/hooks/pre-push` with [pre-push](scripts/git-hooks/linux-macos/pre-push)
     content
     on `Linux` and `macOS`, and [pre-push](scripts/git-hooks/windows/pre-push) on `Windows`.
