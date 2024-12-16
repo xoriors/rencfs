@@ -23,7 +23,7 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
 6. Goto terminal in the browser version of the VSCode editor you're presented with. It should be at the bottom, or open it from the menu `Terminal -> New Terminal`
 7. You can find the menu in the top left, with 3 lines icon  
   ![image](https://github.com/user-attachments/assets/48681023-e450-49b3-8526-ec0323be0d40)
-8. Install Rust and create a `tmp` folder, which we will use to copy files from our machine, by typing these in terminal:
+8. Install Rust by pasting these in the terminal:
   ```bash
   apt-get update && apt-get install fuse3
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -36,9 +36,9 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
     apt install rustc
     rustc
   ```
-9. Run this in terminal:
+9. Create a `tmp` folder, which we will use to copy files from our machine, by pasting this in the terminal:
   ```bash
-  mkdir tmp && mkdir mnt && mkdir data
+  mkdir tmp && mkdir final && mkdir data
   ```
   
 ### Each resume and after the first setup
@@ -67,14 +67,14 @@ Do step 11 from above.
   ```bash
   git pull
   git checkout --theirs .
-  cargo run --release -- mount -m mnt -d data
+  rm -rf final; cargo run --release -- mount -m final -d data
   ```
 6. Input a password and confirm it the first time
 
 You can now perform two types of tests; see below. In both cases, follow these steps.
 
 7. Copy files and folders from your local machine to `tmp` folder in VSCode
-8. Copy files and folders from `tmp` to `mnt` and then do your operations the data in `nnt` folder
+8. Copy files and folders from `tmp` to `final` and then do your operations the data in `nnt` folder
 9. Make sure files were copied successfully by right-clicking a file and then `Download...` and save it to local machine and making sure it opens correctly
 
 #### Exploratory testing
@@ -94,14 +94,13 @@ Test specific issues from the [project](https://github.com/users/radumarias/proj
 - [ ] Testing on macOS
 - [ ] Testing on Windows
 
-## Test cases
+## Tests
 
 I created some [files](https://drive.google.com/drive/folders/1N-2KhGNo7f23tQ9Si4yWa9dlFtxUnsoM?usp=sharing) to keep our tests until we migrate to browserstack or similar. 
 
 - `test cases`: generic test cases
 - `smoke tests`: short, small tests used to test a build quickly
 - `acceptance`: tests that must be passed to consider a build stable. These we will run for prod builds
-- `bug` sample sample file to create a new bug. Copy it and create a new file in `bugs` folder. After you have this, please create a bug on GitHub, too, and name the file as the bug in there, including #id too
 
 ## Open a bug
 
