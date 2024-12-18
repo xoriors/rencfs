@@ -12,7 +12,7 @@
 > [!WARNING]  
 > **This crate hasn't been audited; it's using `ring` crate, which is a well-known audited library, so in principle, at
 least the primitives should offer a similar level of security.  
-> This is still under development. Please do not use it with sensitive data for now; please wait for a
+> This is still under development. Please do not use it with sensitive data now; please wait for a
 stable release.  
 > It's mostly ideal for experimental and learning projects.**
 
@@ -31,18 +31,13 @@ data.
 - Motivation
   Create a `simple,` `performant,` `modular` and `ergonomic` yet `very secure` `encrypted filesystem` to protect
   your `privacy`, which is also `open source` and is correctly and safely using `well-known audited` crates
-  as `cryptographic primitives.`
-- A short story
-  [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](docs/The_Hitchhiker_s_Guide_to_Building_an_Encrypted_Filesystem_in_Rust.pdf)
+  as `cryptographic primitives`.
+- Read an article [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://medium.com/system-weakness/hitchhikers-guide-to-building-a-distributed-filesystem-in-rust-the-very-beginning-2c02eb7313e7)
+- A one-pager [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](docs/The_Hitchhiker_s_Guide_to_Building_an_Encrypted_Filesystem_in_Rust.pdf).
 - Talks
-    - [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://startech-rd.io/hitchhikers-guide-to/) [@meetup.com/star-tech-rd-reloaded](https://www.meetup.com/star-tech-rd-reloaded/)
-      and [@OmniOpenCon](https://omniopencon.org/)
-    - [Basics of cryptography, Authenticated Encryption, Rust in cryptography and how to build an encrypted filesystem](https://www.youtube.com/live/HwmVxOl3pQg)
-      @ITDays and [slides](https://miro.com/app/board/uXjVLccxeCE=/?share_link_id=342563218323).
-    - Crate of the week
-      in [This Week in Rust](https://this-week-in-rust.org/blog/2024/08/07/this-week-in-rust-559/#cfp-projects)
-- It was [crate of the week](https://this-week-in-rust.org/blog/2024/08/14/this-week-in-rust-560/#crate-of-the-week) in
-  Aug 2024.
+    - [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://startech-rd.io/hitchhikers-guide-to/) @[meetup.com/star-tech-rd-reloaded](https://www.meetup.com/star-tech-rd-reloaded/) and @[OmniOpenCon](https://omniopencon.org/).
+    - [Basics of cryptography, Authenticated Encryption, Rust in cryptography and how to build an encrypted filesystem](https://www.youtube.com/live/HwmVxOl3pQg) @ITDays and [slides](https://miro.com/app/board/uXjVLccxeCE=/?share_link_id=342563218323).
+- It was [crate of the week](https://this-week-in-rust.org/blog/2024/08/14/this-week-in-rust-560/#crate-of-the-week) in Aug 2024.
 
 # Key features
 
