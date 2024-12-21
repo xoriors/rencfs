@@ -6,7 +6,7 @@
 Unless you explicitly state otherwise, any Contribution intentionally submitted for inclusion in this project by you, as
 defined in the Apache License shall be dual-licensed as above, without any additional terms or conditions.
 
-1. Join [slack](https://bit.ly/3UU1oXi) and join `#dev-beginners` channel
+1. Join the project's [slack](https://bit.ly/3UU1oXi) (this is for the `rencfs` project, please use the one for your project) and join the `#dev-beginners` channel (or any relevant ones)
 2. **Ask the owner of the repository to add your GitHub username to the repository** so that you can work on issues and
    be able to create your own branches and not need to fork the repo
 
