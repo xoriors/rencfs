@@ -3,9 +3,8 @@
 
 use crate::async_util;
 
-use crate::crypto::fs_api::r#async::fs::{ReadDir, Metadata, OpenOptions};
+use crate::crypto::fs_api::fs::{Metadata, OpenOptions, ReadDir};
 use crate::encryptedfs::{EncryptedFs, FsError, FsResult};
-use std::borrow::Borrow;
 use std::collections::TryReserveError;
 use std::ffi::OsStr;
 use std::hash::{Hash, Hasher};
@@ -13,7 +12,7 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::str::FromStr;
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     ffi::OsString,
     io::Result,
     path::{Components, Display, Iter, StripPrefixError},
@@ -172,7 +171,7 @@ impl Path {
     /// println!("{:?}", metadata.file_type());
     /// ```
     pub fn metadata(&self) -> Result<Metadata> {
-        async_util::call_async(crate::crypto::fs_api::r#async::fs::metadata(self))
+        async_util::call_async(crate::crypto::fs_api::fs::metadata(self))
     }
 
     /// Not implemented!
@@ -221,7 +220,7 @@ impl Path {
     }
 
     pub fn read_dir(&self) -> Result<ReadDir> {
-        async_util::call_async(crate::crypto::fs_api::r#async::fs::read_dir(self))
+        async_util::call_async(crate::crypto::fs_api::fs::read_dir(self))
     }
 
     /// Returns `true` if the path points at an existing entity.
@@ -235,7 +234,7 @@ impl Path {
     ///
     /// Due to how the paths are canonicalized, they may leak.
     pub fn try_exists(&self) -> Result<bool> {
-        async_util::call_async(crate::crypto::fs_api::r#async::fs::exists(self))
+        async_util::call_async(crate::crypto::fs_api::fs::exists(self))
     }
 
     pub fn is_file(&self) -> bool {
