@@ -11,7 +11,7 @@ use std::time::SystemTime;
 use crate::async_util;
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
-    CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult, PasswordProvider,
+    CreateFileAttr, DirectoryEntryPlus, DirectoryEntryPlusIterator, EncryptedFs, FileAttr, FileType, FsError, FsResult, PasswordProvider
 };
 use anyhow::Result;
 use thread_local::ThreadLocal;
@@ -358,6 +358,15 @@ impl File {
     }
 }
 
+pub async fn read_dir<P: AsRef<Path>>(path: P) -> std::io::Result<ReadDir> {
+    let fs = get_fs().await?;
+
+    let (_, dir_inode) = validate_path_exists(&path).await?;
+
+    let iter = fs.read_dir_plus(dir_inode).await?;
+    Ok(ReadDir { inner: iter})
+}
+
 pub async fn metadata<P: AsRef<Path>>(path: P) -> std::io::Result<Metadata> {
     let fs = get_fs().await?;
 
@@ -560,6 +569,18 @@ impl Metadata {
 
     pub fn permissions(&self) -> u64 {
         self.attr.perm as u64
+    }
+}
+
+pub struct ReadDir {
+    inner: DirectoryEntryPlusIterator
+}
+
+impl Iterator for ReadDir {
+    type Item = FsResult<DirectoryEntryPlus>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
     }
 }
 

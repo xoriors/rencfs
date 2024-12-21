@@ -3,7 +3,7 @@
 
 use crate::async_util;
 
-use crate::crypto::fs_api::r#async::fs::{Metadata, OpenOptions};
+use crate::crypto::fs_api::r#async::fs::{ReadDir, Metadata, OpenOptions};
 use crate::encryptedfs::{EncryptedFs, FsError, FsResult};
 use std::borrow::Borrow;
 use std::collections::TryReserveError;
@@ -15,7 +15,6 @@ use std::str::FromStr;
 use std::{
     borrow::Cow,
     ffi::OsString,
-    fs::ReadDir,
     io::Result,
     path::{Components, Display, Iter, StripPrefixError},
     sync::Arc,
@@ -222,8 +221,7 @@ impl Path {
     }
 
     pub fn read_dir(&self) -> Result<ReadDir> {
-        let path = std::path::Path::new(&self.inner);
-        path.read_dir()
+        async_util::call_async(crate::crypto::fs_api::r#async::fs::read_dir(self))
     }
 
     /// Returns `true` if the path points at an existing entity.
