@@ -8,6 +8,7 @@ use shush_rs::SecretString;
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::write_all_string_to_fs;
 use rencfs::encryptedfs::{CreateFileAttr, EncryptedFs, FileType, PasswordProvider};
+use rencfs::crypto::bip39::{Language};
 
 const ROOT_INODE: u64 = 1;
 
@@ -17,6 +18,10 @@ impl PasswordProvider for PasswordProviderImpl {
     fn get_password(&self) -> Option<SecretString> {
         // dummy password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
         Some(SecretString::from_str("pass42").unwrap())
+    }
+
+    fn recovery_phrase_format(&self) -> Option<Language> {
+        Some(Language::English)
     }
 }
 

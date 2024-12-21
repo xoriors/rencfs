@@ -9,7 +9,7 @@ use shush_rs::SecretString;
 use tempfile::NamedTempFile;
 use thread_local::ThreadLocal;
 use tokio::sync::Mutex;
-
+use crate::crypto::bip39::Language;
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
     CopyFileRangeReq, CreateFileAttr, EncryptedFs, FileType, PasswordProvider,
@@ -70,6 +70,10 @@ pub struct PasswordProviderImpl {}
 impl PasswordProvider for PasswordProviderImpl {
     fn get_password(&self) -> Option<SecretString> {
         Some(SecretString::from_str("password").unwrap())
+    }
+
+    fn recovery_phrase_format(&self) -> Option<Language> {
+        todo!()
     }
 }
 #[allow(dead_code)]

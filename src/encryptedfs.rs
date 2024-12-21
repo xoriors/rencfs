@@ -31,6 +31,7 @@ use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
 use crate::{crypto, fs_util, stream_util};
 use bon::bon;
+use crate::crypto::bip39::Language;
 
 mod bench;
 #[cfg(test)]
@@ -275,6 +276,8 @@ pub enum FsError {
     Other(&'static str),
     #[error("invalid password")]
     InvalidPassword,
+    #[error("invalid input to generate recovery phrase")]
+    InvalidInputToRecoveryPhrase,
     #[error("invalid structure of data directory")]
     InvalidDataDirStructure,
     #[error("crypto error: {source}")]
@@ -510,12 +513,15 @@ impl ValueProvider<SecretVec<u8>, FsError> for KeyProvider {
             .password_provider
             .get_password()
             .ok_or(FsError::InvalidPassword)?;
-        read_or_create_key(&self.key_path, &self.salt_path, &password, self.cipher)
+        let recovery_phrase_lang = self.password_provider.recovery_phrase_format().unwrap_or_else(|| Language::default());
+        read_or_create_key(&self.key_path, &self.salt_path, &password, self.cipher, recovery_phrase_lang)
     }
 }
 
 pub trait PasswordProvider: Send + Sync + 'static {
     fn get_password(&self) -> Option<SecretString>;
+
+    fn recovery_phrase_format(&self) -> Option<Language>;
 }
 
 struct DirEntryNameCacheProvider {}
@@ -2499,6 +2505,7 @@ fn read_or_create_key(
     salt_path: &PathBuf,
     password: &SecretString,
     cipher: Cipher,
+    recovery_phrase_lang: Language
 ) -> FsResult<SecretVec<u8>> {
     let salt = if salt_path.exists() {
         bincode::deserialize_from(File::open(salt_path)?).map_err(|_| FsError::InvalidPassword)?
@@ -2519,6 +2526,8 @@ fn read_or_create_key(
     };
     // derive key from password
     let derived_key = crypto::derive_key(password, cipher, &salt)?;
+    let recovery_key = crypto::bip39::generate_recovery_phrase(recovery_phrase_lang, &derived_key)?;
+    info!("Recovery key: {}", recovery_key);
     if key_path.exists() {
         // read key
         let reader = crypto::create_read(File::open(key_path)?, cipher, &derived_key);

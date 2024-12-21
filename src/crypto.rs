@@ -30,6 +30,7 @@ use crate::{fs_util, stream_util};
 pub mod buf_mut;
 pub mod read;
 pub mod write;
+pub mod bip39;
 
 pub static BASE64: GeneralPurpose = GeneralPurpose::new(&STANDARD, NO_PAD);
 
@@ -100,6 +101,11 @@ pub enum Error {
         #[from]
         source: bincode::Error,
         // backtrace: Backtrace,
+    },
+    #[error("")]
+    RecoveryPhraseError {
+        #[from]
+        source: bip39::Error
     },
     #[error("generic error: {0}")]
     Generic(&'static str),
