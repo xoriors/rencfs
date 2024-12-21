@@ -12,6 +12,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+use rencfs::crypto::bip39::Language;
 
 const ROOT_INODE: u64 = 1;
 
@@ -20,6 +21,10 @@ struct PasswordProviderImpl;
 impl PasswordProvider for PasswordProviderImpl {
     fn get_password(&self) -> Option<SecretString> {
         Some(SecretString::from_str("password").unwrap())
+    }
+
+    fn recovery_phrase_format(&self) -> Option<Language> {
+        Some(Language::default())
     }
 }
 

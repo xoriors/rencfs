@@ -20,6 +20,7 @@ use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
 use rencfs::{log, mount};
+use rencfs::crypto::bip39::Language;
 
 static mut PASS: Option<SecretString> = None;
 
@@ -340,6 +341,10 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
                         .ok()
                 }
             }
+        }
+
+        fn recovery_phrase_format(&self) -> Option<Language> {
+            return None
         }
     }
     let mount_point = mount::create_mount_point(

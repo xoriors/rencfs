@@ -1,9 +1,10 @@
-pub use bip39;
-use shush_rs::{ExposeSecret, SecretVec};
-use crate::encryptedfs::FsError;
+use bip39;
+
 use crate::crypto::Result;
+use shush_rs::{ExposeSecret, SecretVec};
 
 pub(crate) use bip39::Error;
+use strum_macros::EnumIter;
 
 pub(crate) fn generate_recovery_phrase(language: Language, key:&SecretVec<u8>) -> Result<String> {
     let entropy = key.expose_secret();
@@ -12,37 +13,33 @@ pub(crate) fn generate_recovery_phrase(language: Language, key:&SecretVec<u8>) -
     Ok(recovery_phrase.to_string())
 }
 
+pub(crate) fn mnemonic_to_entropy(mnemonic: &str) -> Result<Vec<u8>>{
+      let parsed_data = bip39::Mnemonic::parse_normalized(mnemonic)?;
+      Ok(parsed_data.to_entropy())
+}
+
 // Avoid depending on the library directly.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, EnumIter)]
 pub enum Language {
 
     English,
     // #[cfg(feature = "chinese-simplified")]
-    /// The Simplified Chinese language.
     SimplifiedChinese,
     // #[cfg(feature = "chinese-traditional")]
-    /// The Traditional Chinese language.
     TraditionalChinese,
     // #[cfg(feature = "czech")]
-    /// The Czech language.
     Czech,
     // #[cfg(feature = "french")]
-    /// The French language.
     French,
     // #[cfg(feature = "italian")]
-    /// The Italian language.
     Italian,
     // #[cfg(feature = "japanese")]
-    /// The Japanese language.
     Japanese,
     // #[cfg(feature = "korean")]
-    /// The Korean language.
     Korean,
     // #[cfg(feature = "portuguese")]
-    /// The Portuguese language.
     Portuguese,
     // #[cfg(feature = "spanish")]
-    /// The Spanish language.
     Spanish,
 }
 
@@ -50,14 +47,23 @@ impl From<Language> for bip39::Language {
     fn from(value: Language) -> Self {
         match value {
             Language::English => bip39::Language::English,
+            // #[cfg(feature = "chinese-simplified")]
             Language::SimplifiedChinese => bip39::Language::SimplifiedChinese,
+            // #[cfg(feature = "chinese-traditional")]
             Language::TraditionalChinese => bip39::Language::TraditionalChinese,
+            // #[cfg(feature = "czech")]
             Language::Czech => bip39::Language::Czech,
+            // #[cfg(feature = "french")]
             Language::French => bip39::Language::French,
+            // #[cfg(feature = "italian")]
             Language::Italian => bip39::Language::Italian,
+            // #[cfg(feature = "japanese")]
             Language::Japanese => bip39::Language::Japanese,
+            // #[cfg(feature = "korean")]
             Language::Korean => bip39::Language::Korean,
+            // #[cfg(feature = "portuguese")]
             Language::Portuguese => bip39::Language::Portuguese,
+            // #[cfg(feature = "spanish")]
             Language::Spanish => bip39::Language::Spanish,
         }
     }
@@ -71,16 +77,23 @@ impl Default for Language {
 
 #[cfg(test)]
 mod tests {
+    use argon2::password_hash::rand_core::RngCore;
+    use crate::crypto::bip39::{generate_recovery_phrase, mnemonic_to_entropy, Language};
     use shush_rs::SecretVec;
-    use crate::crypto::bip39::{Language, generate_recovery_phrase};
-    use crate::crypto::bip39::Language::{Czech, English, TraditionalChinese};
+    use strum::IntoEnumIterator;
 
     #[test]
     fn init_recovery_phrase(){
-        let entropy = [3u8;32];
-        let secret_vec = SecretVec::new(Box::new(entropy.to_vec()));
-        let recovery_phrase = generate_recovery_phrase(TraditionalChinese, &secret_vec);
-        assert_eq!(24, recovery_phrase.split(" ").count());
-        println!("{:?}", recovery_phrase);
+        let mut entropy = vec![0; 16];
+        crate::crypto::create_rng().fill_bytes(&mut entropy);
+        let secret_vec = SecretVec::new(Box::new(entropy.clone()));
+        for lang in Language::iter() {
+
+            let recovery_phrase = generate_recovery_phrase(lang, &secret_vec).unwrap();
+            let derived_entropy = mnemonic_to_entropy(&recovery_phrase).unwrap();
+            assert_eq!(entropy, derived_entropy);
+        }
+
+
     }
 }
