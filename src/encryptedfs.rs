@@ -276,8 +276,6 @@ pub enum FsError {
     Other(&'static str),
     #[error("invalid password")]
     InvalidPassword,
-    #[error("invalid input to generate recovery phrase")]
-    InvalidInputToRecoveryPhrase,
     #[error("invalid structure of data directory")]
     InvalidDataDirStructure,
     #[error("crypto error: {source}")]

@@ -9,7 +9,6 @@ use shush_rs::SecretString;
 use tempfile::NamedTempFile;
 use thread_local::ThreadLocal;
 use tokio::sync::Mutex;
-use crate::crypto::bip39::Language;
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
     CopyFileRangeReq, CreateFileAttr, EncryptedFs, FileType, PasswordProvider,
