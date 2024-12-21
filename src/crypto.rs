@@ -28,7 +28,7 @@ use crate::encryptedfs::FsResult;
 use crate::{fs_util, stream_util};
 
 pub mod buf_mut;
-pub mod fs;
+pub mod fs_api;
 pub mod read;
 pub mod write;
 

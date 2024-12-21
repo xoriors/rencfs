@@ -1,3 +1,4 @@
+use shush_rs::{ExposeSecret, SecretBox, SecretString};
 use std::future::Future;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -5,14 +6,15 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::SystemTime;
 
 use crate::async_util;
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
-    CreateFileAttr, EncryptedFs, FileAttr, FileType, FsError, FsResult, PasswordProvider,
+    CreateFileAttr, DirectoryEntryPlus, DirectoryEntryPlusIterator, EncryptedFs, FileAttr,
+    FileType, FsError, FsResult, PasswordProvider,
 };
 use anyhow::Result;
-use shush_rs::{ExposeSecret, SecretBox, SecretString};
 use thread_local::ThreadLocal;
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 use tokio::sync::Mutex;
@@ -87,7 +89,6 @@ impl OpenOptions {
             path: SecretString::from_str(path.as_ref().to_path_buf().to_str().unwrap()).unwrap(),
         })
         .await
-        .map_err(map_err)
     }
 
     pub async fn init_scope(
@@ -133,7 +134,10 @@ pub struct File {
 impl std::fmt::Debug for File {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("File")
-            .field("context", &self.context)
+            .field("ino", &self.context.ino)
+            .field("read", &(self.context.fh_read != 0))
+            .field("write", &(self.context.fh_write != 0))
+            .field("pos", &self.context.pos)
             .finish()
     }
 }
@@ -158,14 +162,14 @@ pub struct FileContext {
 }
 
 impl File {
-    async fn new(init: FileInit) -> FsResult<Self> {
+    async fn new(init: FileInit) -> io::Result<Self> {
         let fs = get_fs().await?;
         let context = File::init(init, fs.clone()).await?;
         Ok(File { fs, context })
     }
 
     async fn init(init: FileInit, fs: Arc<EncryptedFs>) -> FsResult<FileContext> {
-        let paths = File::get_path_and_file_name(init.path);
+        let paths = get_path_from_secret(init.path);
         let mut dir_inode = ROOT_INODE;
         let file_name = paths
             .last()
@@ -179,11 +183,11 @@ impl File {
 
         if paths.len() > 1 {
             for node in paths.iter().take(paths.len() - 1) {
-                let res = fs.find_by_name(dir_inode, node).await?;
-                match res {
-                    Some(res) => dir_inode = res.ino,
-                    None => return Err(FsError::InodeNotFound),
-                }
+                dir_inode = fs
+                    .find_by_name(dir_inode, node)
+                    .await?
+                    .ok_or(FsError::InodeNotFound)?
+                    .ino;
             }
         }
         let file_exists = fs.find_by_name(dir_inode, file_name).await?.is_some();
@@ -348,19 +352,42 @@ impl File {
         })
     }
 
-    fn get_path_and_file_name(path: SecretBox<String>) -> Vec<SecretBox<String>> {
-        let input = path.expose_secret();
-        let path = input.strip_prefix(".").unwrap_or(&input);
-        let mut path_segments = Vec::new();
-        for segment in path.split("/") {
-            if segment.is_empty() {
-                continue;
-            }
-            let segment = SecretString::from_str(segment).unwrap();
-            path_segments.push(segment);
-        }
-        path_segments
+    pub async fn metadata(&self) -> Result<Metadata> {
+        let fs = get_fs().await?;
+        let attr = fs.get_attr(self.context.ino).await?;
+        Ok(Metadata { attr })
     }
+}
+
+pub async fn read_dir<P: AsRef<Path>>(path: P) -> std::io::Result<ReadDir> {
+    let fs = get_fs().await?;
+
+    let (_, dir_inode) = validate_path_exists(&path).await?;
+
+    let iter = fs.read_dir_plus(dir_inode).await?;
+    Ok(ReadDir { inner: iter })
+}
+
+pub async fn metadata<P: AsRef<Path>>(path: P) -> std::io::Result<Metadata> {
+    let fs = get_fs().await?;
+
+    let (file_name, dir_inode) = validate_path_exists(&path).await?;
+
+    let attr = fs
+        .find_by_name(dir_inode, &file_name)
+        .await?
+        .ok_or_else(|| FsError::InodeNotFound)?;
+    let file_attr = fs.get_attr(attr.ino).await?;
+
+    let metadata = Metadata { attr: file_attr };
+    Ok(metadata)
+}
+
+pub async fn exists<P: AsRef<Path>>(path: P) -> std::io::Result<bool> {
+    let fs = get_fs().await?;
+    let (file_name, dir_inode) = validate_path_exists(&path).await?;
+    let file_exists = fs.find_by_name(dir_inode, &file_name).await?.is_some();
+    Ok(file_exists)
 }
 
 impl AsyncRead for File {
@@ -395,7 +422,7 @@ impl AsyncRead for File {
 
                 Poll::Ready(Ok(()))
             }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(map_err(e))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -421,7 +448,7 @@ impl AsyncWrite for File {
                 self.context.pos += len as u64;
                 Poll::Ready(Ok(len))
             }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(map_err(e))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -433,7 +460,7 @@ impl AsyncWrite for File {
 
         match future.as_mut().poll(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(map_err(e))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -445,7 +472,7 @@ impl AsyncWrite for File {
 
         match future.as_mut().poll(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(map_err(e))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -453,9 +480,7 @@ impl AsyncWrite for File {
 
 impl AsyncSeek for File {
     fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> io::Result<()> {
-        let attr = async_util::call_async(async {
-            self.fs.get_attr(self.context.ino).await.map_err(map_err)
-        })?;
+        let attr = async_util::call_async(async { self.fs.get_attr(self.context.ino).await })?;
 
         let new_pos = match position {
             SeekFrom::Start(pos) => pos as i64,
@@ -481,6 +506,152 @@ impl AsyncSeek for File {
     }
 }
 
+/// Metadata information about a file.
+///
+/// Metadata is a wrapped for [`crate::encryptedfs::FileAttr`]
+///
+#[allow(clippy::new_without_default, clippy::len_without_is_empty)]
+pub struct Metadata {
+    pub attr: FileAttr,
+}
+
+impl std::fmt::Debug for Metadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = format!(
+            "FileType {{ is_file: {}, is_dir: {}, is_symlink: {} }}",
+            self.is_file(),
+            self.is_dir(),
+            false
+        );
+        f.debug_struct("Metadata")
+            .field("ino", &self.attr.ino)
+            .field("kind", &kind)
+            .field("perm", &format_args!("{:#o}", self.attr.perm))
+            .field("len", &self.attr.size)
+            .field("modified", &self.attr.mtime)
+            .field("accessed", &self.attr.atime)
+            .field("created", &self.attr.crtime)
+            .finish()
+    }
+}
+
+impl Metadata {
+    pub fn accessed(&self) -> Result<SystemTime> {
+        Ok(self.attr.atime)
+    }
+
+    pub fn modified(&self) -> Result<SystemTime> {
+        Ok(self.attr.mtime)
+    }
+
+    pub fn created(&self) -> Result<SystemTime> {
+        Ok(self.attr.crtime)
+    }
+
+    pub fn file_type(&self) -> FileType {
+        self.attr.kind
+    }
+
+    pub fn is_dir(&self) -> bool {
+        matches!(self.attr.kind, FileType::Directory)
+    }
+
+    pub fn is_file(&self) -> bool {
+        matches!(self.attr.kind, FileType::RegularFile)
+    }
+
+    pub fn is_symlink(&self) -> bool {
+        unimplemented!()
+    }
+
+    pub fn len(&self) -> u64 {
+        self.attr.size
+    }
+
+    pub fn permissions(&self) -> u64 {
+        self.attr.perm as u64
+    }
+}
+
+pub struct ReadDir {
+    inner: DirectoryEntryPlusIterator,
+}
+
+impl Iterator for ReadDir {
+    type Item = FsResult<DirectoryEntryPlus>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+fn get_path_from_secret(path: SecretBox<String>) -> Vec<SecretBox<String>> {
+    let input = path.expose_secret();
+    let input = input.to_string();
+    let path = Path::new(&input);
+
+    parse_path(path)
+}
+
+fn get_path_from_str(path: &str) -> Vec<SecretBox<String>> {
+    let path = Path::new(path);
+
+    parse_path(path)
+}
+
+pub fn parse_path(path: &Path) -> Vec<SecretBox<String>> {
+    let mut stack: Vec<SecretBox<String>> = Vec::new();
+
+    // TODO. Introduce manual parsing.
+    for comp in path.components() {
+        match comp {
+            std::path::Component::Normal(c) => {
+                stack.push(SecretBox::new(Box::new(
+                    c.to_os_string().to_owned().into_string().unwrap(),
+                )));
+            }
+            std::path::Component::ParentDir => {
+                stack.pop();
+            }
+            std::path::Component::CurDir => {
+                continue;
+            }
+            _ => {
+                continue;
+            }
+        }
+    }
+    stack
+}
+
+async fn validate_path_exists(path: impl AsRef<Path>) -> std::io::Result<(SecretBox<String>, u64)> {
+    let mut dir_inode = 1;
+    let fs = get_fs().await?;
+
+    let paths = get_path_from_str(
+        path.as_ref()
+            .to_str()
+            .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
+    );
+
+    if paths.len() > 1 {
+        for node in paths.iter().take(paths.len() - 1) {
+            dir_inode = fs
+                .find_by_name(dir_inode, node)
+                .await?
+                .ok_or_else(|| FsError::InodeNotFound)?
+                .ino;
+        }
+    }
+
+    let file_name = paths
+        .last()
+        .ok_or_else(|| FsError::InvalidInput("No filename"))?
+        .to_owned();
+
+    Ok((file_name, dir_inode))
+}
+
 async fn get_fs() -> FsResult<Arc<EncryptedFs>> {
     OpenOptions::from_scope()
         .await
@@ -503,14 +674,4 @@ fn file_attr() -> CreateFileAttr {
         attr.gid = libc::getgid();
     }
     attr
-}
-
-fn map_err(err: FsError) -> std::io::Error {
-    match err {
-        FsError::InodeNotFound => Error::new(ErrorKind::NotFound, "Inode not found"),
-        FsError::AlreadyExists => Error::new(ErrorKind::AlreadyExists, "File already exists"),
-        FsError::InvalidInput(msg) => Error::new(ErrorKind::InvalidInput, msg),
-        FsError::ReadOnly => Error::new(ErrorKind::PermissionDenied, "Read only."),
-        _ => Error::new(io::ErrorKind::Other, anyhow::Error::from(err)),
-    }
 }
