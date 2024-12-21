@@ -20,6 +20,7 @@ use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
 use rencfs::{log, mount};
+use rencfs::crypto::bip39::Language;
 
 static mut PASS: Option<SecretString> = None;
 
