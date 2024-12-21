@@ -53,7 +53,7 @@ async fn init_fs() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn _add_create<'a>(opts: &'a mut OpenOptions, path: &std::path::Path) -> &'a mut OpenOptions {
+fn _add_create<'a>(opts: &'a mut OpenOptions, path: &rencfs::crypto::fs_api::path::Path) -> &'a mut OpenOptions {
     if !path.to_path_buf().exists() {
         opts.create(true);
     }

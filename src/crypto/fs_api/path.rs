@@ -24,7 +24,7 @@ use std::{
 #[cfg(test)]
 mod test;
 
-/// Wrapper around [`std::path::Path`] to allow use on EncryptedFs.
+/// Similar to [`std::path::Path`] to allow use on EncryptedFs.
 ///
 #[allow(clippy::new_without_default)]
 #[derive(PartialEq, Eq, Hash)]
@@ -161,7 +161,7 @@ impl Path {
     ///
     /// Due to how the paths are canonicalized, they may leak.
     ///
-    /// Metadata is a wrapped for rencfs::encryptedfs::FileAttr
+    /// Metadata is a wrapped for [`crate::encryptedfs::FileAttr`]
     ///
     /// # Examples
     ///
@@ -176,6 +176,7 @@ impl Path {
         async_util::call_async(crate::crypto::fs_api::r#async::fs::metadata(self))
     }
 
+    /// Not implemented!
     pub fn symlink_metadata(&self) -> Result<Metadata> {
         unimplemented!()
     }
@@ -215,9 +216,9 @@ impl Path {
         Ok(stack.iter().collect::<PathBuf>())
     }
 
+    /// Not implemented!
     pub fn read_link(&self) -> Result<PathBuf> {
-        let path = std::path::Path::new(&self.inner);
-        Ok(PathBuf::from(path.read_link()))
+        unimplemented!()
     }
 
     pub fn read_dir(&self) -> Result<ReadDir> {
@@ -405,7 +406,7 @@ impl PartialEq<std::path::Path> for Path {
     }
 }
 
-/// Wrapper around [`std::path::PathBuf`] to allow use on EncryptedFs.
+/// Similar to [`std::path::PathBuf`] to allow use on EncryptedFs.
 ///
 #[derive(PartialEq, Eq)]
 pub struct PathBuf {

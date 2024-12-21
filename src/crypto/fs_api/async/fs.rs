@@ -498,7 +498,7 @@ impl AsyncSeek for File {
 
 /// Metadata information about a file.
 ///
-/// Metadata is a wrapped for rencfs::encryptedfs::FileAttr
+/// Metadata is a wrapped for [`crate::encryptedfs::FileAttr`]
 ///
 #[allow(clippy::new_without_default, clippy::len_without_is_empty)]
 pub struct Metadata {
