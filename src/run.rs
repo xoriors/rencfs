@@ -342,10 +342,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
                 }
             }
         }
-
-        fn recovery_phrase_format(&self) -> Option<Language> {
-            return None
-        }
     }
     let mount_point = mount::create_mount_point(
         Path::new(&mountpoint),

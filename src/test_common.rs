@@ -71,10 +71,6 @@ impl PasswordProvider for PasswordProviderImpl {
     fn get_password(&self) -> Option<SecretString> {
         Some(SecretString::from_str("password").unwrap())
     }
-
-    fn recovery_phrase_format(&self) -> Option<Language> {
-        todo!()
-    }
 }
 #[allow(dead_code)]
 async fn setup(setup: TestSetup) -> SetupResult {

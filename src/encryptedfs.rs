@@ -521,7 +521,9 @@ impl ValueProvider<SecretVec<u8>, FsError> for KeyProvider {
 pub trait PasswordProvider: Send + Sync + 'static {
     fn get_password(&self) -> Option<SecretString>;
 
-    fn recovery_phrase_format(&self) -> Option<Language>;
+    fn recovery_phrase_format(&self) -> Option<Language>{
+       Some(Language::default())
+    }
 }
 
 struct DirEntryNameCacheProvider {}
