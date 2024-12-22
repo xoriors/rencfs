@@ -634,13 +634,14 @@ async fn validate_path_exists(path: impl AsRef<Path>) -> std::io::Result<(Secret
             .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
     );
 
-    if paths.len() > 1 {
-        for node in paths.iter().take(paths.len() - 1) {
-            dir_inode = fs
-                .find_by_name(dir_inode, node)
-                .await?
-                .ok_or_else(|| FsError::InodeNotFound)?
-                .ino;
+    for node in paths.iter().take(paths.len() - 1) {
+        let temp_inode = fs
+            .find_by_name(dir_inode, node)
+            .await?
+            .ok_or_else(|| FsError::InodeNotFound)?
+            .ino;
+        if fs.is_dir(temp_inode) {
+            dir_inode = temp_inode;
         }
     }
 
