@@ -341,6 +341,7 @@ async fn test_path_methods() {
                 .unwrap()
                 .ino;
 
+
             let path = Path::new("foo/");
 
             let path = Path::new("foo/test/bar.rs");
@@ -362,6 +363,36 @@ async fn test_path_methods() {
             assert!(Path::new("foo/").is_dir());
             assert!(Path::new("foo/test/").is_dir());
             assert!(!Path::new("foo/test/../test/bar.rs").is_dir());
+
+            // Test the `read_dir` method
+            let name_dir_gandalf = SecretBox::from_str("gandalf").unwrap();
+            let name_dir_legolas = SecretBox::from_str("legolas").unwrap();
+
+            let dir_gandalf = fs
+            .create(dir_foo_ino, &name_dir_gandalf, dir_attr(), true, true)
+            .await
+            .unwrap();
+            let dir_legolas = fs
+            .create(dir_foo_ino, &name_dir_legolas, dir_attr(), true, true)
+            .await
+            .unwrap();
+
+            let path = Path::new("foo/");
+            let read_dir = path.read_dir();
+            assert!(read_dir.is_ok());
+            assert_eq!(read_dir.unwrap().collect::<Vec<_>>().len(), 3);
+
+            let name_dir_frodo = SecretBox::from_str("frodo").unwrap();
+            let dir_frodo = fs
+            .create(1, &name_dir_frodo, dir_attr(), true, true)
+            .await
+            .unwrap();
+            let path = Path::new("frodo/");
+            let read_dir1 = path.read_dir();
+            assert!(read_dir1.is_ok());
+            // assert_eq!(read_dir1.unwrap().collect::<Vec<_>>().len(), 0);
+            dbg!(read_dir1.unwrap().collect::<Vec<_>>());
+
         },
     )
     .await;
