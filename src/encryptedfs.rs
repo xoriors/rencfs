@@ -276,6 +276,8 @@ pub enum FsError {
     Other(&'static str),
     #[error("invalid password")]
     InvalidPassword,
+    #[error("invalid recovery key")]
+    InvalidRecoveryKey,
     #[error("invalid structure of data directory")]
     InvalidDataDirStructure,
     #[error("crypto error: {source}")]
@@ -2136,6 +2138,36 @@ impl EncryptedFs {
     }
 
     /// Change the password of the filesystem used to access the encryption key.
+    pub async fn update_passwd_with_recovery_key(
+        data_dir: &Path,
+        recovery_key: SecretString,
+        new_password: SecretString,
+        cipher: Cipher) -> FsResult<()>{
+        check_structure(data_dir, false).await?;
+
+        let salt: Vec<u8> = bincode::deserialize_from(File::open(
+            data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME),
+        )?)?;
+        let decrypted_mnemonic = crypto::bip39::mnemonic_to_entropy(&recovery_key)?;
+        let initial_key = SecretVec::new(Box::new(decrypted_mnemonic.0));
+        let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
+        let reader = crypto::create_read(File::open(enc_file)?, cipher, &initial_key);
+        let key: Vec<u8> =
+            bincode::deserialize_from(reader).map_err(|_| FsError::InvalidRecoveryKey)?;
+        let key = SecretBox::new(Box::new(key));
+        // encrypt it with a new key derived from new password
+        let new_key = crypto::derive_key(&new_password, cipher, &salt)?;
+        let new_recovery_key = crypto::bip39::generate_recovery_phrase(decrypted_mnemonic.1, &new_key)?;
+        info!("New Recovery key: {}", new_recovery_key);
+        crypto::atomic_serialize_encrypt_into(
+            &data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
+            &*key.expose_secret(),
+            cipher,
+            &new_key,
+        )?;
+        Ok(())
+    }
+
     pub async fn passwd(
         data_dir: &Path,
         old_password: SecretString,

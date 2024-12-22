@@ -190,6 +190,13 @@ fn get_cli_args() -> ArgMatches {
                     .required(true)
                     .value_name("DATA_DIR")
                     .help("Where to store the encrypted data"),
+                Arg::new("recovery-phrase")
+                    .long("recovery-phrase")
+                    .short('r')
+                    .required(false)
+                    .value_name("recovery_phrase")
+                    .requires("data-dir")
+                    .help("Recovery string to restore and change password"),
             )
     )
         .get_matches()
@@ -224,11 +231,14 @@ async fn async_main() -> Result<()> {
 
 async fn run_change_password(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
+    let recover_phrase = matches.get_one::<String>("recovery-phrase");
 
-    // read password from stdin
-    print!("Enter old password: ");
-    io::stdout().flush().unwrap();
-    let password = SecretString::from_str(&read_password().unwrap()).unwrap();
+    let password = if recover_phrase.is_none() {
+        print!("Enter old password: ");
+        io::stdout().flush().unwrap();
+        SecretString::from_str(&read_password().unwrap()).unwrap()
+    };
+
     print!("Enter new password: ");
     io::stdout().flush().unwrap();
     let new_password = SecretString::from_str(&read_password().unwrap()).unwrap();
@@ -240,22 +250,46 @@ async fn run_change_password(cipher: Cipher, matches: &ArgMatches) -> Result<()>
         return Err(ExitStatusError::Failure(1).into());
     }
     println!("Changing password...");
-    EncryptedFs::passwd(Path::new(&data_dir), password, new_password, cipher)
-        .await
-        .map_err(|err| {
-            match err {
-                FsError::InvalidPassword => {
-                    println!("Invalid old password");
-                }
-                FsError::InvalidDataDirStructure => {
-                    println!("Invalid structure of data directory");
-                }
-                _ => {
-                    error!(err = %err);
-                }
-            }
-            ExitStatusError::Failure(1)
-        })?;
+
+    match recover_phrase {
+        Some(phrase) => {
+            EncryptedFs::update_passwd_with_recovery_key(Path::new(&data_dir), phrase, new_password, cipher)
+                .await
+                .map_err(|err| {
+                    match err {
+                        FsError::InvalidPassword => {
+                            println!("Invalid old password");
+                        }
+                        FsError::InvalidDataDirStructure => {
+                            println!("Invalid structure of data directory");
+                        }
+                        _ => {
+                            error!(err = %err);
+                        }
+                    }
+                    ExitStatusError::Failure(1)
+                })?;
+        },
+        None => {
+            EncryptedFs::passwd(Path::new(&data_dir), password, new_password, cipher)
+                .await
+                .map_err(|err| {
+                    match err {
+                        FsError::InvalidPassword => {
+                            println!("Invalid old password");
+                        }
+                        FsError::InvalidDataDirStructure => {
+                            println!("Invalid structure of data directory");
+                        }
+                        _ => {
+                            error!(err = %err);
+                        }
+                    }
+                    ExitStatusError::Failure(1)
+                })?;
+
+        }
+    }
     println!("Password changed successfully");
 
     Ok(())
