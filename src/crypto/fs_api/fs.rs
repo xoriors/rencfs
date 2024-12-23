@@ -648,9 +648,11 @@ async fn validate_path_exists(
         .ok_or_else(|| FsError::InvalidInput("No filename"))?
         .to_owned();
 
-    if let Some(temp_attr) = fs.find_by_name(parent_inode, &file_name).await? {
-        target_inode = temp_attr.ino;
-    }
+    let temp_attr = match fs.find_by_name(parent_inode, &file_name).await? {
+        Some(attr) => attr,
+        None => return Ok((file_name, parent_inode, 0)),
+    };
+    target_inode = temp_attr.ino;
     Ok((file_name, parent_inode, target_inode))
 }
 
