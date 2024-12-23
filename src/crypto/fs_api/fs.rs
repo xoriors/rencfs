@@ -362,30 +362,27 @@ impl File {
 pub async fn read_dir<P: AsRef<Path>>(path: P) -> std::io::Result<ReadDir> {
     let fs = get_fs().await?;
 
-    let (_, dir_inode) = validate_path_exists(&path).await?;
+    let (_, _, target_inode) = validate_path_exists(&path).await?;
 
-    let iter = fs.read_dir_plus(dir_inode).await?;
+    let iter = fs.read_dir_plus(target_inode).await?;
     Ok(ReadDir { inner: iter })
 }
 
 pub async fn metadata<P: AsRef<Path>>(path: P) -> std::io::Result<Metadata> {
     let fs = get_fs().await?;
-
-    let (file_name, dir_inode) = validate_path_exists(&path).await?;
-
+    let (file_name, dir_inode, _) = validate_path_exists(&path).await?;
     let attr = fs
         .find_by_name(dir_inode, &file_name)
         .await?
         .ok_or_else(|| FsError::InodeNotFound)?;
     let file_attr = fs.get_attr(attr.ino).await?;
-
     let metadata = Metadata { attr: file_attr };
     Ok(metadata)
 }
 
 pub async fn exists<P: AsRef<Path>>(path: P) -> std::io::Result<bool> {
     let fs = get_fs().await?;
-    let (file_name, dir_inode) = validate_path_exists(&path).await?;
+    let (file_name, dir_inode, _) = validate_path_exists(&path).await?;
     let file_exists = fs.find_by_name(dir_inode, &file_name).await?.is_some();
     Ok(file_exists)
 }
@@ -624,24 +621,25 @@ pub fn parse_path(path: &Path) -> Vec<SecretBox<String>> {
     stack
 }
 
-async fn validate_path_exists(path: impl AsRef<Path>) -> std::io::Result<(SecretBox<String>, u64)> {
-    let mut dir_inode = 1;
+async fn validate_path_exists(
+    path: impl AsRef<Path>,
+) -> std::io::Result<(SecretBox<String>, u64, u64)> {
+    let mut parent_inode: u64 = 1;
+    let mut target_inode: u64 = 1;
     let fs = get_fs().await?;
-
     let paths = get_path_from_str(
         path.as_ref()
             .to_str()
             .ok_or_else(|| FsError::InvalidInput("Invalid path"))?,
     );
 
-    for node in paths.iter().take(paths.len() - 1) {
-        let temp_inode = fs
-            .find_by_name(dir_inode, node)
-            .await?
-            .ok_or_else(|| FsError::InodeNotFound)?
-            .ino;
-        if fs.is_dir(temp_inode) {
-            dir_inode = temp_inode;
+    if paths.len() > 1 {
+        for node in paths.iter().take(paths.len() - 1) {
+            parent_inode = fs
+                .find_by_name(parent_inode, node)
+                .await?
+                .ok_or_else(|| FsError::InodeNotFound)?
+                .ino;
         }
     }
 
@@ -650,7 +648,10 @@ async fn validate_path_exists(path: impl AsRef<Path>) -> std::io::Result<(Secret
         .ok_or_else(|| FsError::InvalidInput("No filename"))?
         .to_owned();
 
-    Ok((file_name, dir_inode))
+    if let Some(temp_attr) = fs.find_by_name(parent_inode, &file_name).await? {
+        target_inode = temp_attr.ino;
+    }
+    Ok((file_name, parent_inode, target_inode))
 }
 
 async fn get_fs() -> FsResult<Arc<EncryptedFs>> {

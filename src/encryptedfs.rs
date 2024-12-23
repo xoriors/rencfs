@@ -1080,7 +1080,6 @@ impl EncryptedFs {
         if !self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
         }
-        dbg!(&ino);
         let ls_dir = self.contents_path(ino).join(LS_DIR);
         if !ls_dir.is_dir() {
             return Err(FsError::InvalidInodeType);

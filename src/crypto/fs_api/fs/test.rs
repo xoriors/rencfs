@@ -26,7 +26,6 @@ async fn test_async_file_oo_flags() {
 
             let res: Result<(), String> = async move {
                 let path = &fs.data_dir;
-                dbg!(path);
                 let dir_path_sec = SecretString::from_str("dir").unwrap();
                 let file_path_sec = SecretString::from_str(FILENAME).unwrap();
                 // Create dir and file in dir
@@ -396,7 +395,6 @@ async fn test_async_file_options_paths() {
 
             let res: Result<(), String> = async move {
                 let path = &fs.data_dir;
-                dbg!(path);
 
                 let dir_path_sec = SecretString::from_str("dir").unwrap();
                 let file_path_sec = SecretString::from_str(FILENAME).unwrap();
