@@ -625,7 +625,6 @@ async fn validate_path_exists(
     path: impl AsRef<Path>,
 ) -> std::io::Result<(SecretBox<String>, u64, u64)> {
     let mut parent_inode: u64 = 1;
-    let mut target_inode: u64 = 1;
     let fs = get_fs().await?;
     let paths = get_path_from_str(
         path.as_ref()
@@ -652,7 +651,7 @@ async fn validate_path_exists(
         Some(attr) => attr,
         None => return Ok((file_name, parent_inode, 0)),
     };
-    target_inode = temp_attr.ino;
+    let target_inode = temp_attr.ino;
     Ok((file_name, parent_inode, target_inode))
 }
 
