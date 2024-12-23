@@ -219,6 +219,8 @@ impl Path {
         unimplemented!()
     }
 
+    /// Returns an iterator over the entries within a directory.
+    /// Including `.` and `..`
     pub fn read_dir(&self) -> Result<ReadDir> {
         async_util::call_async(crate::crypto::fs_api::fs::read_dir(self))
     }
