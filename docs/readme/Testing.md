@@ -4,11 +4,11 @@ We'd appreciate it if you could help test the app. For now, the filesystem mount
 
 Here are some ways you can do it.
 
-## Testing in the browser or local VSCode
+## Testing in VSCode in browser or local
 
 You'll need a GitHub account for this.
 
-This will create a Codespace instance on GitHub, which is a Linux container, so we will be able to test it.  
+This will create a Codespace instance on GitHub, a Linux container, so we can test it.  
 The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month free for Codespace, which means 60 hours for that instance. We will connect to it from the browser and the local VSCode.
 
 ### First setup
@@ -19,11 +19,10 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
 3. Create codespace on main  
   ![image](https://github.com/user-attachments/assets/5fee55f6-ef54-427c-b790-c135312d3355)
 4. This will create the container on GitHub. If it asks you to setup config, select the minimum possible CPU and RAM
-5. Start it and leave it to finish. This could take a bit longer
-6. Goto terminal in the browser version of the VSCode editor you're presented with. It should be at the bottom, or open it from the menu `Terminal -> New Terminal`
-7. You can find the menu in the top left, with 3 lines icon  
+5. Start it and leave it to finish. This could take a bit longer. This will open a VSCode in the browser
+6. Goto terminal in the browser version of the VSCode editor you're presented with. It should be at the bottom. If not, open it from the `Terminal -> New Terminal` menu. You can find the menu in the top left, with 3 lines icon  
   ![image](https://github.com/user-attachments/assets/48681023-e450-49b3-8526-ec0323be0d40)
-8. Install Rust by pasting these in the terminal:
+7. Install Rust by pasting these in the terminal:
   ```bash
   apt-get update && apt-get install fuse3
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -36,7 +35,7 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
     apt install rustc
     rustc
   ```
-9. Create a `tmp` folder, which we will use to copy files from our machine, by pasting this in the terminal:
+8. Create needed folders and a `tmp` folder, which we will use to copy files from our machine, by pasting this in the terminal:
   ```bash
   mkdir tmp && mkdir final && mkdir data
   ```
