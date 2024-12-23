@@ -382,9 +382,8 @@ pub async fn metadata<P: AsRef<Path>>(path: P) -> std::io::Result<Metadata> {
 
 pub async fn exists<P: AsRef<Path>>(path: P) -> std::io::Result<bool> {
     let fs = get_fs().await?;
-    let (file_name, dir_inode, _) = validate_path_exists(&path).await?;
-    let file_exists = fs.find_by_name(dir_inode, &file_name).await?.is_some();
-    Ok(file_exists)
+    let (_, _, target_ino) = validate_path_exists(&path).await?;
+    Ok(fs.exists(target_ino))
 }
 
 impl AsyncRead for File {
