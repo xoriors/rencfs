@@ -6,7 +6,7 @@ use std::str::FromStr;
 use shush_rs::{SecretBox, SecretString};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::crypto::fs_api::fs::{create_dir, create_dir_all, remove_file, OpenOptions};
+use crate::crypto::fs_api::fs::{create_dir, create_dir_all, remove_dir, remove_file, OpenOptions};
 use crate::crypto::fs_api::path::Path;
 use crate::encryptedfs::{CreateFileAttr, FileType, PasswordProvider};
 use crate::test_common::{get_fs, run_test, TestSetup};
@@ -131,7 +131,54 @@ async fn test_async_file_funcs() {
             let dir_path = Path::new("another_dir");
             create_dir(dir_path).await.unwrap();
             let result = remove_file(dir_path).await;
-            assert!(result.is_err()); // Should fail because it's a directory
+            assert!(result.is_err());
+
+            // Test `remove_dir` function
+            // Test removing a directory that exists
+            let path = Path::new("dir_to_remove");
+            create_dir(path).await.unwrap();
+            assert!(path.try_exists().unwrap());
+
+            // Call remove_dir and ensure directory is removed
+            remove_dir(path).await.unwrap();
+            assert!(!path.try_exists().unwrap());
+
+            // Test removing a non-empty directory (should fail if directory contains files)
+            let path = Path::new("dir_with_file");
+            create_dir(path).await.unwrap();
+            let file_path = path.join("file_in_dir");
+            let _ = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&file_path)
+                .await
+                .unwrap();
+            assert!(file_path.try_exists().unwrap());
+
+            // Try to remove the directory with files inside (should fail)
+            let result = remove_dir(path).await;
+            assert!(result.is_err());
+
+            // Remove the file first, then remove the directory
+            remove_file(file_path).await.unwrap();
+            remove_dir(path).await.unwrap();
+            assert!(!path.try_exists().unwrap());
+
+            // Test removing a directory that doesn't exist
+            let path = Path::new("non_existent_dir");
+            let result = remove_dir(path).await;
+            assert!(result.is_err());
+
+            // Test removing a directory that's not a directory (a file instead)
+            let path = Path::new("test_file");
+            let _ = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(path)
+                .await
+                .unwrap();
+            let result = remove_dir(path).await;
+            assert!(result.is_err());
         },
     )
     .await;

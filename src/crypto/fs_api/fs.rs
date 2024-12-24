@@ -435,6 +435,13 @@ pub async fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
     Ok(())
 }
 
+pub async fn remove_dir<P: AsRef<Path>>(path: P) -> Result<()> {
+    let fs = get_fs().await?;
+    let (dir_name, dir_inode, _) = validate_path_exists(path).await?;
+    fs.remove_dir(dir_inode, &dir_name).await?;
+    Ok(())
+}
+
 impl AsyncRead for File {
     fn poll_read(
         mut self: Pin<&mut Self>,
