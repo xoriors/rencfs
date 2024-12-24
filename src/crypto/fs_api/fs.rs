@@ -428,6 +428,13 @@ pub async fn create_dir_all<P: AsRef<Path>>(path: P) -> Result<()> {
     Ok(())
 }
 
+pub async fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
+    let fs = get_fs().await?;
+    let (file_name, dir_inode, _) = validate_path_exists(path).await?;
+    fs.remove_file(dir_inode, &file_name).await?;
+    Ok(())
+}
+
 impl AsyncRead for File {
     fn poll_read(
         mut self: Pin<&mut Self>,

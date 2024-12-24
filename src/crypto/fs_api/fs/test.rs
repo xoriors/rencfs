@@ -6,7 +6,7 @@ use std::str::FromStr;
 use shush_rs::{SecretBox, SecretString};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::crypto::fs_api::fs::{create_dir, create_dir_all, OpenOptions};
+use crate::crypto::fs_api::fs::{create_dir, create_dir_all, remove_file, OpenOptions};
 use crate::crypto::fs_api::path::Path;
 use crate::encryptedfs::{CreateFileAttr, FileType, PasswordProvider};
 use crate::test_common::{get_fs, run_test, TestSetup};
@@ -92,6 +92,46 @@ async fn test_async_file_funcs() {
             );
             let result = create_dir(path).await;
             assert!(path.try_exists().unwrap());
+
+            // Test `remove_file` function
+            // Test removing a file that exists
+            let path = Path::new("test_file");
+            let _ = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(path)
+                .await
+                .unwrap();
+            assert!(path.try_exists().unwrap());
+
+            // Call remove_file and ensure file is removed
+            remove_file(path).await.unwrap();
+            assert!(!path.try_exists().unwrap());
+
+            // Test removing a file that doesn't exist
+            let path = Path::new("non_existent_file");
+            let result = remove_file(path).await;
+            assert!(result.is_err());
+
+            // Test removing a file from a directory
+            let path = Path::new("dir/file_in_dir");
+            let _ = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&path)
+                .await
+                .unwrap();
+            assert!(path.try_exists().unwrap());
+
+            // Remove the file from the directory
+            remove_file(path).await.unwrap();
+            assert!(!path.try_exists().unwrap());
+
+            // Test removing a directory instead of a file
+            let dir_path = Path::new("another_dir");
+            create_dir(dir_path).await.unwrap();
+            let result = remove_file(dir_path).await;
+            assert!(result.is_err()); // Should fail because it's a directory
         },
     )
     .await;
