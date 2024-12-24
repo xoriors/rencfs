@@ -190,6 +190,20 @@ fn get_cli_args() -> ArgMatches {
                     .value_name("DATA_DIR")
                     .help("Where to store the encrypted data"),
             )
+            .arg(
+                Arg::new("recovery-phrase")
+                    .long("recovery-phrase")
+                    .short('r')
+                    .value_name("RECOVERY_PHRASE")
+                    .help("Use the recovery phrase to change the password"),
+            )
+            .arg(
+                Arg::new("refresh-recovery-phrase")
+                    .long("refresh-recovery-phrase")
+                    .short('f')
+                    .action(ArgAction::SetTrue)
+                    .help("Regenerate the recovery phrase"),
+            )
     )
         .get_matches()
 }
@@ -223,6 +237,82 @@ async fn async_main() -> Result<()> {
 
 async fn run_change_password(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
+
+    if matches.get_flag("refresh-recovery-phrase") {
+        // read password from stdin
+        print!("Enter password: ");
+        io::stdout().flush().unwrap();
+        let password = SecretString::from_str(&read_password().unwrap()).unwrap();
+        print!("Enter old recovery phrase: ");
+        io::stdout().flush().unwrap();
+        let old_recovery_phrase = read_password().unwrap();
+        print!("Enter new recovery phrase: ");
+        io::stdout().flush().unwrap();
+        let new_recovery_phrase = read_password().unwrap();
+        println!("Regenerating recovery phrase...");
+        EncryptedFs::regenerate_recovery_phrase(
+            Path::new(&data_dir),
+            password,
+            &old_recovery_phrase,
+            &new_recovery_phrase,
+            cipher,
+        )
+        .await
+        .map_err(|err| {
+            match err {
+                FsError::InvalidPassword => {
+                    println!("Invalid password or recovery phrase");
+                }
+                FsError::InvalidDataDirStructure => {
+                    println!("Invalid structure of data directory");
+                }
+                _ => {
+                    error!(err = %err);
+                }
+            }
+            ExitStatusError::Failure(1)
+        })?;
+        println!("Recovery phrase regenerated successfully");
+        return Ok(());
+    }
+
+    if let Some(recovery_phrase) = matches.get_one::<String>("recovery-phrase") {
+        // read new password from stdin
+        print!("Enter new password: ");
+        io::stdout().flush().unwrap();
+        let new_password = SecretString::from_str(&read_password().unwrap()).unwrap();
+        print!("Confirm new password: ");
+        io::stdout().flush().unwrap();
+        let new_password2 = SecretString::from_str(&read_password().unwrap()).unwrap();
+        if new_password.expose_secret() != new_password2.expose_secret() {
+            println!("Passwords do not match");
+            return Err(ExitStatusError::Failure(1).into());
+        }
+        println!("Changing password using recovery phrase...");
+        EncryptedFs::passwd_with_recovery_phrase(
+            Path::new(&data_dir),
+            recovery_phrase,
+            new_password,
+            cipher,
+        )
+        .await
+        .map_err(|err| {
+            match err {
+                FsError::InvalidPassword => {
+                    println!("Invalid recovery phrase");
+                }
+                FsError::InvalidDataDirStructure => {
+                    println!("Invalid structure of data directory");
+                }
+                _ => {
+                    error!(err = %err);
+                }
+            }
+            ExitStatusError::Failure(1)
+        })?;
+        println!("Password changed successfully using recovery phrase");
+        return Ok(());
+    }
 
     // read password from stdin
     print!("Enter old password: ");
