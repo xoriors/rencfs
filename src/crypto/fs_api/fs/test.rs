@@ -3,14 +3,96 @@
 
 use std::str::FromStr;
 
-use shush_rs::SecretString;
+use shush_rs::{SecretBox, SecretString};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::crypto::fs_api::fs::OpenOptions;
+use crate::crypto::fs_api::fs::{create_dir, create_dir_all, OpenOptions};
+use crate::crypto::fs_api::path::Path;
 use crate::encryptedfs::{CreateFileAttr, FileType, PasswordProvider};
 use crate::test_common::{get_fs, run_test, TestSetup};
 
 static FILENAME: &str = "test1";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)]
+async fn test_async_file_funcs() {
+    run_test(
+        TestSetup {
+            key: "test_async_file_funcs",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            OpenOptions::set_scope(fs.clone()).await;
+
+            // Test `create_dir` function
+            // Normal dir
+            let path = Path::new("dir");
+            create_dir(path).await.unwrap();
+            assert_eq!(path.try_exists().unwrap(), true);
+
+            // Create normal dir again
+            create_dir(path).await.unwrap();
+            assert_eq!(path.try_exists().unwrap(), true);
+
+            let name = SecretBox::from_str("dir").unwrap();
+            let result = fs.find_by_name(1, &name).await.unwrap();
+            assert!(result.is_some());
+            assert_eq!(result.unwrap().kind, FileType::Directory);
+
+            // Create dir path that doesn't exist
+            let path = Path::new("foo/bar");
+            let result = create_dir(path).await;
+            assert!(result.is_err());
+
+            // Create subdir in dir that already exists
+            let path = Path::new("dir/more_dir");
+            assert_eq!(path.try_exists().unwrap(), false);
+            create_dir(path).await.unwrap();
+            assert_eq!(path.try_exists().unwrap(), true);
+
+            // Create dir with empty path
+            let path = Path::new("");
+            let result = create_dir(path).await;
+            assert!(result.is_err());
+
+            // Create dir over a file
+            let _ = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open("new")
+                .await
+                .unwrap();
+            let path = Path::new("new");
+            let result = create_dir_all(path).await;
+            assert!(result.is_err());
+
+            // Test `create_dir_all` function
+            // Create new dirs
+            let path = Path::new("foo/bar/baz");
+            let result = create_dir_all(path).await;
+            assert_eq!(path.try_exists().unwrap(), true);
+
+            // Create new subdir in already existing path
+            let path = Path::new("foo/bar/baz/qux");
+            let result = create_dir_all(path).await;
+            assert_eq!(path.try_exists().unwrap(), true);
+
+            // Create many dirs
+            let path = Path::new("a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z");
+            let result = create_dir_all(path).await;
+            assert_eq!(path.try_exists().unwrap(), true);
+
+            // Add .. and . and create_dir in existing path
+            let path = Path::new(
+                "a/b/c/./d/../d/e/f/./g/h/i/../i/j/k/l/m/n/o/p/q/../q/r/s/t/u/v/w/x/y/z/a",
+            );
+            let result = create_dir(path).await;
+            assert_eq!(path.try_exists().unwrap(), true);
+        },
+    )
+    .await;
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[allow(clippy::too_many_lines)]
@@ -20,7 +102,7 @@ async fn test_async_file_oo_flags() {
             key: "test_async_file_oo_flags",
             read_only: false,
         },
-        async move {
+        async {
             let fs = get_fs().await;
             OpenOptions::set_scope(fs.clone()).await;
 

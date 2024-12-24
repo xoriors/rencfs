@@ -386,6 +386,29 @@ pub async fn exists<P: AsRef<Path>>(path: P) -> std::io::Result<bool> {
     Ok(fs.exists(target_ino))
 }
 
+pub async fn create_dir<P: AsRef<Path>>(path: P) -> Result<()> {
+    let fs = get_fs().await?;
+    let (target_name, dir_inode, target_ino) = validate_path_exists(&path).await?;
+    dbg!("1");
+    if !fs.exists(target_ino) {
+        dbg!("2");
+        let _ = fs
+            .create(dir_inode, &target_name, dir_attr(), true, true)
+            .await?;
+    }
+    Ok(())
+}
+
+pub async fn create_dir_all<P: AsRef<Path>>(path: P) -> Result<()> {
+    let path_buf: crate::crypto::fs_api::path::PathBuf = path.as_ref().into();
+    let mut search_path = crate::crypto::fs_api::path::PathBuf::from("");
+    for el in path_buf.components() {
+        search_path.push(el.as_os_str());
+        create_dir(&search_path).await?;
+    }
+    Ok(())
+}
+
 impl AsyncRead for File {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -664,6 +687,24 @@ fn file_attr() -> CreateFileAttr {
     #[allow(unused_mut)]
     let mut attr = CreateFileAttr {
         kind: FileType::RegularFile,
+        perm: 0o644,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        flags: 0,
+    };
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    unsafe {
+        attr.uid = libc::getuid();
+        attr.gid = libc::getgid();
+    }
+    attr
+}
+
+fn dir_attr() -> CreateFileAttr {
+    #[allow(unused_mut)]
+    let mut attr = CreateFileAttr {
+        kind: FileType::Directory,
         perm: 0o644,
         uid: 0,
         gid: 0,
