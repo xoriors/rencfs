@@ -29,11 +29,11 @@ async fn test_async_file_funcs() {
             // Normal dir
             let path = Path::new("dir");
             create_dir(path).await.unwrap();
-            assert_eq!(path.try_exists().unwrap(), true);
+            assert!(path.try_exists().unwrap());
 
             // Create normal dir again
             create_dir(path).await.unwrap();
-            assert_eq!(path.try_exists().unwrap(), true);
+            assert!(path.try_exists().unwrap());
 
             let name = SecretBox::from_str("dir").unwrap();
             let result = fs.find_by_name(1, &name).await.unwrap();
@@ -47,9 +47,9 @@ async fn test_async_file_funcs() {
 
             // Create subdir in dir that already exists
             let path = Path::new("dir/more_dir");
-            assert_eq!(path.try_exists().unwrap(), false);
+            assert!(!path.try_exists().unwrap());
             create_dir(path).await.unwrap();
-            assert_eq!(path.try_exists().unwrap(), true);
+            assert!(path.try_exists().unwrap());
 
             // Create dir with empty path
             let path = Path::new("");
@@ -65,30 +65,33 @@ async fn test_async_file_funcs() {
                 .unwrap();
             let path = Path::new("new");
             let result = create_dir_all(path).await;
-            assert!(result.is_err());
+            let name = SecretBox::from_str("new").unwrap();
+            let result = fs.find_by_name(1, &name).await.unwrap();
+            assert!(result.is_some());
+            assert_eq!(result.unwrap().kind, FileType::RegularFile);
 
             // Test `create_dir_all` function
             // Create new dirs
             let path = Path::new("foo/bar/baz");
             let result = create_dir_all(path).await;
-            assert_eq!(path.try_exists().unwrap(), true);
+            assert!(path.try_exists().unwrap());
 
             // Create new subdir in already existing path
             let path = Path::new("foo/bar/baz/qux");
             let result = create_dir_all(path).await;
-            assert_eq!(path.try_exists().unwrap(), true);
+            assert!(path.try_exists().unwrap());
 
             // Create many dirs
             let path = Path::new("a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z");
             let result = create_dir_all(path).await;
-            assert_eq!(path.try_exists().unwrap(), true);
+            assert!(path.try_exists().unwrap());
 
             // Add .. and . and create_dir in existing path
             let path = Path::new(
                 "a/b/c/./d/../d/e/f/./g/h/i/../i/j/k/l/m/n/o/p/q/../q/r/s/t/u/v/w/x/y/z/a",
             );
             let result = create_dir(path).await;
-            assert_eq!(path.try_exists().unwrap(), true);
+            assert!(path.try_exists().unwrap());
         },
     )
     .await;

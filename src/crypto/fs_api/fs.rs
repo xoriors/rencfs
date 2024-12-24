@@ -389,9 +389,7 @@ pub async fn exists<P: AsRef<Path>>(path: P) -> std::io::Result<bool> {
 pub async fn create_dir<P: AsRef<Path>>(path: P) -> Result<()> {
     let fs = get_fs().await?;
     let (target_name, dir_inode, target_ino) = validate_path_exists(&path).await?;
-    dbg!("1");
     if !fs.exists(target_ino) {
-        dbg!("2");
         let _ = fs
             .create(dir_inode, &target_name, dir_attr(), true, true)
             .await?;
