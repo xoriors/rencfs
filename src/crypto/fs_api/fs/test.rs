@@ -3,14 +3,99 @@
 
 use std::str::FromStr;
 
-use shush_rs::SecretString;
+use shush_rs::{SecretBox, SecretString};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::crypto::fs::OpenOptions;
+use crate::crypto::fs_api::fs::{create_dir, create_dir_all, OpenOptions};
+use crate::crypto::fs_api::path::Path;
 use crate::encryptedfs::{CreateFileAttr, FileType, PasswordProvider};
 use crate::test_common::{get_fs, run_test, TestSetup};
 
 static FILENAME: &str = "test1";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)]
+async fn test_async_file_funcs() {
+    run_test(
+        TestSetup {
+            key: "test_async_file_funcs",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            OpenOptions::set_scope(fs.clone()).await;
+
+            // Test `create_dir` function
+            // Normal dir
+            let path = Path::new("dir");
+            create_dir(path).await.unwrap();
+            assert!(path.try_exists().unwrap());
+
+            // Create normal dir again
+            create_dir(path).await.unwrap();
+            assert!(path.try_exists().unwrap());
+
+            let name = SecretBox::from_str("dir").unwrap();
+            let result = fs.find_by_name(1, &name).await.unwrap();
+            assert!(result.is_some());
+            assert_eq!(result.unwrap().kind, FileType::Directory);
+
+            // Create dir path that doesn't exist
+            let path = Path::new("foo/bar");
+            let result = create_dir(path).await;
+            assert!(result.is_err());
+
+            // Create subdir in dir that already exists
+            let path = Path::new("dir/more_dir");
+            assert!(!path.try_exists().unwrap());
+            create_dir(path).await.unwrap();
+            assert!(path.try_exists().unwrap());
+
+            // Create dir with empty path
+            let path = Path::new("");
+            let result = create_dir(path).await;
+            assert!(result.is_err());
+
+            // Create dir over a file
+            let _ = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open("new")
+                .await
+                .unwrap();
+            let path = Path::new("new");
+            let result = create_dir_all(path).await;
+            let name = SecretBox::from_str("new").unwrap();
+            let result = fs.find_by_name(1, &name).await.unwrap();
+            assert!(result.is_some());
+            assert_eq!(result.unwrap().kind, FileType::RegularFile);
+
+            // Test `create_dir_all` function
+            // Create new dirs
+            let path = Path::new("foo/bar/baz");
+            let result = create_dir_all(path).await;
+            assert!(path.try_exists().unwrap());
+
+            // Create new subdir in already existing path
+            let path = Path::new("foo/bar/baz/qux");
+            let result = create_dir_all(path).await;
+            assert!(path.try_exists().unwrap());
+
+            // Create many dirs
+            let path = Path::new("a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z");
+            let result = create_dir_all(path).await;
+            assert!(path.try_exists().unwrap());
+
+            // Add .. and . and create_dir in existing path
+            let path = Path::new(
+                "a/b/c/./d/../d/e/f/./g/h/i/../i/j/k/l/m/n/o/p/q/../q/r/s/t/u/v/w/x/y/z/a",
+            );
+            let result = create_dir(path).await;
+            assert!(path.try_exists().unwrap());
+        },
+    )
+    .await;
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[allow(clippy::too_many_lines)]
@@ -20,13 +105,12 @@ async fn test_async_file_oo_flags() {
             key: "test_async_file_oo_flags",
             read_only: false,
         },
-        async move {
+        async {
             let fs = get_fs().await;
             OpenOptions::set_scope(fs.clone()).await;
 
             let res: Result<(), String> = async move {
                 let path = &fs.data_dir;
-                dbg!(path);
                 let dir_path_sec = SecretString::from_str("dir").unwrap();
                 let file_path_sec = SecretString::from_str(FILENAME).unwrap();
                 // Create dir and file in dir
@@ -396,7 +480,6 @@ async fn test_async_file_options_paths() {
 
             let res: Result<(), String> = async move {
                 let path = &fs.data_dir;
-                dbg!(path);
 
                 let dir_path_sec = SecretString::from_str("dir").unwrap();
                 let file_path_sec = SecretString::from_str(FILENAME).unwrap();
@@ -418,11 +501,6 @@ async fn test_async_file_options_paths() {
                     .unwrap();
                 fs.release(file_in_root.0).await.unwrap();
 
-                // TODO:
-                // Empty paths handling
-                // Current directory symbols: "././dir/test1"
-                // Paths with parent directory? "./../dir/test1"
-
                 // Test paths and sub directories
                 let file = OpenOptions::new()
                     .read(true)
@@ -441,10 +519,7 @@ async fn test_async_file_options_paths() {
                     .open(".test1")
                     .await
                     .map_err(|e| e.kind());
-                assert!(file.is_ok());
-                let file = file.unwrap();
-                fs.release(file.context.fh_write).await.unwrap();
-                fs.release(file.context.fh_read).await.unwrap();
+                assert!(file.is_err());
 
                 let file = OpenOptions::new()
                     .read(true)
@@ -491,6 +566,28 @@ async fn test_async_file_options_paths() {
                     .read(true)
                     .write(true)
                     .open(".//dir//test1")
+                    .await
+                    .map_err(|e| e.kind());
+                assert!(file.is_ok());
+                let file = file.unwrap();
+                fs.release(file.context.fh_write).await.unwrap();
+                fs.release(file.context.fh_read).await.unwrap();
+
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(".//dir//..//dir//test1")
+                    .await
+                    .map_err(|e| e.kind());
+                assert!(file.is_ok());
+                let file = file.unwrap();
+                fs.release(file.context.fh_write).await.unwrap();
+                fs.release(file.context.fh_read).await.unwrap();
+
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open("././dir//test1")
                     .await
                     .map_err(|e| e.kind());
                 assert!(file.is_ok());

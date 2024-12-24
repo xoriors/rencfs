@@ -307,6 +307,26 @@ pub enum FsError {
     ReadOnly,
 }
 
+impl std::convert::From<FsError> for io::Error {
+    fn from(err: FsError) -> Self {
+        match err {
+            FsError::InodeNotFound => {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "Inode not found")
+            }
+            FsError::AlreadyExists => {
+                std::io::Error::new(std::io::ErrorKind::AlreadyExists, "File already exists")
+            }
+            FsError::InvalidInput(msg) => {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, msg)
+            }
+            FsError::ReadOnly => {
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Read only.")
+            }
+            _ => std::io::Error::new(io::ErrorKind::Other, err.to_string()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct TimesAndSizeFileAttr {
     atime: SystemTime,
