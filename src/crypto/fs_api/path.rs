@@ -193,25 +193,8 @@ impl Path {
     /// assert_eq!(path.canonicalize().unwrap(), PathBuf::from("/foo/test/bar.rs"));
     /// ```
     pub fn canonicalize(&self) -> Result<PathBuf> {
-        let mut stack = vec![];
-        for comp in self.components() {
-            match comp {
-                std::path::Component::Normal(c) => {
-                    stack.push(c);
-                }
-                std::path::Component::ParentDir => {
-                    stack.pop();
-                }
-                std::path::Component::CurDir => {
-                    continue;
-                }
-                _ => {
-                    continue;
-                }
-            }
-        }
-
-        Ok(stack.iter().collect::<PathBuf>())
+        let canon_path = async_util::call_async(crate::crypto::fs_api::fs::canonicalize(self));
+        Ok(PathBuf::from(canon_path))
     }
 
     /// Not implemented!

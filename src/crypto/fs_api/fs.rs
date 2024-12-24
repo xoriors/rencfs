@@ -386,6 +386,27 @@ pub async fn exists<P: AsRef<Path>>(path: P) -> std::io::Result<bool> {
     Ok(fs.exists(target_ino))
 }
 
+pub async fn canonicalize<P: AsRef<Path>>(path: P) -> std::io::Result<PathBuf> {
+    let mut stack = vec![];
+    for comp in path.as_ref().components() {
+        match comp {
+            std::path::Component::Normal(c) => {
+                stack.push(c);
+            }
+            std::path::Component::ParentDir => {
+                stack.pop();
+            }
+            std::path::Component::CurDir => {
+                continue;
+            }
+            _ => {
+                continue;
+            }
+        }
+    }
+    Ok(stack.iter().collect::<PathBuf>())
+}
+
 pub async fn create_dir<P: AsRef<Path>>(path: P) -> Result<()> {
     let fs = get_fs().await?;
     let (target_name, dir_inode, target_ino) = validate_path_exists(&path).await?;
