@@ -7,7 +7,7 @@
 [![release](https://github.com/xoriors/rencfs/actions/workflows/release.yaml/badge.svg)](https://github.com/xoriors/rencfs/actions/workflows/release.yaml)
 [![codecov](https://codecov.io/gh/xoriors/rencfs/graph/badge.svg?token=NUQI6XGF2Y)](https://codecov.io/gh/xoriors/rencfs)
 <a href="https://bit.ly/3UU1oXi"><img src="website/resources/slack.png" style = "width: 20px; height: 20px;"/></a>
-[![Open Source Helpers](https://www.codetriage.com/xoriors/rencfs/badges/users.svg)](https://www.codetriage.com/xoriors/rencfs)
+[![Open Source Helpers](https://www.codetriage.com/xoriors/rencfs/badges/users.svg?count=20)](https://www.codetriage.com/xoriors/rencfs)
 
 > [!WARNING]  
 > **This crate hasn't been audited; it's using `ring` crate, which is a well-known audited library, so in principle, at
