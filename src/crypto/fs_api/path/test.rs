@@ -350,9 +350,8 @@ async fn test_path_methods() {
             assert!(!Path::new("does_not_exist.txt")
                 .try_exists()
                 .expect("Can't check existence of file does_not_exist.txt"));
-            assert_eq!(
-                Path::new("/root/secret_file.txt").try_exists().unwrap(),
-                false
+            assert!(
+                !Path::new("/root/secret_file.txt").try_exists().unwrap()
             );
 
             // Test the `is_dir` method

@@ -230,14 +230,14 @@ async fn test_async_file_delete_dir_all() {
             file2.shutdown().await.unwrap();
             file3.shutdown().await.unwrap();
             remove_dir_all("foo").await.unwrap();
-            assert_eq!(dir_path1.try_exists().unwrap(), false);
-            assert_eq!(dir_path2.try_exists().unwrap(), false);
-            assert_eq!(dir_path3.try_exists().unwrap(), false);
-            assert_eq!(file_path1.try_exists().unwrap(), false);
-            assert_eq!(file_path2.try_exists().unwrap(), false);
-            assert_eq!(file_path3.try_exists().unwrap(), false);
-            assert_eq!(Path::new("foo/a/").try_exists().unwrap(), false);
-            assert_eq!(Path::new("foo").try_exists().unwrap(), false);
+            assert!(!dir_path1.try_exists().unwrap());
+            assert!(!dir_path2.try_exists().unwrap());
+            assert!(!dir_path3.try_exists().unwrap());
+            assert!(!file_path1.try_exists().unwrap());
+            assert!(!file_path2.try_exists().unwrap());
+            assert!(!file_path3.try_exists().unwrap());
+            assert!(!Path::new("foo/a/").try_exists().unwrap());
+            assert!(!Path::new("foo").try_exists().unwrap());
 
             // Delete folder that does not exist
             let result = remove_dir_all("nonexistent_dir").await;
@@ -255,18 +255,18 @@ async fn test_async_file_delete_dir_all() {
             file.shutdown().await.unwrap();
 
             remove_dir_all("single_file_dir").await.unwrap();
-            assert_eq!(file_path.try_exists().unwrap(), false);
-            assert_eq!(Path::new("single_file_dir").try_exists().unwrap(), false);
+            assert!(!file_path.try_exists().unwrap());
+            assert!(!Path::new("single_file_dir").try_exists().unwrap());
 
             // Delete an empty dir
             create_dir_all("empty_dir").await.unwrap();
             remove_dir_all("empty_dir").await.unwrap();
-            assert_eq!(Path::new("empty_dir").try_exists().unwrap(), false);
+            assert!(!Path::new("empty_dir").try_exists().unwrap());
 
             // Delete nested empty dirs
             create_dir_all("nested_empty/a/b/c/d").await.unwrap();
             remove_dir_all("nested_empty").await.unwrap();
-            assert_eq!(Path::new("nested_empty").try_exists().unwrap(), false);
+            assert!(!Path::new("nested_empty").try_exists().unwrap());
 
             // Delete many files
             create_dir_all("many_files_dir").await.unwrap();
@@ -283,7 +283,7 @@ async fn test_async_file_delete_dir_all() {
             }
 
             remove_dir_all("many_files_dir").await.unwrap();
-            assert_eq!(Path::new("many_files_dir").try_exists().unwrap(), false);
+            assert!(!Path::new("many_files_dir").try_exists().unwrap());
 
             // Delete partialy deleted folder
             create_dir_all("partial_dir/subdir").await.unwrap();
@@ -299,7 +299,7 @@ async fn test_async_file_delete_dir_all() {
             remove_dir_all("partial_dir/subdir").await.unwrap();
 
             remove_dir_all("partial_dir").await.unwrap();
-            assert_eq!(Path::new("partial_dir").try_exists().unwrap(), false);
+            assert!(!Path::new("partial_dir").try_exists().unwrap());
         },
     )
     .await;
