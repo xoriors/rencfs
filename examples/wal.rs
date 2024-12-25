@@ -6,7 +6,7 @@ fn main() -> io::Result<()> {
     // begin rustme snippet: readme-example
     // Open a log using an Checkpointer that echoes the information passed into each
     // function that the Checkpointer trait defines.
-    let log = WriteAheadLog::recover("my-log", LoggingCheckpointer)?;
+    let log = WriteAheadLog::recover("/tmp/rencfs/wal/my-log", LoggingCheckpointer)?;
 
     // Begin writing an entry to the log.
     let mut writer = log.begin_entry()?;
@@ -41,7 +41,7 @@ fn main() -> io::Result<()> {
     // LoggingCheckpointer::recover will be invoked once for each entry in the WAL
     // that hasn't been previously checkpointed.
     drop(log);
-    let log = WriteAheadLog::recover("my-log", LoggingCheckpointer)?;
+    let log = WriteAheadLog::recover("/tmp/rencfs/wal/my-log", LoggingCheckpointer)?;
 
     // We can use the previously returned DataRecord to read the original data.
     let mut reader = log.read_at(record.position)?;
@@ -55,7 +55,7 @@ fn main() -> io::Result<()> {
     // Cleanup
     drop(reader);
     drop(log);
-    std::fs::remove_dir_all("my-log")?;
+    std::fs::remove_dir_all("/tmp/rencfs/wal/my-log-log")?;
 
     Ok(())
 }
