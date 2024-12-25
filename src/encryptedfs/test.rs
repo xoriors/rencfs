@@ -638,7 +638,7 @@ async fn test_read_dir() {
                 .await
                 .unwrap();
 
-            let test_file_3 = SecretString::from_str("test/file/3").unwrap();
+            let test_file_3 = SecretString::from_str("test_file_3").unwrap();
             let (_fh, file_attr_2) = fs
                 .create(
                     parent,
@@ -650,7 +650,7 @@ async fn test_read_dir() {
                 .await
                 .unwrap();
 
-            let test_dir_2 = SecretString::from_str("test\\dir//2").unwrap();
+            let test_dir_2 = SecretString::from_str("test_dir_2").unwrap();
             let (_fh, dir_attr) = fs
                 .create(
                     parent,
@@ -966,7 +966,7 @@ async fn test_find_by_name() {
             );
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -981,7 +981,7 @@ async fn test_exists_by_name() {
         async {
             let fs = get_fs().await;
 
-            for file in ["test-file", "test//\\file"] {
+            for file in ["test-file", "test--file"] {
                 let test_file = SecretString::from_str(file).unwrap();
                 let _ = fs
                     .create(
@@ -1002,7 +1002,7 @@ async fn test_exists_by_name() {
             }
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1016,7 +1016,7 @@ async fn test_remove_dir() {
         },
         async {
             let fs = get_fs().await;
-            for dir in ["test-dir", "test-dir\\", "test-dir/"] {
+            for dir in ["test-dir", "test-dir_", "test-dir-"] {
                 let test_dir = SecretString::from_str(dir).unwrap();
                 let _ = fs
                     .create(
@@ -1046,7 +1046,7 @@ async fn test_remove_dir() {
             }
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1061,7 +1061,7 @@ async fn test_remove_file() {
         async {
             let fs = get_fs().await;
 
-            for dir in ["test-dir", "test-dir\\", "test-dir/"] {
+            for dir in ["test-dir", "test-dir_", "test-dir-clear"] {
                 let test_file = SecretString::from_str(dir).unwrap();
                 let _ = fs
                     .create(
@@ -1092,7 +1092,7 @@ async fn test_remove_file() {
             }
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1121,7 +1121,7 @@ async fn test_find_by_name_exists_by_name100files() {
                     .unwrap();
             }
 
-            let special_test_file = SecretString::from_str("test//\\file").unwrap();
+            let special_test_file = SecretString::from_str("test-_file").unwrap();
             let _ = fs
                 .create(
                     ROOT_INODE,
@@ -1149,7 +1149,7 @@ async fn test_find_by_name_exists_by_name100files() {
                 .is_some());
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1185,7 +1185,7 @@ async fn test_create_structure_and_root() {
             assert!(fs.data_dir.join(CONTENTS_DIR).join(ROOT_INODE_STR).is_dir());
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1376,7 +1376,7 @@ async fn test_create() {
             ));
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -1591,7 +1591,7 @@ async fn test_rename() {
                 )
                 .await
                 .unwrap();
-            let dir_2 = SecretString::from_str("dir-\\2").unwrap();
+            let dir_2 = SecretString::from_str("dir-_2").unwrap();
             fs.rename(ROOT_INODE, &dir_1, new_parent, &dir_2)
                 .await
                 .unwrap();
@@ -1663,7 +1663,7 @@ async fn test_rename() {
 
             // file to existing file in same directory
             let file_1 = SecretString::from_str("file-1").unwrap();
-            let file_2 = SecretString::from_str("file-/2").unwrap();
+            let file_2 = SecretString::from_str("file--2").unwrap();
             let new_parent = ROOT_INODE;
             let (_, attr) = fs
                 .create(
@@ -2271,7 +2271,7 @@ async fn test_rename() {
             ));
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -2311,7 +2311,7 @@ async fn test_open() {
             ));
         },
     )
-    .await
+    .await;
 }
 
 // #[tokio::test]
@@ -2356,7 +2356,7 @@ async fn test_read_only_create() {
             assert!(matches!(create_file_result, Err(FsError::ReadOnly)));
         },
     )
-    .await
+    .await;
 }
 
 #[tokio::test]
@@ -2374,8 +2374,7 @@ async fn test_read_only_write() {
             let cipher = Cipher::ChaCha20Poly1305;
             let file1 = SecretString::from_str("file1").unwrap();
             let file_dest = SecretString::from_str("file_dest").unwrap();
-            let dir1 = data_dir.clone().join("dir1");
-            let dir1 = SecretString::from_str(dir1.to_str().unwrap()).unwrap();
+            let dir1 = SecretString::from_str("dir1").unwrap();
             let data = "Hello, world!";
 
             let (fh, attr) = fs_rw
@@ -2480,5 +2479,5 @@ async fn test_read_only_write() {
             assert!(matches!(flush_result, Err(FsError::ReadOnly)));
         },
     )
-    .await
+    .await;
 }

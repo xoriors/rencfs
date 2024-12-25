@@ -13,7 +13,6 @@ use crate::crypto::buf_mut::BufMut;
 use crate::crypto::write::BLOCK_SIZE;
 use crate::stream_util;
 
-mod bench;
 mod test;
 
 /// Reads encrypted content from the wrapped Reader.

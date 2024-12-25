@@ -38,8 +38,8 @@ if ($allownonascii -ne $true) {
 
 # Call an additional script for checks before pushing (if applicable)
 # Ensure that `check-before-push.ps1` exists in the repo
-if (Test-Path "./check-before-push.bat") {
-    & "./check-before-push.bat"
+if (Test-Path ".\scripts\check-before-push.bat") {
+    & ".\scripts\check-before-push.bat"
 }
 
 exit 0

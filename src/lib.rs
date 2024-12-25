@@ -22,7 +22,6 @@
 //! ```no_run
 //! use std::env::args;
 //! use std::path::Path;
-//! use std::str::FromStr;
 //! use std::io;
 //! use tracing::info;
 //!
@@ -43,13 +42,13 @@
 //!     args.next(); // skip program name
 //!     let mount_path = args.next().expect("mount_path expected");
 //!     let data_path = args.next().expect("data_path expected");
-//!     use rencfs::crypto::Cipher;
+//! use rencfs::crypto::Cipher;
 //!
 //! struct PasswordProviderImpl {}
 //!     impl PasswordProvider for PasswordProviderImpl {
 //!         fn get_password(&self) -> Option<SecretString> {
-//!             // dummy password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
-//!             Some(SecretString::from_str("pass42").unwrap())
+//!             // placeholder password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
+//!             Some(SecretString::new(Box::new(String::from("pass42"))))
 //!         }
 //!     }
 //!     let mount_point = create_mount_point(
@@ -77,15 +76,15 @@
 //! You need to specify several parameters to create an encrypted file system:
 //! - `data_dir`: The directory where the file system will be mounted.
 //! - `password`: The password to encrypt/decrypt the data.
-//! - `cipher`: The encryption algorithm to use.
+//! - `Cipher`: The encryption algorithm to use.
 //!
 //!   Currently, it supports these ciphers [Cipher](crypto::Cipher).
 //!
 //! ### Example
 //!
 //! ```
+//! #![allow(unused_imports)]
 //! use std::fs;
-//! use std::str::FromStr;
 //! use shush_rs::SecretString;
 //! use rencfs::encryptedfs::{EncryptedFs, FileType, PasswordProvider, CreateFileAttr};
 //! use rencfs::crypto::Cipher;
@@ -98,8 +97,8 @@
 //! struct PasswordProviderImpl {}
 //! impl PasswordProvider for PasswordProviderImpl {
 //!     fn get_password(&self) -> Option<SecretString> {
-//!         // dummy password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
-//!         Some(SecretString::from_str("pass42").unwrap())
+//!         // placeholder password, use some secure way to get the password like with [keyring](https://crates.io/crates/keyring) crate
+//!         Some(SecretString::new(Box::new(String::from("pass42"))))
 //!     }
 //! }
 //!
@@ -112,7 +111,7 @@
 //!     let cipher = Cipher::ChaCha20Poly1305;
 //!     let mut fs = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl{}), cipher, false).await?;
 //!
-//!     let  file1 = SecretString::from_str("file1").unwrap();
+//!     let  file1 = SecretString::new(Box::new(String::from("file-1")));
 //!     let (fh, attr) = fs.create(ROOT_INODE, &file1, file_attr(), false, true).await?;
 //!     let data = "Hello, world!";
 //!     write_all_string_to_fs( &fs, attr.ino, 0,data, fh).await?;
@@ -142,13 +141,13 @@
 //! ## Change password from code
 //!
 //! ### Example
+//!
 //! ```no_run
 //! use rencfs::crypto::Cipher;
 //! use rencfs::encryptedfs::{EncryptedFs, FsError};
 //! use shush_rs::SecretString;
 //! use std::env::args;
 //! use std::path::Path;
-//! use std::str::FromStr;
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -160,8 +159,8 @@
 //!
 //!     match EncryptedFs::passwd(
 //!         Path::new(&data_dir),
-//!         SecretString::from_str("old-pass").unwrap(),
-//!         SecretString::from_str("new-pass").unwrap(),
+//!         SecretString::new(Box::new(String::from("old-pass"))),
+//!         SecretString::new(Box::new(String::from("new-pass"))),
 //!         Cipher::ChaCha20Poly1305,
 //!     )
 //!     .await
@@ -181,7 +180,6 @@
 //! use std::env::args;
 //! use std::io;
 //! use std::io::Write;
-//! use std::str::FromStr;
 //!
 //! use rpassword::read_password;
 //! use shush_rs::{ExposeSecret, SecretString};
@@ -201,13 +199,13 @@
 //!     use rencfs::crypto::Cipher;
 //!     print!("Enter old password: ");
 //!     io::stdout().flush().unwrap();
-//!     let old_password = SecretString::from_str(&read_password().unwrap()).unwrap();
+//!     let old_password = SecretString::new(Box::new(read_password().unwrap()));
 //!     print!("Enter new password: ");
 //!     io::stdout().flush().unwrap();
-//!     let new_password = SecretString::from_str(&read_password().unwrap()).unwrap();
+//!     let new_password = SecretString::new(Box::new(read_password().unwrap()));
 //!     print!("Confirm new password: ");
 //!     io::stdout().flush().unwrap();
-//!     let new_password2 = SecretString::from_str(&read_password().unwrap()).unwrap();
+//!     let new_password2 = SecretString::new(Box::new(read_password().unwrap()));
 //!     if new_password.expose_secret() != new_password2.expose_secret() {
 //!         error!("Passwords do not match");
 //!         return;

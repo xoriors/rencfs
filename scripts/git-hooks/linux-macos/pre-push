@@ -48,6 +48,6 @@ EOF
 #  exec git diff-index --check --cached $against --
 fi
 
-if [ -e "./check-before-push.sh" ]; then
-        ./check-before-push.sh
+if [ -e "./scripts/check-before-push.sh" ]; then
+        ./scripts/check-before-push.sh
 fi

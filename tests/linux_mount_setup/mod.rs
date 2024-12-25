@@ -62,10 +62,12 @@ impl Drop for TestResource {
         let res = self.runtime.block_on(async { mh.umount().await });
         match res {
             Ok(_) => println!("Succesfully unmounted"),
-            Err(e) => panic!(
-                "Something went wrong when unmounting {}.You may need to manually unmount",
-                e
-            ),
+            Err(e) => {
+                panic!(
+                    "Something went wrong when unmounting {}.You may need to manually unmount",
+                    e
+                )
+            }
         }
     }
 }
@@ -86,7 +88,7 @@ impl TestGuard {
             });
         }
         RESOURCE_COUNT.fetch_add(1, Ordering::SeqCst);
-        TestGuard
+        Self
     }
 }
 

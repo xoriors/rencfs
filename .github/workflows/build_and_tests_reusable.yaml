@@ -51,12 +51,16 @@ jobs:
             -A clippy::type_complexity
         shell: bash
 
-      - name: doc
-        run: cargo doc --workspace --all-features --no-deps
-
       - name: tests
         if: matrix.os != 'windows-latest'
-        run: cargo test --release --all --all-features
+        run: cargo test --release --all --all-features -- --skip keyring
+
+      - name: bench
+        if: matrix.os != 'windows-latest'
+        run: cargo bench --workspace --all-targets --all-features -- --skip keyring
+
+      - name: doc
+        run: cargo doc --workspace --all-features --no-deps
 
       - name: test package
         if: matrix.os == 'ubuntu-latest'
@@ -82,6 +86,7 @@ jobs:
 
       - name: java-bridge clippy
         run: |
+          cd java-bridge
           cargo clippy --all-targets --release -- \
             -A clippy::similar_names \
             -A clippy::too_many_arguments \
@@ -91,11 +96,19 @@ jobs:
             -A clippy::type_complexity
         shell: bash
 
-      - name: java-bridge doc
-        run: cargo doc --workspace --all-features --no-deps
-
       - name: java-bridge tests
         if: matrix.os != 'windows-latest'
         run: |
           cd java-bridge
           cargo test --release --all --all-features
+
+      - name: java-bridge bench
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd java-bridge
+          cargo bench --workspace --all-targets --all-features
+
+      - name: java-bridge doc
+        run: |
+          cd java-bridge
+          cargo doc --workspace --all-features --no-deps

@@ -2,8 +2,10 @@
 setlocal
 
 set CARGO_TERM_COLOR=always
-set RUSTFLAGS=-Dwarnings
+gsset RUSTFLAGS=-Dwarnings
 set RUSTDOCFLAGS=-Dwarnings
+set RUST_TEST_THREADS=14
+set CARGO_BUILD_JOBS=14
 
 if %errorlevel% neq 0 exit /b %errorlevel%
 
@@ -28,17 +30,14 @@ REM if %errorlevel% neq 0 exit /b %errorlevel%
 cargo test --release --all --all-features
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-cargo doc --workspace --all-features --no-deps
+REM cargo bench --workspace --all-targets --all-features -j 14
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-call :add_dryrun_to_version
+cargo doc --workspace --all-features --no-deps
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 REM cargo publish --dry-run --allow-dirty
 REM if %errorlevel% neq 0 exit /b %errorlevel%
-
-call :revert_version
-if %errorlevel% neq 0 exit /b %errorlevel%
 
 cd java-bridge
 cargo fmt --all
@@ -72,6 +71,9 @@ cargo test --release --all --all-features
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 cargo doc --workspace --all-features --no-deps
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+REM cargo bench --workspace --all-targets --all-features -j 14
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 cd ..

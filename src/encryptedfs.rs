@@ -407,7 +407,7 @@ impl From<TimesFileAttr> for SetFileAttr {
 #[derive(Debug, Clone)]
 pub struct DirectoryEntry {
     pub ino: u64,
-    pub name: SecretBox<String>,
+    pub name: SecretString,
     pub kind: FileType,
 }
 
@@ -423,7 +423,7 @@ impl PartialEq for DirectoryEntry {
 #[derive(Debug)]
 pub struct DirectoryEntryPlus {
     pub ino: u64,
-    pub name: SecretBox<String>,
+    pub name: SecretString,
     pub kind: FileType,
     pub attr: FileAttr,
 }
@@ -567,7 +567,7 @@ pub struct EncryptedFs {
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
     attr_cache: ExpireValue<RwLock<LruCache<u64, FileAttr>>, FsError, AttrCacheProvider>,
     dir_entries_name_cache:
-        ExpireValue<Mutex<LruCache<String, SecretBox<String>>>, FsError, DirEntryNameCacheProvider>,
+        ExpireValue<Mutex<LruCache<String, SecretString>>, FsError, DirEntryNameCacheProvider>,
     dir_entries_meta_cache:
         ExpireValue<Mutex<DirEntryMetaCache>, FsError, DirEntryMetaCacheProvider>,
     sizes_write: Mutex<HashMap<u64, AtomicU64>>,
@@ -657,6 +657,17 @@ impl EncryptedFs {
         self.read_only
     }
 
+    fn validate_filename(&self, secret_filename: &SecretBox<String>) -> FsResult<()> {
+        let filename = secret_filename.expose_secret().to_string();
+        if filename.contains('/') {
+            Err(FsError::InvalidInput("'/' not allowed in the filename"))
+        } else if filename.contains('\\') {
+            Err(FsError::InvalidInput("'\\' not allowed in the filename"))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Create a new node in the filesystem
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
@@ -669,6 +680,9 @@ impl EncryptedFs {
         read: bool,
         write: bool,
     ) -> FsResult<(u64, FileAttr)> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
         if *name.expose_secret() == "." || *name.expose_secret() == ".." {
             return Err(FsError::InvalidInput("name cannot be '.' or '..'"));
         }
@@ -678,9 +692,7 @@ impl EncryptedFs {
         if self.exists_by_name(parent, name)? {
             return Err(FsError::AlreadyExists);
         }
-        if self.read_only {
-            return Err(FsError::ReadOnly);
-        }
+        self.validate_filename(name)?;
 
         // spawn on a dedicated runtime to not interfere with other higher priority tasks
         let self_clone = self
@@ -838,7 +850,7 @@ impl EncryptedFs {
         }
         let lock = self
             .serialize_dir_entries_hash_locks
-            .get_or_insert_with(hash_path.to_str().unwrap().to_string(), || {
+            .get_or_insert_with(hash_path.to_str().unwrap().to_owned(), || {
                 RwLock::new(false)
             });
         let guard = lock.read().await;
@@ -872,11 +884,11 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
     pub async fn remove_dir(&self, parent: u64, name: &SecretString) -> FsResult<()> {
-        if !self.is_dir(parent) {
-            return Err(FsError::InvalidInodeType);
-        }
         if self.read_only {
             return Err(FsError::ReadOnly);
+        }
+        if !self.is_dir(parent) {
+            return Err(FsError::InvalidInodeType);
         }
 
         if !self.exists_by_name(parent, name)? {
@@ -949,14 +961,14 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
     pub async fn remove_file(&self, parent: u64, name: &SecretString) -> FsResult<()> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
         if !self.exists_by_name(parent, name)? {
             return Err(FsError::NotFound("name not found"));
-        }
-        if self.read_only {
-            return Err(FsError::ReadOnly);
         }
 
         let attr = self
@@ -966,6 +978,7 @@ impl EncryptedFs {
         if !matches!(attr.kind, FileType::RegularFile) {
             return Err(FsError::InvalidInodeType);
         }
+        // todo move to method
         let self_clone = self
             .self_weak
             .lock()
@@ -1150,7 +1163,10 @@ impl EncryptedFs {
                 }
             }
         };
-        let file_path = entry.path().to_str().unwrap().to_string();
+
+        self.validate_filename(&name)?;
+
+        let file_path = entry.path().to_str().unwrap().to_owned();
         // try from cache
         let lock = self.dir_entries_meta_cache.get().await?;
         let mut cache = lock.lock().await;
@@ -1529,7 +1545,7 @@ impl EncryptedFs {
                     .load(Ordering::SeqCst);
                 info!("written for {ino} {write_size}");
                 if attr.size != write_size {
-                    error!("size mismatch write {} {}", write_size, attr.size);
+                    // error!("size mismatch write {} {}", write_size, attr.size);
                 }
                 let requested_read = self
                     .requested_read
@@ -1650,7 +1666,7 @@ impl EncryptedFs {
             (writer.stream_position()?, len)
         };
 
-        let size = ctx.attr.size;
+        // let size = ctx.attr.size;
         if pos > ctx.attr.size {
             // if we write pass file size set the new size
             debug!("setting new file size {}", pos);
@@ -1672,20 +1688,20 @@ impl EncryptedFs {
             .unwrap()
             .fetch_add(len as u64, Ordering::SeqCst);
         if buf.len() != len {
-            error!(
-                "size mismatch in write(), size {size} offset {offset} buf_len {} len {len}",
-                buf.len()
-            );
+            // error!(
+            //     "size mismatch in write(), size {size} offset {offset} buf_len {} len {len}",
+            //     buf.len()
+            // );
         }
-        info!(
-            "written uncommited for {ino} size {}",
-            self.sizes_write
-                .lock()
-                .await
-                .get(&ino)
-                .unwrap()
-                .load(Ordering::SeqCst)
-        );
+        // warn!(
+        //     "written uncommited for {ino} size {}",
+        //     self.sizes_write
+        //         .lock()
+        //         .await
+        //         .get(&ino)
+        //         .unwrap()
+        //         .load(Ordering::SeqCst)
+        // );
 
         Ok(len)
     }
@@ -1693,12 +1709,12 @@ impl EncryptedFs {
     /// Flush the data to the underlying storage.
     #[allow(clippy::missing_panics_doc)]
     pub async fn flush(&self, handle: u64) -> FsResult<()> {
+        if self.read_only {
+            return Err(FsError::ReadOnly);
+        }
         if handle == 0 {
             // in the case of directory or if the file was crated without being opened we don't use a handle
             return Ok(());
-        }
-        if self.read_only {
-            return Err(FsError::ReadOnly);
         }
         let lock = self.read_handles.read().await;
         let mut valid_fh = lock.get(&handle).is_some();
@@ -1732,11 +1748,11 @@ impl EncryptedFs {
         file_range_req: &CopyFileRangeReq,
         size: usize,
     ) -> FsResult<usize> {
-        if self.is_dir(file_range_req.src_ino) || self.is_dir(file_range_req.dest_ino) {
-            return Err(FsError::InvalidInodeType);
-        }
         if self.read_only {
             return Err(FsError::ReadOnly);
+        }
+        if self.is_dir(file_range_req.src_ino) || self.is_dir(file_range_req.dest_ino) {
+            return Err(FsError::InvalidInodeType);
         }
 
         let mut buf = vec![0; size];
@@ -1976,9 +1992,9 @@ impl EncryptedFs {
     pub async fn rename(
         &self,
         parent: u64,
-        name: &SecretBox<String>,
+        name: &SecretString,
         new_parent: u64,
-        new_name: &SecretBox<String>,
+        new_name: &SecretString,
     ) -> FsResult<()> {
         if self.read_only {
             return Err(FsError::ReadOnly);
@@ -1998,6 +2014,7 @@ impl EncryptedFs {
         if !self.exists_by_name(parent, name)? {
             return Err(FsError::NotFound("name not found"));
         }
+        self.validate_filename(new_name)?;
 
         if parent == new_parent && name.expose_secret() == new_name.expose_secret() {
             // no-op
@@ -2038,7 +2055,7 @@ impl EncryptedFs {
                 attr.ino,
                 &DirectoryEntry {
                     ino: new_parent,
-                    name: SecretBox::new(Box::new("$..".to_string())),
+                    name: SecretBox::new(Box::new("$..".to_owned())),
                     kind: FileType::Directory,
                 },
             )
@@ -2115,8 +2132,8 @@ impl EncryptedFs {
     /// Change the password of the filesystem used to access the encryption key.
     pub async fn passwd(
         data_dir: &Path,
-        old_password: SecretBox<String>,
-        new_password: SecretBox<String>,
+        old_password: SecretString,
+        new_password: SecretString,
         cipher: Cipher,
     ) -> FsResult<()> {
         check_structure(data_dir, false).await?;
@@ -2165,10 +2182,7 @@ impl EncryptedFs {
         // read
         let lock = self.opened_files_for_read.read().await;
         if let Some(set) = lock.get(&ino) {
-            for handle in set
-                .iter()
-                .filter(|h| skip_write_fh.map_or(true, |fh| **h != fh))
-            {
+            for handle in set.iter().filter(|h| skip_write_fh != Some(**h)) {
                 let guard = self.read_handles.read().await;
                 let ctx = guard.get(handle).unwrap().lock().await;
                 let set_attr: SetFileAttr = ctx.attr.clone().into();
@@ -2350,7 +2364,7 @@ impl EncryptedFs {
                 .join(encrypted_name_clone.clone());
             let lock = self_clone
                 .serialize_dir_entries_ls_locks
-                .get_or_insert_with(file_path.to_str().unwrap().to_string(), || {
+                .get_or_insert_with(file_path.to_str().unwrap().to_owned(), || {
                     RwLock::new(false)
                 });
             let _guard = lock.write().await;
@@ -2379,7 +2393,7 @@ impl EncryptedFs {
             let file_path = parent_path.join(HASH_DIR).join(name);
             let lock = self_clone
                 .serialize_dir_entries_hash_locks
-                .get_or_insert_with(file_path.to_str().unwrap().to_string(), || {
+                .get_or_insert_with(file_path.to_str().unwrap().to_owned(), || {
                     RwLock::new(false)
                 });
             let _guard = lock.write().await;
@@ -2414,7 +2428,7 @@ impl EncryptedFs {
         let path = parent_path.join(HASH_DIR).join(name);
         let lock = self
             .serialize_dir_entries_hash_locks
-            .get_or_insert_with(path.to_str().unwrap().to_string(), || RwLock::new(false));
+            .get_or_insert_with(path.to_str().unwrap().to_owned(), || RwLock::new(false));
         let guard = lock.write().await;
         let (_, _, name): (u64, FileType, String) =
             bincode::deserialize_from(crypto::create_read(
@@ -2428,7 +2442,7 @@ impl EncryptedFs {
         let path = parent_path.join(LS_DIR).join(name);
         let lock = self
             .serialize_dir_entries_ls_locks
-            .get_or_insert_with(path.to_str().unwrap().to_string(), || RwLock::new(false));
+            .get_or_insert_with(path.to_str().unwrap().to_owned(), || RwLock::new(false));
         let _guard = lock.write().await;
         fs::remove_file(path)?;
         Ok(())

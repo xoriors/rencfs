@@ -1446,6 +1446,7 @@ async fn mount_fuse(
         .read_only(read_only)
         .allow_root(allow_root)
         .allow_other(allow_other)
+        .fs_name("rencfs")
         .clone();
     let mount_path = OsStr::new(mountpoint.to_str().unwrap());
 

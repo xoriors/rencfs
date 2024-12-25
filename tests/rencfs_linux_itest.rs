@@ -27,7 +27,7 @@ fn it_create_and_write_file() {
     {
         let res = File::create_new(path);
         assert!(res.is_ok(), "failed to create [{}]", res.err().unwrap());
-        let bytes_written = res.unwrap().write_all("test".as_bytes());
+        let bytes_written = res.unwrap().write_all(b"test");
         assert!(
             bytes_written.is_ok(),
             "failed to write [{}]",

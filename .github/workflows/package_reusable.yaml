@@ -81,6 +81,7 @@ jobs:
       - name: build push = ${{ inputs.upload_artifacts }}
         uses: docker/build-push-action@v6
         with:
+          file: docker/Dockerfile
           push: ${{ inputs.upload_artifacts }}
           tags: ${{ env.REGISTRY_USER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           sbom: true
