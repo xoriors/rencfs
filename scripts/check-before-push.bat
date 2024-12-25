@@ -4,6 +4,8 @@ setlocal
 set CARGO_TERM_COLOR=always
 gsset RUSTFLAGS=-Dwarnings
 set RUSTDOCFLAGS=-Dwarnings
+set RUST_TEST_THREADS=14
+set CARGO_BUILD_JOBS=14
 
 if %errorlevel% neq 0 exit /b %errorlevel%
 
@@ -26,6 +28,9 @@ REM cargo clippy --all-targets --release
 REM if %errorlevel% neq 0 exit /b %errorlevel%
 
 cargo test --release --all --all-features
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+REM cargo bench --workspace --all-targets --all-features -j 14
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 cargo doc --workspace --all-features --no-deps
@@ -66,6 +71,9 @@ cargo test --release --all --all-features
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 cargo doc --workspace --all-features --no-deps
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+REM cargo bench --workspace --all-targets --all-features -j 14
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 cd ..

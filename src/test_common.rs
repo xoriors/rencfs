@@ -2,18 +2,24 @@ use std::future::Future;
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
+use std::time::SystemTime;
 use std::{env, fs, io};
 
+use criterion::{black_box, Criterion};
 use shush_rs::SecretString;
 use tempfile::NamedTempFile;
 use thread_local::ThreadLocal;
+use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
     CopyFileRangeReq, CreateFileAttr, EncryptedFs, FileType, PasswordProvider,
 };
+
+pub static ATOMIC: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
 #[allow(dead_code)]
 pub static TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
@@ -30,7 +36,6 @@ pub static TESTS_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
         fs::remove_file(tmp.to_str().unwrap()).expect("cannot remove tmp file");
         tmp.to_path_buf()
     };
-    println!("tmp {}", tmp.clone().to_string_lossy());
     tmp.parent()
         .expect("oops, we don't have a parent")
         .join("rencfs-test-data")
@@ -53,9 +58,15 @@ pub const fn create_attr(kind: FileType) -> CreateFileAttr {
 
 #[derive(Debug, Clone)]
 pub struct TestSetup {
+    /// `id` Needs to be a unique identifier which is used:
+    ///    - For the name of the test in the criterion, which is printed in the output and reports,
+    ///    - As a prefix to create a tmp dir for the fs.
+    ///         It will add the timestamp in millis and a random number to the end of the key to make it unique.
+    ///         This is useful if test fails, and you want to see the actual data, as if test fails,
+    ///         the tmp dir is not removed.
     #[allow(dead_code)]
-    pub key: &'static str,
-    pub read_only: bool,
+    pub id: &'static str,
+    pub read_only_fs: bool,
 }
 
 pub struct SetupResult {
@@ -73,9 +84,19 @@ impl PasswordProvider for PasswordProviderImpl {
     }
 }
 #[allow(dead_code)]
-async fn setup(setup: TestSetup) -> SetupResult {
-    let path = TESTS_DATA_DIR.join(setup.key);
-    let read_only = setup.read_only;
+pub async fn setup(setup: TestSetup) -> SetupResult {
+    let path = TESTS_DATA_DIR
+        .join(setup.id)
+        .join("_")
+        .join(
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                .to_string(),
+        )
+        .join(rand::random::<u32>().to_string());
+    let read_only = setup.read_only_fs;
     let data_dir_str = path.to_str().unwrap();
     let _ = fs::remove_dir_all(data_dir_str);
     let _ = fs::create_dir_all(data_dir_str);
@@ -96,10 +117,10 @@ async fn setup(setup: TestSetup) -> SetupResult {
 }
 
 #[allow(dead_code)]
-async fn teardown() -> Result<(), io::Error> {
+pub async fn teardown() -> Result<(), io::Error> {
     let s = SETUP_RESULT.get_or(|| Mutex::new(None));
     let s = s.lock().await;
-    let path = TESTS_DATA_DIR.join(s.as_ref().unwrap().setup.key);
+    let path = TESTS_DATA_DIR.join(s.as_ref().unwrap().setup.id);
     let data_dir_str = path.to_str().unwrap();
     fs::remove_dir_all(data_dir_str)?;
 
@@ -108,14 +129,15 @@ async fn teardown() -> Result<(), io::Error> {
 
 #[allow(dead_code)]
 #[allow(clippy::future_not_send)]
-pub async fn run_test<T>(init: TestSetup, t: T)
+pub async fn run_test<T>(setup_in: TestSetup, t: T)
 where
     T: Future,
 {
     {
+        let res = Some(setup(setup_in).await);
         let s = SETUP_RESULT.get_or(|| Mutex::new(None));
         let mut s = s.lock().await;
-        *s = Some(setup(init).await);
+        *s = res;
     }
     t.await;
     teardown().await.unwrap();
@@ -196,7 +218,14 @@ pub fn bench<F: Future + Send + Sync>(
 ) {
     block_on(
         async {
-            run_test(TestSetup { key, read_only }, f).await;
+            run_test(
+                TestSetup {
+                    id: key,
+                    read_only_fs: read_only,
+                },
+                f,
+            )
+            .await;
         },
         worker_threads,
     );
@@ -213,9 +242,73 @@ pub fn block_on<F: Future>(future: F, worker_threads: usize) -> F::Output {
 }
 
 #[allow(dead_code)]
+pub fn create_rt(worker_threads: usize) -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+#[allow(dead_code)]
 pub async fn get_fs() -> Arc<EncryptedFs> {
     // todo: see if we can simplify how we keep in SETUP_RESULT
     let fs = SETUP_RESULT.get_or(|| Mutex::new(None));
     let mut fs = fs.lock().await;
     fs.as_mut().unwrap().fs.as_ref().unwrap().clone()
+}
+
+#[allow(dead_code)]
+pub fn bench_setup(setup_in: TestSetup) -> (Runtime, Arc<EncryptedFs>) {
+    let rt = create_rt(2);
+    let fs = rt.block_on(async {
+        {
+            let res = Some(setup(setup_in).await);
+            let s = SETUP_RESULT.get_or(|| Mutex::new(None));
+            let mut s = s.lock().await;
+            *s = res;
+        }
+        get_fs().await
+    });
+    (rt, fs)
+}
+
+#[allow(dead_code)]
+pub fn bench_teardown(rt: Runtime) {
+    rt.block_on(async {
+        teardown().await.unwrap();
+    });
+}
+
+#[allow(dead_code)]
+pub fn run_bench<'a, FSetup, FutSetup, FRun, FutRun>(
+    setup: TestSetup,
+    c: &mut Criterion,
+    setup_fn: FSetup,
+    run_fn: FRun,
+) where
+    FSetup: Fn(Arc<EncryptedFs>, &'a AtomicU64) -> FutSetup,
+    FutSetup: Future<Output = ()>,
+    FRun: Fn(Arc<EncryptedFs>, &'a AtomicU64) -> FutRun,
+    FutRun: Future<Output = ()>,
+{
+    let id = setup.id;
+    let (rt, fs) = bench_setup(setup);
+
+    rt.block_on(async {
+        setup_fn(fs.clone(), &ATOMIC).await;
+    });
+
+    let z = AtomicBool::new(false);
+    c.bench_function(id, |b| {
+        b.iter(|| {
+            let z2 = z.swap(true, Ordering::SeqCst);
+            rt.block_on(async {
+                run_fn(fs.clone(), &ATOMIC).await;
+            });
+            black_box(z2);
+        });
+    });
+
+    bench_teardown(rt);
 }

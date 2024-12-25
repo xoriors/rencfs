@@ -298,7 +298,7 @@ pub mod fs_util;
 pub mod log;
 pub mod mount;
 pub mod stream_util;
-pub(crate) mod test_common;
+pub mod test_common;
 
 #[allow(unreachable_code)]
 pub static UID: LazyLock<u32> = LazyLock::new(|| {

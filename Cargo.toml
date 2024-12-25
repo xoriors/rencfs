@@ -66,6 +66,10 @@ fuse3 = { version = "0.8.1", features = ["tokio-runtime", "unprivileged"] }
 name = "crypto_read"
 harness = false
 
+[[bench]]
+name = "encryptedfs"
+harness = false
+
 [lints.rust]
 #unsafe_code = "deny"
 

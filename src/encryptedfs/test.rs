@@ -29,8 +29,8 @@ static ROOT_INODE_STR: &str = "1";
 async fn test_write() {
     run_test(
         TestSetup {
-            key: "test_write",
-            read_only: false,
+            id: "test_write",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -178,8 +178,8 @@ async fn test_write() {
 async fn test_read() {
     run_test(
         TestSetup {
-            key: "test_read",
-            read_only: false,
+            id: "test_read",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -359,8 +359,8 @@ async fn test_read() {
 async fn test_set_len() {
     run_test(
         TestSetup {
-            key: "test_set_len",
-            read_only: false,
+            id: "test_set_len",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -434,8 +434,8 @@ async fn test_set_len() {
 async fn test_copy_file_range() {
     run_test(
         TestSetup {
-            key: "test_copy_file_range",
-            read_only: false,
+            id: "test_copy_file_range",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -536,8 +536,8 @@ async fn test_copy_file_range() {
 async fn test_read_dir() {
     run_test(
         TestSetup {
-            key: "test_read_dir",
-            read_only: false,
+            id: "test_read_dir",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -732,8 +732,8 @@ async fn test_read_dir() {
 async fn test_read_dir_plus() {
     run_test(
         TestSetup {
-            key: "test_read_dir_plus",
-            read_only: false,
+            id: "test_read_dir_plus",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -936,8 +936,8 @@ async fn test_read_dir_plus() {
 async fn test_find_by_name() {
     run_test(
         TestSetup {
-            key: "test_find_by_name",
-            read_only: false,
+            id: "test_find_by_name",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -975,8 +975,8 @@ async fn test_find_by_name() {
 async fn test_exists_by_name() {
     run_test(
         TestSetup {
-            key: "test_exists_by_name",
-            read_only: false,
+            id: "test_exists_by_name",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -1011,8 +1011,8 @@ async fn test_exists_by_name() {
 async fn test_remove_dir() {
     run_test(
         TestSetup {
-            key: "test_remove_dir",
-            read_only: false,
+            id: "test_remove_dir",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -1055,8 +1055,8 @@ async fn test_remove_dir() {
 async fn test_remove_file() {
     run_test(
         TestSetup {
-            key: "test_remove_file",
-            read_only: false,
+            id: "test_remove_file",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -1101,8 +1101,8 @@ async fn test_remove_file() {
 async fn test_find_by_name_exists_by_name100files() {
     run_test(
         TestSetup {
-            key: "test_find_by_name_exists_by_name_many_files",
-            read_only: false,
+            id: "test_find_by_name_exists_by_name_many_files",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -1158,8 +1158,8 @@ async fn test_find_by_name_exists_by_name100files() {
 async fn test_create_structure_and_root() {
     run_test(
         TestSetup {
-            key: "test_sample",
-            read_only: false,
+            id: "test_sample",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -1194,8 +1194,8 @@ async fn test_create_structure_and_root() {
 async fn test_create() {
     run_test(
         TestSetup {
-            key: "test_create",
-            read_only: false,
+            id: "test_create",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -1385,8 +1385,8 @@ async fn test_create() {
 async fn test_rename() {
     run_test(
         TestSetup {
-            key: "test_rename",
-            read_only: false,
+            id: "test_rename",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -2279,8 +2279,8 @@ async fn test_rename() {
 async fn test_open() {
     run_test(
         TestSetup {
-            key: "test_open",
-            read_only: false,
+            id: "test_open",
+            read_only_fs: false,
         },
         async {
             let fs = get_fs().await;
@@ -2320,8 +2320,8 @@ async fn test_open() {
 async fn _test_sample() {
     run_test(
         TestSetup {
-            key: "test_sample",
-            read_only: false,
+            id: "test_sample",
+            read_only_fs: false,
         },
         async {
             let _ = get_fs().await;
@@ -2336,8 +2336,8 @@ async fn _test_sample() {
 async fn test_read_only_create() {
     run_test(
         TestSetup {
-            key: "test_read_only_create",
-            read_only: true,
+            id: "test_read_only_create",
+            read_only_fs: true,
         },
         async {
             let fs = get_fs().await;
@@ -2365,8 +2365,8 @@ async fn test_read_only_create() {
 async fn test_read_only_write() {
     run_test(
         TestSetup {
-            key: "read_only_test_write",
-            read_only: false,
+            id: "read_only_test_write",
+            read_only_fs: false,
         },
         async {
             let fs_rw = get_fs().await;
