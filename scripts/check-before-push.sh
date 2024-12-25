@@ -5,6 +5,8 @@ set -e
 export CARGO_TERM_COLOR=always
 export RUSTFLAGS="-Dwarnings"
 export RUSTDOCFLAGS="-Dwarnings"
+export RUST_TEST_THREADS=14
+export CARGO_BUILD_JOBS=14
 
 cargo fmt --all
 
@@ -21,7 +23,7 @@ cargo clippy --all-targets --release --target x86_64-unknown-linux-gnu -- \
     -A clippy::missing_errors_doc \
     -A clippy::type_complexity
 cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
-# cargo bench --workspace --all-targets --all-features --target x86_64-unknown-linux-gnu
+cargo bench --workspace --all-targets --all-features --target x86_64-unknown-linux-gnu -j 14
 cargo doc --workspace --all-features --no-deps --target x86_64-unknown-linux-gnu
 
 # cargo publish --dry-run --allow-dirty --target x86_64-unknown-linux-gnu
@@ -44,6 +46,6 @@ cargo clippy --all-targets --release --target x86_64-unknown-linux-gnu -- \
     -A clippy::missing_errors_doc \
     -A clippy::type_complexity
 cargo test --release --all --all-features --target x86_64-unknown-linux-gnu
-# cargo bench --workspace --all-targets --all-features --target x86_64-unknown-linux-gnu
+cargo bench --workspace --all-targets --all-features --target x86_64-unknown-linux-gnu -j 14
 cargo doc --workspace --all-features --no-deps --target x86_64-unknown-linux-gnu
 cd ..
