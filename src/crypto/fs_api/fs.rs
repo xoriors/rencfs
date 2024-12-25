@@ -1,3 +1,4 @@
+use futures_util::future::try_join_all;
 use shush_rs::{ExposeSecret, SecretBox, SecretString};
 use std::future::Future;
 use std::io::{self, Error, ErrorKind, SeekFrom};
@@ -382,8 +383,10 @@ pub async fn metadata<P: AsRef<Path>>(path: P) -> std::io::Result<Metadata> {
 
 pub async fn exists<P: AsRef<Path>>(path: P) -> std::io::Result<bool> {
     let fs = get_fs().await?;
-    let (_, _, target_ino) = validate_path_exists(&path).await?;
-    Ok(fs.exists(target_ino))
+    match validate_path_exists(&path).await {
+        Ok((_, _, target_ino)) => Ok(fs.exists(target_ino)),
+        Err(_) => Ok(false),
+    }
 }
 
 pub async fn canonicalize<P: AsRef<Path>>(path: P) -> std::io::Result<PathBuf> {
@@ -439,6 +442,60 @@ pub async fn remove_dir<P: AsRef<Path>>(path: P) -> Result<()> {
     let fs = get_fs().await?;
     let (dir_name, dir_inode, _) = validate_path_exists(path).await?;
     fs.remove_dir(dir_inode, &dir_name).await?;
+    Ok(())
+}
+
+pub async fn remove_dir_all<P: AsRef<Path>>(path: P) -> Result<()> {
+    let (_, _, target_inode) = validate_path_exists(&path).await?;
+    remove_dir_recursive(target_inode).await?;
+    remove_dir(path).await?;
+    Ok(())
+}
+
+async fn remove_dir_recursive(target_inode: u64) -> Result<()> {
+    let fs = get_fs().await?;
+    let mut queue = Vec::new();
+
+    let mut futures: Vec<Pin<Box<dyn Future<Output = Result<()>>>>> = vec![];
+
+    for node in fs.read_dir_plus(target_inode).await? {
+        let node = node?;
+        // TODO: Remove after "." and ".." are removed from read_dir
+        let name = node.name.expose_secret().to_string();
+        if name == "." || name == ".." {
+            continue;
+        }
+        match node.kind {
+            FileType::Directory => match fs.len(node.ino)? {
+                0 => {
+                    // dbg!("Removing dir:", target_inode, &node.name.expose_secret());
+                    fs.remove_dir(target_inode, &node.name).await?;
+                    // dbg!("Dir removed.");
+                }
+                _ => {
+                    // dbg!("starting recursion:", target_inode, &node.name.expose_secret());
+                    queue.push((target_inode, node.name));
+                    futures.push(Box::pin(remove_dir_recursive(node.ino)));
+                    // dbg!("Recursion ended.");
+                }
+            },
+            FileType::RegularFile => {
+                // dbg!("Removing file:", target_inode, &node.name.expose_secret());
+                fs.remove_file(target_inode, &node.name).await?;
+                // dbg!("File removed.");
+            }
+        }
+    }
+
+    // for future in futures {
+    //     future.await?;
+    // }
+    try_join_all(futures).await?;
+
+    for node in queue.into_iter().rev() {
+        fs.remove_dir(node.0, &node.1).await?;
+    }
+
     Ok(())
 }
 

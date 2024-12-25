@@ -6,7 +6,9 @@ use std::str::FromStr;
 use shush_rs::{SecretBox, SecretString};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::crypto::fs_api::fs::{create_dir, create_dir_all, remove_dir, remove_file, OpenOptions};
+use crate::crypto::fs_api::fs::{
+    create_dir, create_dir_all, remove_dir, remove_dir_all, remove_file, OpenOptions,
+};
 use crate::crypto::fs_api::path::Path;
 use crate::encryptedfs::{CreateFileAttr, FileType, PasswordProvider};
 use crate::test_common::{get_fs, run_test, TestSetup};
@@ -179,6 +181,125 @@ async fn test_async_file_funcs() {
                 .unwrap();
             let result = remove_dir(path).await;
             assert!(result.is_err());
+        },
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)]
+async fn test_async_file_delete_dir_all() {
+    run_test(
+        TestSetup {
+            key: "test_async_file_delete_dir_all",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            OpenOptions::set_scope(fs.clone()).await;
+
+            // Testing the `remove_dir_all` function
+            let dir_path1 = Path::new("foo/dir1/dir_in_dir1");
+            let dir_path2 = Path::new("foo/dir2/dir_in_dir2");
+            let dir_path3 = Path::new("foo/a/b/c/d/e/f/g/h/i/");
+            create_dir_all(dir_path1).await.unwrap();
+            create_dir_all(dir_path2).await.unwrap();
+            create_dir_all(dir_path3).await.unwrap();
+            let file_path1 = Path::new("foo/dir1/dir_in_dir1/file_dir_dir1.rs");
+            let file_path2 = Path::new("foo/file_in_root.rs");
+            let file_path3 = Path::new("foo/a/b/c/d/e/f/file_in_f.rs");
+            let mut file1 = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(file_path1)
+                .await
+                .unwrap();
+            let mut file2 = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(file_path2)
+                .await
+                .unwrap();
+            let mut file3 = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(file_path3)
+                .await
+                .unwrap();
+            file1.shutdown().await.unwrap();
+            file2.shutdown().await.unwrap();
+            file3.shutdown().await.unwrap();
+            remove_dir_all("foo").await.unwrap();
+            assert_eq!(dir_path1.try_exists().unwrap(), false);
+            assert_eq!(dir_path2.try_exists().unwrap(), false);
+            assert_eq!(dir_path3.try_exists().unwrap(), false);
+            assert_eq!(file_path1.try_exists().unwrap(), false);
+            assert_eq!(file_path2.try_exists().unwrap(), false);
+            assert_eq!(file_path3.try_exists().unwrap(), false);
+            assert_eq!(Path::new("foo/a/").try_exists().unwrap(), false);
+            assert_eq!(Path::new("foo").try_exists().unwrap(), false);
+
+            // Delete folder that does not exist
+            let result = remove_dir_all("nonexistent_dir").await;
+            assert!(result.is_err());
+
+            // Delete a single dir with a folder
+            create_dir_all("single_file_dir").await.unwrap();
+            let file_path = Path::new("single_file_dir/file.rs");
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(file_path)
+                .await
+                .unwrap();
+            file.shutdown().await.unwrap();
+
+            remove_dir_all("single_file_dir").await.unwrap();
+            assert_eq!(file_path.try_exists().unwrap(), false);
+            assert_eq!(Path::new("single_file_dir").try_exists().unwrap(), false);
+
+            // Delete an empty dir
+            create_dir_all("empty_dir").await.unwrap();
+            remove_dir_all("empty_dir").await.unwrap();
+            assert_eq!(Path::new("empty_dir").try_exists().unwrap(), false);
+
+            // Delete nested empty dirs
+            create_dir_all("nested_empty/a/b/c/d").await.unwrap();
+            remove_dir_all("nested_empty").await.unwrap();
+            assert_eq!(Path::new("nested_empty").try_exists().unwrap(), false);
+
+            // Delete many files
+            create_dir_all("many_files_dir").await.unwrap();
+            for i in 0..100 {
+                let path = format!("many_files_dir/file_{}.rs", i);
+                let file_path = Path::new(&path);
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(file_path)
+                    .await
+                    .unwrap();
+                file.shutdown().await.unwrap();
+            }
+
+            remove_dir_all("many_files_dir").await.unwrap();
+            assert_eq!(Path::new("many_files_dir").try_exists().unwrap(), false);
+
+            // Delete partialy deleted folder
+            create_dir_all("partial_dir/subdir").await.unwrap();
+            let file_path = Path::new("partial_dir/file.rs");
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(file_path)
+                .await
+                .unwrap();
+            file.shutdown().await.unwrap();
+
+            remove_dir_all("partial_dir/subdir").await.unwrap();
+
+            remove_dir_all("partial_dir").await.unwrap();
+            assert_eq!(Path::new("partial_dir").try_exists().unwrap(), false);
         },
     )
     .await;
