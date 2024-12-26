@@ -15,11 +15,11 @@ env:
 
 jobs:
   version:
-    uses: xoriors/rencfs/.github/workflows/version_reusable2.yaml@main
+    uses: xoriors/rencfs/.github/workflows/version_reusable.yaml@main
 
   build_and_test:
     name: build and test
-    uses: xoriors/rencfs/.github/workflows/build_and_tests_reusable.yaml@main
+    uses: xoriors/rencfs/.github/workflows/build_and_tests_reusable2.yaml@main
     secrets: inherit
 
   package:
