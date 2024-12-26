@@ -432,7 +432,7 @@ async fn test_async_file_remove_dir_all() {
 //             // Concurency test
 //             let path = Path::new("concurrent_dir");
 //             create_dir(path).await.unwrap();
-//             let dir_lock = Arc::new(Mutex::new(())); 
+//             let dir_lock = Arc::new(Mutex::new(()));
 //             let handles = vec![
 //                 tokio::spawn({
 //                     let dir_lock = dir_lock.clone();
