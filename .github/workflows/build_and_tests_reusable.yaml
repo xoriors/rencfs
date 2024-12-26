@@ -1,4 +1,4 @@
-dname: '_build-and-tests'
+name: '_build-and-tests'
 on:
   workflow_call:
 
