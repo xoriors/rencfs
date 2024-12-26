@@ -102,7 +102,7 @@ pub enum Error {
         source: bincode::Error,
         // backtrace: Backtrace,
     },
-    #[error("")]
+    #[error("recovery phrase error: {source}")]
     RecoveryPhraseError {
         #[from]
         source: bip39::Error

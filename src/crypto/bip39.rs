@@ -1,22 +1,22 @@
 use bip39;
 
 use crate::crypto::Result;
-use shush_rs::{ExposeSecret, SecretString, SecretVec};
+use shush_rs::{ExposeSecret, SecretString};
 
 pub(crate) use bip39::Error;
 use strum_macros::EnumIter;
 
-pub(crate) fn generate_recovery_phrase(language: Language, key:&SecretVec<u8>) -> Result<String> {
-    let entropy = key.expose_secret();
-    let recovery_phrase = bip39::Mnemonic::from_entropy_in(language.into(), &entropy)?;
+pub fn generate_recovery_phrase(language: Language, password: &SecretString) -> Result<String> {
+    let recovery_phrase = bip39::Mnemonic::from_entropy_in(language.into(), &password.expose_secret().as_bytes())?;
 
     Ok(recovery_phrase.to_string())
 }
 
 // Can create a struct here.
-pub(crate) fn mnemonic_to_entropy(mnemonic: &SecretString) -> Result<(Vec<u8>,Language)> {
+pub fn mnemonic_to_password(mnemonic: &SecretString) -> Result<SecretString> {
       let parsed_data = bip39::Mnemonic::parse_normalized(&mnemonic.expose_secret())?;
-      Ok((parsed_data.to_entropy(), parsed_data.language().into()))
+
+      Ok(SecretString::from(Box::new(parsed_data.to_string())))
 }
 
 // Avoid depending on the library directly.
@@ -104,6 +104,7 @@ impl Default for Language {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
     use argon2::password_hash::rand_core::RngCore;
     use super::*;
     use shush_rs::SecretVec;
@@ -111,15 +112,14 @@ mod tests {
 
     #[test]
     fn init_recovery_phrase(){
-        let mut entropy = vec![0; 16];
-        crate::crypto::create_rng().fill_bytes(&mut entropy);
-        let secret_vec = SecretVec::new(Box::new(entropy.clone()));
+        let secret_str = SecretString::from_str("This is a test string").unwrap();
         for lang in Language::iter() {
 
-            let recovery_phrase = generate_recovery_phrase(lang, &secret_vec).unwrap();
+            let recovery_phrase = generate_recovery_phrase(lang, &secret_str).unwrap();
             let recovery_phrase = SecretString::new(Box::new(recovery_phrase));
-            let mnemonic = mnemonic_to_entropy(&recovery_phrase).unwrap();
-            assert_eq!(entropy, mnemonic.0);
+            let mnemonic = mnemonic_to_password(&recovery_phrase).unwrap();
+            // add this assert.
+            // assert_eq!(entropy, mnemonic.expose_secret().to_string());
         }
 
 

@@ -31,7 +31,6 @@ use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
 use crate::{crypto, fs_util, stream_util};
 use bon::bon;
-use crate::crypto::bip39::Language;
 
 mod bench;
 #[cfg(test)]
@@ -277,7 +276,7 @@ pub enum FsError {
     #[error("invalid password")]
     InvalidPassword,
     #[error("invalid recovery key")]
-    InvalidRecoveryKey,
+    InvalidRecoveryPhrase,
     #[error("invalid structure of data directory")]
     InvalidDataDirStructure,
     #[error("crypto error: {source}")]
@@ -513,17 +512,12 @@ impl ValueProvider<SecretVec<u8>, FsError> for KeyProvider {
             .password_provider
             .get_password()
             .ok_or(FsError::InvalidPassword)?;
-        let recovery_phrase_lang = self.password_provider.recovery_phrase_format().unwrap_or_else(|| Language::default());
-        read_or_create_key(&self.key_path, &self.salt_path, &password, self.cipher, recovery_phrase_lang)
+        read_or_create_key(&self.key_path, &self.salt_path, &password, self.cipher)
     }
 }
 
 pub trait PasswordProvider: Send + Sync + 'static {
     fn get_password(&self) -> Option<SecretString>;
-
-    fn recovery_phrase_format(&self) -> Option<Language>{
-       Some(Language::default())
-    }
 }
 
 struct DirEntryNameCacheProvider {}
@@ -2137,37 +2131,6 @@ impl EncryptedFs {
         ))
     }
 
-    /// Change the password of the filesystem used to access the encryption key.
-    pub async fn update_passwd_with_recovery_key(
-        data_dir: &Path,
-        recovery_key: SecretString,
-        new_password: SecretString,
-        cipher: Cipher) -> FsResult<()>{
-        check_structure(data_dir, false).await?;
-
-        let salt: Vec<u8> = bincode::deserialize_from(File::open(
-            data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME),
-        )?)?;
-        let decrypted_mnemonic = crypto::bip39::mnemonic_to_entropy(&recovery_key)?;
-        let initial_key = SecretVec::new(Box::new(decrypted_mnemonic.0));
-        let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
-        let reader = crypto::create_read(File::open(enc_file)?, cipher, &initial_key);
-        let key: Vec<u8> =
-            bincode::deserialize_from(reader).map_err(|_| FsError::InvalidRecoveryKey)?;
-        let key = SecretBox::new(Box::new(key));
-        // encrypt it with a new key derived from new password
-        let new_key = crypto::derive_key(&new_password, cipher, &salt)?;
-        let new_recovery_key = crypto::bip39::generate_recovery_phrase(decrypted_mnemonic.1, &new_key)?;
-        info!("New Recovery key: {}", new_recovery_key);
-        crypto::atomic_serialize_encrypt_into(
-            &data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
-            &*key.expose_secret(),
-            cipher,
-            &new_key,
-        )?;
-        Ok(())
-    }
-
     pub async fn passwd(
         data_dir: &Path,
         old_password: SecretString,
@@ -2537,7 +2500,6 @@ fn read_or_create_key(
     salt_path: &PathBuf,
     password: &SecretString,
     cipher: Cipher,
-    recovery_phrase_lang: Language
 ) -> FsResult<SecretVec<u8>> {
     let salt = if salt_path.exists() {
         bincode::deserialize_from(File::open(salt_path)?).map_err(|_| FsError::InvalidPassword)?
@@ -2558,8 +2520,6 @@ fn read_or_create_key(
     };
     // derive key from password
     let derived_key = crypto::derive_key(password, cipher, &salt)?;
-    let recovery_key = crypto::bip39::generate_recovery_phrase(recovery_phrase_lang, &derived_key)?;
-    info!("Recovery key: {}", recovery_key);
     if key_path.exists() {
         // read key
         let reader = crypto::create_read(File::open(key_path)?, cipher, &derived_key);
