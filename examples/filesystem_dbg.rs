@@ -22,6 +22,25 @@ use std::sync::Arc;
 async fn main() -> anyhow::Result<()> {
     init_fs().await?;
     let fs = get_fs().await?;
+
+    // // Concurency test
+    // let path = Path::new("concurrent_dir");
+    // fs::create_dir(path).await.unwrap();
+    // let handles = vec![
+    //     tokio::spawn(remove_dir_all("concurrent_dir")),
+    //     tokio::spawn(remove_dir_all("concurrent_dir")),
+    // ];
+    // assert!(path.try_exists().unwrap());
+
+    // for handle in handles {
+    //     let _ = handle.await.unwrap();
+    // }
+    // // Does not delete file
+    // assert!(!path.try_exists().unwrap());
+
+    // remove_dir_all("concurrent_dir").await.unwrap();
+    // assert!(!Path::new("concurrent_dir").try_exists().unwrap());
+
     {
         let mut opened_file1 = OpenOptions::new()
             .write(true)

@@ -2,9 +2,11 @@
 #![allow(unused_variables)]
 
 use std::str::FromStr;
+use std::sync::Arc;
 
 use shush_rs::{SecretBox, SecretString};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::sync::Mutex;
 
 use crate::crypto::fs_api::fs::File;
 use crate::crypto::fs_api::fs::{
@@ -415,6 +417,55 @@ async fn test_async_file_remove_dir_all() {
     )
     .await;
 }
+
+// #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// #[allow(clippy::too_many_lines)]
+// async fn test_async_file_concurency() {
+//     run_test(
+//         TestSetup {
+//             key: "test_async_file_concurency",
+//             read_only: false,
+//         },
+//         async {
+//             let fs = get_fs().await;
+//             OpenOptions::set_scope(fs.clone()).await;
+//             // Concurency test
+//             let path = Path::new("concurrent_dir");
+//             create_dir(path).await.unwrap();
+//             let dir_lock = Arc::new(Mutex::new(())); 
+//             let handles = vec![
+//                 tokio::spawn({
+//                     let dir_lock = dir_lock.clone();
+//                     async move {
+//                         let _lock = dir_lock.lock().await;
+//                         // Not initialized
+//                         remove_dir_all("concurrent_dir").await.unwrap();
+//                     }
+//                 }),
+//                 tokio::spawn({
+//                     let dir_lock = dir_lock.clone();
+//                     async move {
+//                         let _lock = dir_lock.lock().await;
+//                         // Not initialized
+//                         remove_dir_all("concurrent_dir").await.unwrap();
+//                     }
+//                 }),
+//             ];
+//             assert!(path.try_exists().unwrap());
+
+//             for handle in handles {
+//                 let _ = handle.await.unwrap();
+//             }
+//             // Does not delete file
+//             // assert!(!path.try_exists().unwrap());
+
+//             remove_dir_all("concurrent_dir").await.unwrap();
+//             assert!(!Path::new("concurrent_dir").try_exists().unwrap());
+
+//         },
+//     )
+//     .await;
+// }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[allow(clippy::too_many_lines)]
