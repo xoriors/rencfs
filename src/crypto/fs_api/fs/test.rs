@@ -6,8 +6,10 @@ use std::str::FromStr;
 use shush_rs::{SecretBox, SecretString};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
+use crate::crypto::fs_api::fs::File;
 use crate::crypto::fs_api::fs::{
-    create_dir, create_dir_all, remove_dir, remove_dir_all, remove_file, OpenOptions,
+    create_dir, create_dir_all, read, read_to_string, remove_dir, remove_dir_all, remove_file,
+    rename, write, OpenOptions,
 };
 use crate::crypto::fs_api::path::Path;
 use crate::encryptedfs::{CreateFileAttr, FileType, PasswordProvider};
@@ -181,6 +183,115 @@ async fn test_async_file_funcs() {
                 .unwrap();
             let result = remove_dir(path).await;
             assert!(result.is_err());
+
+            // Test the `write` function
+            let contents = format!("Hello world!");
+            let path = Path::new("file.txt");
+            write(path, contents).await.unwrap();
+            assert!(path.try_exists().unwrap());
+
+            let mut file = File::open(path).await.unwrap();
+            let mut buf = vec![0u8; 2];
+            let bytes_read = file.read(&mut buf).await.unwrap();
+            let read_content = std::str::from_utf8(&buf[..bytes_read]).unwrap();
+            assert_eq!(read_content, "He");
+
+            // Test the `read` function
+            let vec = read(path).await.unwrap();
+            let read_content = std::str::from_utf8(&vec).unwrap();
+            assert_eq!(read_content, "Hello world!");
+
+            let contents = "";
+            let path = crate::crypto::fs_api::path::Path::new("empty_file.txt");
+            write(path, contents).await.unwrap();
+            assert!(path.try_exists().unwrap());
+
+            // Test reading an empty file
+            let vec = read(path).await.unwrap();
+            assert!(vec.is_empty());
+
+            // Test overwriting the file with new content
+            let contents = "Initial content";
+            let path = Path::new("overwrite_file.txt");
+            write(path, contents).await.unwrap();
+            assert!(path.try_exists().unwrap());
+
+            // Read the original content
+            let vec = read(path).await.unwrap();
+            let read_content = std::str::from_utf8(&vec).unwrap();
+            assert_eq!(read_content, "Initial content");
+
+            // Overwrite the file with new content
+            let new_contents = "New content";
+            write(path, new_contents).await.unwrap();
+
+            // Test writing a large string and reading it partially
+            let contents = "This is a larger string that will be written to the file";
+            let path = Path::new("large_file.txt");
+            write(path, contents).await.unwrap();
+            assert!(path.try_exists().unwrap());
+
+            // Read the first 4 bytes
+            let mut file = File::open(path).await.unwrap();
+            let mut buf = vec![0u8; 4];
+            let bytes_read = file.read(&mut buf).await.unwrap();
+            let read_content = std::str::from_utf8(&buf[..bytes_read]).unwrap();
+            assert_eq!(read_content, "This");
+
+            // Read the entire content
+            let vec = read(path).await.unwrap();
+            let read_content = std::str::from_utf8(&vec).unwrap();
+            assert_eq!(read_content, contents);
+
+            // Test attempting to read a non-existent file
+            let path = Path::new("non_existent_file.txt");
+            let result = read(path).await;
+            assert!(result.is_err());
+
+            // Test attempting to open a non-existent file for writing
+            let contents = "Some content";
+            let path = Path::new("non_existent_write.txt");
+            let result = write(path, contents).await;
+
+            // Test checking file existence after writing
+            let contents = "File existence test";
+            let path = Path::new("existence_test.txt");
+            write(path, contents).await.unwrap();
+            assert!(path.try_exists().unwrap());
+
+            // Test checking file existence before writing
+            let path = Path::new("non_existent_check.txt");
+            assert!(!path.try_exists().unwrap());
+
+            // Read the new content
+            let result = read(path).await;
+            assert!(result.is_err());
+
+            // Test the `read_to_string` function
+            let contents = "Some content";
+            let path = Path::new("read_to_string.txt");
+            let result = write(path, contents).await;
+
+            let content = read_to_string(path).await;
+            assert!(content.is_ok());
+            assert_eq!(content.unwrap(), "Some content");
+
+            // Test the `rename` function
+            let path = Path::new("old_file_name");
+            write(path, "I like tacos").await.unwrap();
+            let contents = read_to_string(path).await.unwrap();
+            assert_eq!(contents, "I like tacos");
+            assert!(path.try_exists().unwrap());
+            let new_path = Path::new("new_file_name");
+            let result = rename(path, new_path).await;
+            assert!(result.is_ok());
+            assert!(new_path.try_exists().unwrap());
+            let contents2 = read_to_string(new_path).await.unwrap();
+            assert_eq!(contents2, "I like tacos");
+
+            let path = Path::new("file_does_not_exist");
+            let result = rename(path, new_path).await;
+            assert!(result.is_err());
         },
     )
     .await;
@@ -188,10 +299,10 @@ async fn test_async_file_funcs() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[allow(clippy::too_many_lines)]
-async fn test_async_file_delete_dir_all() {
+async fn test_async_file_remove_dir_all() {
     run_test(
         TestSetup {
-            key: "test_async_file_delete_dir_all",
+            key: "test_async_file_remove_dir_all",
             read_only: false,
         },
         async {

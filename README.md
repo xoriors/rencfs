@@ -104,7 +104,7 @@ For detailed description of the various sequence flows please look into [Flows](
 
 | #  | Read | Write | Append | Truncate | Create | Create New | Error condition                 | Behaviour                                        |
 |----|------|-------|--------|----------|--------|------------|-----------------------|--------------------------------------------------|
-| 1  | _    | FALSE | FALSE  | FALSE    | FALSE  | FALSE      | InvalidInput          | Open existing file only if read is true          |
+| 1  | _    | FALSE | FALSE  | FALSE    | FALSE  | FALSE      | InvalidInput, ReadOnly| Open existing file only if read is true          |
 | 2  | _    | FALSE | FALSE  | FALSE    | TRUE   | FALSE      | ReadOnly | No possible output                              |
 | 3  | _    | FALSE | FALSE  | TRUE     | FALSE  | FALSE      | ReadOnly | No possible output                              |
 | 4  | _    | FALSE | FALSE  | TRUE     | TRUE   | FALSE      | ReadOnly | No possible output                              |

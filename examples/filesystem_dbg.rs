@@ -1,14 +1,17 @@
 #![allow(dead_code)]
+#![allow(unused_imports)]
 
-use rencfs::crypto::fs_api::fs::OpenOptions;
+use rencfs::crypto::fs_api::fs::{self, create_dir_all, remove_dir_all, OpenOptions};
+use rencfs::crypto::fs_api::path::Path;
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{
     CreateFileAttr, EncryptedFs, FileType, FsError, FsResult, PasswordProvider,
 };
-use shush_rs::SecretString;
+use shush_rs::{SecretBox, SecretString};
+use std::future::Future;
 use std::io::SeekFrom;
 use std::str::FromStr;
-use tokio::io::{AsyncBufReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 static ROOT_CIPHER_FS_DATA_DIR: &str = "./tmp/rencfs_data_test";
 static FILENAME: &str = "test1";

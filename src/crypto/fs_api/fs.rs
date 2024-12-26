@@ -15,9 +15,8 @@ use crate::encryptedfs::{
     CreateFileAttr, DirectoryEntryPlus, DirectoryEntryPlusIterator, EncryptedFs, FileAttr,
     FileType, FsError, FsResult, PasswordProvider,
 };
-use anyhow::Result;
 use thread_local::ThreadLocal;
-use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::Mutex;
 
 #[cfg(test)]
@@ -353,10 +352,41 @@ impl File {
         })
     }
 
-    pub async fn metadata(&self) -> Result<Metadata> {
+    pub async fn metadata(&self) -> io::Result<Metadata> {
         let fs = get_fs().await?;
         let attr = fs.get_attr(self.context.ino).await?;
         Ok(Metadata { attr })
+    }
+
+    pub async fn open<P: AsRef<Path>>(path: P) -> io::Result<File> {
+        OpenOptions::new().read(true).open(path).await
+    }
+
+    pub async fn create<P: AsRef<Path>>(path: P) -> io::Result<File> {
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .await
+    }
+
+    pub async fn create_new<P: AsRef<Path>>(path: P) -> io::Result<File> {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .await
+    }
+
+    pub fn options() -> OpenOptions {
+        OpenOptions::new()
+    }
+
+    pub async fn set_len(&self, size: u64) -> std::io::Result<()> {
+        self.fs.set_len(self.context.ino, size).await?;
+        Ok(())
     }
 }
 
@@ -410,7 +440,7 @@ pub async fn canonicalize<P: AsRef<Path>>(path: P) -> std::io::Result<PathBuf> {
     Ok(stack.iter().collect::<PathBuf>())
 }
 
-pub async fn create_dir<P: AsRef<Path>>(path: P) -> Result<()> {
+pub async fn create_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let fs = get_fs().await?;
     let (target_name, dir_inode, target_ino) = validate_path_exists(&path).await?;
     if !fs.exists(target_ino) {
@@ -421,7 +451,7 @@ pub async fn create_dir<P: AsRef<Path>>(path: P) -> Result<()> {
     Ok(())
 }
 
-pub async fn create_dir_all<P: AsRef<Path>>(path: P) -> Result<()> {
+pub async fn create_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let path_buf: crate::crypto::fs_api::path::PathBuf = path.as_ref().into();
     let mut search_path = crate::crypto::fs_api::path::PathBuf::from("");
     for el in path_buf.components() {
@@ -438,64 +468,93 @@ pub async fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
     Ok(())
 }
 
-pub async fn remove_dir<P: AsRef<Path>>(path: P) -> Result<()> {
+pub async fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let fs = get_fs().await?;
     let (dir_name, dir_inode, _) = validate_path_exists(path).await?;
     fs.remove_dir(dir_inode, &dir_name).await?;
     Ok(())
 }
 
-pub async fn remove_dir_all<P: AsRef<Path>>(path: P) -> Result<()> {
+pub async fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let (_, _, target_inode) = validate_path_exists(&path).await?;
     remove_dir_recursive(target_inode).await?;
     remove_dir(path).await?;
     Ok(())
 }
 
-async fn remove_dir_recursive(target_inode: u64) -> Result<()> {
-    let fs = get_fs().await?;
-    let mut queue = Vec::new();
+#[allow(clippy::manual_async_fn)]
+fn remove_dir_recursive(target_inode: u64) -> impl Future<Output = io::Result<()>> + Send {
+    async move {
+        let fs = get_fs().await?;
+        let mut queue: Vec<(u64, SecretBox<String>)> = Vec::new();
+        let mut futures: Vec<Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'static>>> =
+            vec![];
 
-    let mut futures: Vec<Pin<Box<dyn Future<Output = Result<()>>>>> = vec![];
-
-    for node in fs.read_dir_plus(target_inode).await? {
-        let node = node?;
-        // TODO: Remove after "." and ".." are removed from read_dir
-        let name = node.name.expose_secret().to_string();
-        if name == "." || name == ".." {
-            continue;
-        }
-        match node.kind {
-            FileType::Directory => match fs.len(node.ino)? {
-                0 => {
-                    // dbg!("Removing dir:", target_inode, &node.name.expose_secret());
-                    fs.remove_dir(target_inode, &node.name).await?;
-                    // dbg!("Dir removed.");
+        for node in fs.read_dir_plus(target_inode).await? {
+            let node = node?;
+            // TODO: Remove after "." and ".." are removed from read_dir
+            let name = node.name.expose_secret().to_string();
+            if name == "." || name == ".." {
+                continue;
+            }
+            match node.kind {
+                FileType::Directory => match fs.len(node.ino)? {
+                    0 => {
+                        fs.remove_dir(target_inode, &node.name).await?;
+                    }
+                    _ => {
+                        queue.push((target_inode, node.name));
+                        futures.push(Box::pin(remove_dir_recursive(node.ino)));
+                    }
+                },
+                FileType::RegularFile => {
+                    fs.remove_file(target_inode, &node.name).await?;
                 }
-                _ => {
-                    // dbg!("starting recursion:", target_inode, &node.name.expose_secret());
-                    queue.push((target_inode, node.name));
-                    futures.push(Box::pin(remove_dir_recursive(node.ino)));
-                    // dbg!("Recursion ended.");
-                }
-            },
-            FileType::RegularFile => {
-                // dbg!("Removing file:", target_inode, &node.name.expose_secret());
-                fs.remove_file(target_inode, &node.name).await?;
-                // dbg!("File removed.");
             }
         }
+
+        try_join_all(futures).await?;
+
+        for node in queue.into_iter().rev() {
+            fs.remove_dir(node.0, &node.1).await?;
+        }
+
+        Ok(())
     }
+}
 
-    // for future in futures {
-    //     future.await?;
-    // }
-    try_join_all(futures).await?;
+pub async fn read<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
+    let mut file = File::open(path).await?;
+    let size = file
+        .metadata()
+        .await
+        .map(|m| m.len() as usize)
+        .ok()
+        .ok_or_else(|| FsError::NotFound("File not found"))?;
+    let mut vec = vec![0; size];
+    let _ = file.read(&mut vec).await?;
+    Ok(vec)
+}
 
-    for node in queue.into_iter().rev() {
-        fs.remove_dir(node.0, &node.1).await?;
-    }
+pub async fn read_to_string<P: AsRef<Path>>(path: P) -> io::Result<String> {
+    let bytes = crate::crypto::fs_api::fs::read(&path).await?;
+    let content = String::from_utf8(bytes).unwrap();
+    Ok(content)
+}
 
+pub async fn rename<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<()> {
+    let fs = get_fs().await?;
+    let (from_name, from_dir_inode, _) = validate_path_exists(from.as_ref()).await?;
+    let (to_name, to_dir_inode, _) = validate_path_exists(to.as_ref()).await?;
+    fs.rename(from_dir_inode, &from_name, to_dir_inode, &to_name)
+        .await?;
+    Ok(())
+}
+
+pub async fn write<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> io::Result<()> {
+    let mut file = File::create(path).await?;
+    let _ = file.write(contents.as_ref()).await?;
+    file.shutdown().await?;
     Ok(())
 }
 
@@ -645,15 +704,15 @@ impl std::fmt::Debug for Metadata {
 }
 
 impl Metadata {
-    pub fn accessed(&self) -> Result<SystemTime> {
+    pub fn accessed(&self) -> io::Result<SystemTime> {
         Ok(self.attr.atime)
     }
 
-    pub fn modified(&self) -> Result<SystemTime> {
+    pub fn modified(&self) -> io::Result<SystemTime> {
         Ok(self.attr.mtime)
     }
 
-    pub fn created(&self) -> Result<SystemTime> {
+    pub fn created(&self) -> io::Result<SystemTime> {
         Ok(self.attr.crtime)
     }
 
