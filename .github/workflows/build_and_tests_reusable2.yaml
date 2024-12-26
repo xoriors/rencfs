@@ -6,99 +6,99 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0 # TODO: remove this when we cache the builds
 
-  jobs:
-    tests:
-      name: build and tests
-      runs-on: ${{ matrix.os }}
-      strategy:
-        matrix:
-          os: [ ubuntu-latest, macos-latest, windows-latest ]
-        fail-fast: true
-      steps:
-        - uses: actions/checkout@v4
+# jobs:
+#   tests:
+#     name: build and tests
+#     runs-on: ${{ matrix.os }}
+#     strategy:
+#       matrix:
+#         os: [ ubuntu-latest, macos-latest, windows-latest ]
+#       fail-fast: true
+#     steps:
+#       - uses: actions/checkout@v4
 
-        - name: setup Rust
-          uses: actions-rs/toolchain@v1
-          with:
-            toolchain: nightly
-            components: rustfmt, clippy
-            profile: minimal
+#       - name: setup Rust
+#         uses: actions-rs/toolchain@v1
+#         with:
+#           toolchain: nightly
+#           components: rustfmt, clippy
+#           profile: minimal
 
-        - name: setup Rust
-          run: |
-            cargo install cargo-aur
-            cargo install cargo-generate-rpm          
+#       - name: setup Rust
+#         run: |
+#           cargo install cargo-aur
+#           cargo install cargo-generate-rpm
 
-        - name: build
-          run: |
-            cargo build --all-targets --all-features
-            cargo build --release --all-targets --all-features
+#       - name: build
+#         run: |
+#           cargo build --all-targets --all-features
+#           cargo build --release --all-targets --all-features
 
-        - name: fmt check
-          run: cargo fmt --all -- --check
+#       - name: fmt check
+#         run: cargo fmt --all -- --check
 
-        - name: check
-          run: cargo check --all
+#       - name: check
+#         run: cargo check --all
 
-        - name: clippy
-          run: |
-            cargo clippy --all-targets --release -- \
-              -A clippy::similar_names \
-              -A clippy::too_many_arguments \
-              -A clippy::significant_drop_tightening \
-              -A clippy::redundant_closure \
-              -A clippy::missing_errors_doc \
-              -A clippy::type_complexity
-          shell: bash
+#       - name: clippy
+#         run: |
+#           cargo clippy --all-targets --release -- \
+#             -A clippy::similar_names \
+#             -A clippy::too_many_arguments \
+#             -A clippy::significant_drop_tightening \
+#             -A clippy::redundant_closure \
+#             -A clippy::missing_errors_doc \
+#             -A clippy::type_complexity
+#         shell: bash
 
-        - name: tests
-          if: matrix.os != 'windows-latest'
-          run: cargo test --release --all --all-features -- --skip keyring
+#       - name: tests
+#         if: matrix.os != 'windows-latest'
+#         run: cargo test --release --all --all-features -- --skip keyring
 
-        - name: doc
-          run: cargo doc --workspace --all-features --no-deps
+#       - name: doc
+#         run: cargo doc --workspace --all-features --no-deps
 
-        - name: test package
-          if: matrix.os == 'ubuntu-latest'
-          run: |
-            cargo aur
-            cargo generate-rpm
+#       - name: test package
+#         if: matrix.os == 'ubuntu-latest'
+#         run: |
+#           cargo aur
+#           cargo generate-rpm
 
-        - name: java-bridge build
-          run: |
-            cd java-bridge
-            cargo build --all-targets --all-features
-            cargo build --release --all-targets --all-features
+#       - name: java-bridge build
+#         run: |
+#           cd java-bridge
+#           cargo build --all-targets --all-features
+#           cargo build --release --all-targets --all-features
 
-        - name: java-bridge fmt check
-          run: |
-            cd java-bridge
-            cargo fmt --all -- --check
+#       - name: java-bridge fmt check
+#         run: |
+#           cd java-bridge
+#           cargo fmt --all -- --check
 
-        - name: java-bridge check
-          run: |
-            cd java-bridge
-            cargo check --all
+#       - name: java-bridge check
+#         run: |
+#           cd java-bridge
+#           cargo check --all
 
-        - name: java-bridge clippy
-          run: |
-            cd java-bridge
-            cargo clippy --all-targets --release -- \
-              -A clippy::similar_names \
-              -A clippy::too_many_arguments \
-              -A clippy::significant_drop_tightening \
-              -A clippy::redundant_closure \
-              -A clippy::missing_errors_doc \
-              -A clippy::type_complexity
-          shell: bash
+#       - name: java-bridge clippy
+#         run: |
+#           cd java-bridge
+#           cargo clippy --all-targets --release -- \
+#             -A clippy::similar_names \
+#             -A clippy::too_many_arguments \
+#             -A clippy::significant_drop_tightening \
+#             -A clippy::redundant_closure \
+#             -A clippy::missing_errors_doc \
+#             -A clippy::type_complexity
+#         shell: bash
 
-        - name: java-bridge tests
-          if: matrix.os != 'windows-latest'
-          run: |
-            cd java-bridge
-            cargo test --release --all --all-features
+#       - name: java-bridge tests
+#         if: matrix.os != 'windows-latest'
+#         run: |
+#           cd java-bridge
+#           cargo test --release --all --all-features
 
-        - name: java-bridge doc
-          run: |
-            cd java-bridge
-            cargo doc --workspace --all-features --no-deps
+#       - name: java-bridge doc
+#         run: |
+#           cd java-bridge
+#           cargo doc --workspace --all-features --no-deps
