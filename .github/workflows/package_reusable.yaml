@@ -1,4 +1,4 @@
-name: '_package'
+name: _package
 on:
   workflow_call:
     inputs:
