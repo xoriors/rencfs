@@ -15,7 +15,7 @@ env:
 
 jobs:
   version:
-    uses: xoriors/rencfs/.github/workflows/version_reusable.yaml@main
+    uses: xoriors/rencfs/.github/workflows/version_reusable2.yaml@main
 
   build_and_test:
     name: build and test
