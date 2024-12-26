@@ -13,7 +13,7 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
 
 ### First setup
 
-1. Open the [repo](https://github.com/radumarias/rencfs)
+1. Open the [repo](https://github.com/xoriors/rencfs)
 2. Press `Code` button  
   ![image](https://github.com/user-attachments/assets/7c0e8872-fe1f-44b9-a833-2586ade4f618)
 3. Create codespace on main  
@@ -42,7 +42,7 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
   
 ### Each resume and after the first setup
 
-1. Open the [repo](https://github.com/radumarias/rencfs)
+1. Open the [repo](https://github.com/xorio/rencfs)
 2. Press `Code` button  
   ![image](https://github.com/user-attachments/assets/7c0e8872-fe1f-44b9-a833-2586ade4f618)
 3. Press ```...``` right to the instance in the list  
@@ -84,7 +84,7 @@ Repeat steps 7-9 in various ways.
 
 #### Test specific issues
 
-Test specific issues from the [project](https://github.com/users/radumarias/projects/1). You can take the ones from `Ready for QA` column:
+Test specific issues from the [project](https://github.com/users/xoriors/projects/1). You can take the ones from `Ready for QA` column:
 1. Assign the issue to you and move it to `In QA`
 2. Test it
 3. When you finished, move it to `Tested`
@@ -103,7 +103,7 @@ I created some [files](https://drive.google.com/drive/folders/1N-2KhGNo7f23tQ9Si
 
 ## Open a bug
 
-Please use [this](https://github.com/radumarias/rencfs/issues/new?assignees=&labels=&projects=&template=bug_report.md&title=) and follow the steps in there.
+Please use [this](https://github.com/xoriors/rencfs/issues/new?assignees=&labels=&projects=&template=bug_report.md&title=) and follow the steps in there.
 
 ## Creating a test case
 
