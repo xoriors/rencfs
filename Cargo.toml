@@ -243,7 +243,6 @@ files = [
         "LICENSE-MIT",
         "/usr/share/licenses/$pkgname/LICENSE-MIT",
     ],
-    #    ["LICENSE-BSD-3-Clause", "/usr/share/licenses/$pkgname/LICENSE-BSD-3-Clause"]
 ]
 
 [package.metadata.generate-rpm]
