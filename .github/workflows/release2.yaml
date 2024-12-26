@@ -1,4 +1,4 @@
-name: release
+name: release2
 on:
   workflow_dispatch:
 concurrency:
@@ -20,7 +20,7 @@ jobs:
 
   package:
     needs: [ version, build_and_test ]
-    uses: radumarias/rencfs/.github/workflows/package_reusable.yaml@main
+    uses: radumarias/rencfs/.github/workflows/package_reusable2.yaml@main
     with:
       upload_artifacts: true
       version: ${{ needs.version.outputs.version }}
