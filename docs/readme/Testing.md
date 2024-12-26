@@ -60,7 +60,7 @@ Make sure you have VSCode installed locally, based on your OS.
 
 #### Continue
 
-Do step 11 from above.
+Do step 6 from above.
 
 5. Type this in the VSCode terminal, which will fetch the changes from the repo (if there are conflicts, accept Theirs):
   ```bash
