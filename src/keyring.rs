@@ -31,7 +31,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore]
     fn test_save() {
         let password = SecretString::from_str("password").unwrap();
         assert!(save(&password, "test1").is_ok());
@@ -39,7 +38,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_get() {
         let password = SecretString::from_str("password").unwrap();
         save(&password, "test2").unwrap();
@@ -51,7 +49,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_remove() {
         let password = SecretString::from_str("password").unwrap();
         save(&password, "test3").unwrap();
