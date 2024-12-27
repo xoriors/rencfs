@@ -1,4 +1,4 @@
-name: release2 # the name and filename have 2 as suffix because of some caching issues with GitHub actions
+name: release
 on:
   workflow_dispatch:
 concurrency:
