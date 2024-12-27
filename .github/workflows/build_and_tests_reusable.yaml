@@ -1,4 +1,4 @@
-name: '_build-and-tests2' # the name and filename have 2 as suffix because of some caching issues with GitHub actions
+name: '_build-and-tests'
 on:
   workflow_call:
 
