@@ -3,8 +3,8 @@
 [![rencfs-bin](https://img.shields.io/aur/version/rencfs-bin?color=1793d1&label=rencfs-bin&logo=arch-linux)](https://aur.archlinux.org/packages/rencfs-bin/)
 [![crates.io](https://img.shields.io/crates/v/rencfs.svg)](https://crates.io/crates/rencfs)
 [![docs.rs](https://img.shields.io/docsrs/rencfs?label=docs.rs)](https://docs.rs/rencfs/)
-[![build-and-tests](https://github.com/xoriors/rencfs/actions/workflows/build_and_tests.yaml/badge.svg)](https://github.com/xoriors/rencfs/actions/workflows/build_and_tests.yaml)
-[![release](https://github.com/xoriors/rencfs/actions/workflows/release.yaml/badge.svg)](https://github.com/xoriors/rencfs/actions/workflows/release.yaml)
+[![build-and-tests](https://github.com/xoriors/rencfs/actions/workflows/build_and_tests2.yaml/badge.svg)](https://github.com/xoriors/rencfs/actions/workflows/build_and_tests2.yaml)
+[![release](https://github.com/xoriors/rencfs/actions/workflows/release.yaml/badge2.svg)](https://github.com/xoriors/rencfs/actions/workflows/release2.yaml)
 [![codecov](https://codecov.io/gh/xoriors/rencfs/graph/badge.svg?token=NUQI6XGF2Y)](https://codecov.io/gh/xoriors/rencfs)
 <a href="https://bit.ly/3UU1oXi"><img src="website/resources/slack.png" style = "width: 20px; height: 20px;"/></a>
 [![Open Source Helpers](https://www.codetriage.com/xoriors/rencfs/badges/users.svg?count=20)](https://www.codetriage.com/xoriors/rencfs)
