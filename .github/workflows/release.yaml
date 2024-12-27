@@ -15,12 +15,12 @@ jobs:
   
   build_and_test:
     name: build and test
-    uses: xoriors/rencfs/.github/workflows/build_and_tests_reusable2.yaml@main
+    uses: xoriors/rencfs/.github/workflows/build_and_tests_reusable.yaml@main
     secrets: inherit
 
   package:
     needs: [ version, build_and_test ]
-    uses: xoriors/rencfs/.github/workflows/package_reusable2.yaml@main
+    uses: xoriors/rencfs/.github/workflows/package_reusable.yaml@main
     with:
       upload_artifacts: true
       version: ${{ needs.version.outputs.version }}

@@ -1,4 +1,4 @@
-name: '_package2' # the name and filename have 2 as suffix because of some caching issues with GitHub actions
+name: '_package'
 on:
   workflow_call:
     inputs:

@@ -1,4 +1,4 @@
-name: build-and-tests2 # the name and filename have 2 as suffix because of some caching issues with GitHub actions
+name: build-and-tests
 on:
   push:
     branches: [ main, release ]
@@ -19,12 +19,12 @@ jobs:
 
   build_and_test:
     name: build and test
-    uses: xoriors/rencfs/.github/workflows/build_and_tests_reusable2.yaml@main
+    uses: xoriors/rencfs/.github/workflows/build_and_tests_reusable.yaml@main
     secrets: inherit
 
   package:
     needs: [ version, build_and_test ]
-    uses: xoriors/rencfs/.github/workflows/package_reusable2.yaml@main
+    uses: xoriors/rencfs/.github/workflows/package_reusable.yaml@main
     with:
       upload_artifacts: false
       version: ${{ needs.version.outputs.version }}
