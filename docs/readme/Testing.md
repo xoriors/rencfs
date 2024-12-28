@@ -75,6 +75,8 @@ You can now perform two types of tests; see below. In both cases, follow these s
 8. Copy files and folders from `tmp_upload` to `final` and then do other operations on the data in there
 9. Make sure files were copied successfully by copying them from `final` to `tmp_download`, right-clicking a file, and then `Download...`, saving it to the local machine, and making sure it opens correctly. We first copy to `tmp_download` to eliminate network issues during copying. For example, if we copy directly from `final` to loca, we have an error during copying if there is a network failure. The problem, in this case, is not in our app, and it would create a false positive as we don't know the problem is from the network.
 
+**When testing, remember that the `final` folder should behave exactly like a regular local folder on your system. That's the main idea of how you should test. If something behaves differently than a regular folder then please report it as a Bug, see below.**
+
 #### Exploratory testing
 
 That is, testing anything that comes to mind.
