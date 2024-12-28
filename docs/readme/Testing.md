@@ -37,7 +37,7 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
   ```
 8. Create needed folders and a `tmp` folder, which we will use to copy files from our machine, by pasting this in the terminal:
   ```bash
-  mkdir tmp && mkdir final && mkdir data
+  mkdir tmp_upload && mkdir tmp_download && mkdir final && mkdir data
   ```
   
 ### Each resume and after the first setup
@@ -71,9 +71,9 @@ Do step 6 from above.
 
 You can now perform two types of tests; see below. In both cases, follow these steps.
 
-7. Copy files and folders from your local machine to `tmp` folder in VSCode
-8. Copy files and folders from `tmp` to `final` and then do your operations the data in `nnt` folder
-9. Make sure files were copied successfully by right-clicking a file and then `Download...` and save it to local machine and making sure it opens correctly
+7. Copy files and folders from your local machine to the `tmp_upload` folder in VSCode. This is to eliminate network issues during copying. For example, if we copy from local directly to `final,` if there is a network failure, we have an error during copying. The problem, in this case, is not in our app, and it would create a false positive as we don't know the problem is from the network.
+8. Copy files and folders from `tmp_upload` to `final` and then do other operations on the data in there
+9. Make sure files were copied successfully by copying them from `final` to `tmp_download`, right-clicking a file, and then `Download...`, saving it to the local machine, and making sure it opens correctly. We first copy to `tmp_download` to eliminate network issues during copying. For example, if we copy directly from `final` to loca, we have an error during copying if there is a network failure. The problem, in this case, is not in our app, and it would create a false positive as we don't know the problem is from the network.
 
 #### Exploratory testing
 
