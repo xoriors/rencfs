@@ -64,9 +64,8 @@ Do step 6 from above.
 
 5. Type this in the VSCode terminal, which will fetch the changes from the repo (if there are conflicts, accept Theirs):
   ```bash
+  git reset --hard
   git pull
-  git checkout --theirs .
-  rm -rf final; cargo run --release -- mount -m final -d data
   ```
 6. Input a password and confirm it the first time
 
