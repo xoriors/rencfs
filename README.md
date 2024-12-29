@@ -28,9 +28,10 @@ data.
 
 # Introduction
 
+- It all started as a learning project for Rust and then evolved into something more.
 - Motivation
-  Create a `simple,` `performant,` `modular` and `ergonomic` yet `very secure` `encrypted filesystem` to protect
-  your `privacy`, which is also `open source` and is correctly and safely using `well-known audited` crates
+  Create a `simple,` `performant,` `modular` and `ergonomic` yet `very secure` `encrypted filesystem` focused
+  on `privacy`, also `open source`, which correctly and safely uses `well-known and audited` crates
   as `cryptographic primitives`.
 - Read an article [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://medium.com/system-weakness/hitchhikers-guide-to-building-a-distributed-filesystem-in-rust-the-very-beginning-2c02eb7313e7).
 - A one-pager [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](docs/The_Hitchhiker_s_Guide_to_Building_an_Encrypted_Filesystem_in_Rust.pdf).
