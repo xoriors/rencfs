@@ -46,6 +46,6 @@ defined in the Apache License shall be dual-licensed as above, without any addit
 21. **DON'T MERGE THE PR YOURSELF. LEAVE THAT TO REPOSITORY OWNERS**
 22. In the end, ideally, it will be merged into `main`
 
-# QA manual
+# Testing
 
 Please follow these [steps](../docs/readme/Testing.md).
