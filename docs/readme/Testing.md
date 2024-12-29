@@ -66,6 +66,8 @@ Do step 6 from above.
   ```bash
   git reset --hard
   git pull
+  rm -rf final
+  cargo run --release -- mount -m final -d data
   ```
 6. Input a password and confirm it the first time
 
