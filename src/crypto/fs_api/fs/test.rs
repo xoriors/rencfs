@@ -187,7 +187,7 @@ async fn test_async_file_funcs() {
             assert!(result.is_err());
 
             // Test the `write` function
-            let contents = format!("Hello world!");
+            let contents = "Hello world!";
             let path = Path::new("file.txt");
             write(path, contents).await.unwrap();
             assert!(path.try_exists().unwrap());
