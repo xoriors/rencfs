@@ -1,3 +1,72 @@
+//! Similar to [`std::fs::OpenOptions`] to allow use on EncryptedFs.
+//!
+//! An EncryptedFs filesystem instance must be initialized.
+//!
+//! ```no_run
+//! use rencfs::crypto::fs_api::{path::Path, fs::{OpenOptions, {write, read_to_string}}};
+//! use rencfs::{crypto::Cipher, encryptedfs::{PasswordProvider, FsError}};
+//! use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+//! use shush_rs::SecretString;
+//! use std::str::FromStr;
+//! use std::io::SeekFrom;
+//!
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!
+//!     // Initialize the filesystem
+//!     init_fs().await?;
+//!
+//!     // Get an instance of the filesystem (optional)
+//!     let fs = OpenOptions::from_scope().await
+//!         .ok_or(FsError::Other("not initialized"));
+//!
+//!     // The top level imports for fs and path modiles are interchangeable with std lib.
+//!     let mut file = OpenOptions::new()
+//!         .create(true)
+//!         .read(true)
+//!         .write(true)
+//!         .open("test1")
+//!         .await
+//!         .unwrap();
+//!     file.write_all(b"test42").await.unwrap();
+//!     file.shutdown().await.unwrap();
+//!     file.seek(SeekFrom::End(0)).await.unwrap();
+//!     eprintln!("size {}", file.stream_position().await.unwrap());
+//!
+//!     let path = Path::new("new_file");
+//!     write(path, "Hello world!").await?;
+//!     let content = read_to_string(path).await?;
+//!     assert_eq!(content, "Hello world!");
+//!     Ok(())
+//! }
+//!
+//! async fn init_fs() -> anyhow::Result<()> {
+//!     OpenOptions::init_scope(
+//!         // Define the mountpoint
+//!         std::path::Path::new("./tmp/dir/").to_path_buf(),
+//!         // Password. See keyring crate for a more secure way
+//!         Box::new(PasswordProviderImpl {}),
+//!         // Cipher type (ChaCha20Poly1305 or Aes256Gcm)
+//!         Cipher::ChaCha20Poly1305,
+//!         // true = read-only mode
+//!         false)
+//!     .await?;
+//!
+//!     // Remove the fs instance
+//!     OpenOptions::clear_scope().await;
+//!         Ok(())
+//! }
+//!
+//! struct PasswordProviderImpl {}
+//!
+//! impl PasswordProvider for PasswordProviderImpl {
+//!     fn get_password(&self) -> Option<SecretString> {
+//! // Dummy password, use a secure method to get the password, for example the keyring crate.
+//!         Some(SecretString::from_str("pass42").unwrap())
+//!      }
+//! }
+//!
+//!
 use futures_util::future::try_join_all;
 use shush_rs::{ExposeSecret, SecretBox, SecretString};
 use std::future::Future;
@@ -26,75 +95,7 @@ const ROOT_INODE: u64 = 1;
 
 pub static SCOPE: ThreadLocal<Mutex<Option<Arc<EncryptedFs>>>> = ThreadLocal::new();
 
-/// Similar to [`std::fs::OpenOptions`] to allow use on EncryptedFs.
-///
-/// An EncryptedFs filesystem instance must be initialized.
-///
-/// ```no_run
-/// use rencfs::crypto::fs_api::{path::Path, fs::{OpenOptions, {write, read_to_string}}};
-/// use rencfs::{crypto::Cipher, encryptedfs::{PasswordProvider, FsError}};
-/// use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-/// use shush_rs::SecretString;
-/// use std::str::FromStr;
-/// use std::io::SeekFrom;
-///
-/// #[tokio::main]
-/// async fn main() -> anyhow::Result<()> {
-///
-///     // Initialize the filesystem
-///     init_fs().await?;
-///
-///     // Get an instance of the filesystem (optional)
-///     let fs = OpenOptions::from_scope().await
-///         .ok_or(FsError::Other("not initialized"));
-///
-///     // The top level imports for fs and path modiles are interchangeable with std lib.
-///     let mut file = OpenOptions::new()
-///         .create(true)
-///         .read(true)
-///         .write(true)
-///         .open("test1")
-///         .await
-///         .unwrap();
-///     file.write_all(b"test42").await.unwrap();
-///     file.shutdown().await.unwrap();
-///     file.seek(SeekFrom::End(0)).await.unwrap();
-///     eprintln!("size {}", file.stream_position().await.unwrap());
-///
-///     let path = Path::new("new_file");
-///     write(path, "Hello world!").await?;
-///     let content = read_to_string(path).await?;
-///     assert_eq!(content, "Hello world!");
-///     Ok(())
-/// }
-///
-/// async fn init_fs() -> anyhow::Result<()> {
-///     OpenOptions::init_scope(
-///         // Define the mountpoint
-///         std::path::Path::new("./tmp/dir/").to_path_buf(),
-///         // Password. See keyring crate for a more secure way
-///         Box::new(PasswordProviderImpl {}),
-///         // Cipher type (ChaCha20Poly1305 or Aes256Gcm)
-///         Cipher::ChaCha20Poly1305,
-///         // true = read-only mode
-///         false)
-///     .await?;
-/// 
-///     // Remove the fs instance
-///     OpenOptions::clear_scope().await;
-///         Ok(())
-/// }
-///
-/// struct PasswordProviderImpl {}
-///
-/// impl PasswordProvider for PasswordProviderImpl {
-///     fn get_password(&self) -> Option<SecretString> {
-/// // Dummy password, use a secure method to get the password, for example the keyring crate.
-///         Some(SecretString::from_str("pass42").unwrap())
-///      }
-/// }
-///
-///
+
 #[allow(clippy::new_without_default)]
 pub struct OpenOptions {
     read: bool,
