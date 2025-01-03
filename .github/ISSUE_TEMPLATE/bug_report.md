@@ -20,6 +20,9 @@ Steps to reproduce the behavior:
 **Actual behavior**
 A clear and concise description of what your experience is happening.
 
+**Reproduction rate**
+How often does it reproduce? For example, [always (5 times out of 5), often (3-5/5), sometimes (1-2/5)].
+
 **Expected behavior**
 A clear and concise description of what you expected to happen.
 
