@@ -19,7 +19,8 @@ use crate::keyring;
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
-use rencfs::{log, mount};
+use rencfs::{crypto, log, mount};
+use rencfs::crypto::bip39::Language;
 
 static mut PASS: Option<SecretString> = None;
 
@@ -189,6 +190,14 @@ fn get_cli_args() -> ArgMatches {
                     .required(true)
                     .value_name("DATA_DIR")
                     .help("Where to store the encrypted data"),
+            ).arg(
+                Arg::new("recovery-phrase")
+                    .long("recovery-phrase")
+                    .short('r')
+                    .required(false)
+                    .value_name("recovery_phrase")
+                    .requires("data-dir")
+                    .help("Recovery string to restore and change password"),
             )
     )
         .get_matches()
@@ -223,11 +232,19 @@ async fn async_main() -> Result<()> {
 
 async fn run_change_password(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
+    let recovery_phrase = matches.get_one::<SecretString>("recovery-phrase");
 
-    // read password from stdin
-    print!("Enter old password: ");
-    io::stdout().flush().unwrap();
-    let password = SecretString::from_str(&read_password().unwrap()).unwrap();
+    let password = match recovery_phrase {
+        Some(phrase) => {
+            crypto::bip39::mnemonic_to_password(&phrase)?
+        },
+        None => {
+            print!("Enter old password: ");
+            io::stdout().flush().unwrap();
+            SecretString::from_str(&read_password().unwrap()).unwrap()
+        }
+    };
+
     print!("Enter new password: ");
     io::stdout().flush().unwrap();
     let new_password = SecretString::from_str(&read_password().unwrap()).unwrap();
@@ -239,6 +256,7 @@ async fn run_change_password(cipher: Cipher, matches: &ArgMatches) -> Result<()>
         return Err(ExitStatusError::Failure(1).into());
     }
     println!("Changing password...");
+
     EncryptedFs::passwd(Path::new(&data_dir), password, new_password, cipher)
         .await
         .map_err(|err| {
@@ -255,6 +273,7 @@ async fn run_change_password(cipher: Cipher, matches: &ArgMatches) -> Result<()>
             }
             ExitStatusError::Failure(1)
         })?;
+
     println!("Password changed successfully");
 
     Ok(())
@@ -299,6 +318,9 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
                 error!("Passwords do not match");
                 return Err(ExitStatusError::Failure(1).into());
             }
+
+            let recovery_phrase = crypto::bip39::generate_recovery_phrase(Language::default(), &confirm_password)?;
+            info!("Recovery Phrase: {}", recovery_phrase);
         }
     }
     // save password in keyring

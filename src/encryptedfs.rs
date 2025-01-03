@@ -275,6 +275,8 @@ pub enum FsError {
     Other(&'static str),
     #[error("invalid password")]
     InvalidPassword,
+    #[error("invalid recovery key")]
+    InvalidRecoveryPhrase,
     #[error("invalid structure of data directory")]
     InvalidDataDirStructure,
     #[error("crypto error: {source}")]
@@ -2129,7 +2131,6 @@ impl EncryptedFs {
         ))
     }
 
-    /// Change the password of the filesystem used to access the encryption key.
     pub async fn passwd(
         data_dir: &Path,
         old_password: SecretString,
