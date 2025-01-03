@@ -42,7 +42,7 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
   
 ### Each resume and after the first setup
 
-1. Open the [repo](https://github.com/xorio/rencfs)
+1. Open the [repo](https://github.com/xoriors/rencfs)
 2. Press `Code` button  
   ![image](https://github.com/user-attachments/assets/7c0e8872-fe1f-44b9-a833-2586ade4f618)
 3. Press ```...``` right to the instance in the list  
