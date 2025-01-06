@@ -41,7 +41,7 @@ For all the command line snippets below that are to be executed in Terminal, the
 
 8. After installing Rust, create needed folders and a `tmp` folder, which we will use to copy files from our machine, by pasting this in the terminal:
   ```bash
-  mkdir tmp_upload && mkdir tmp_download && mkdir final && mkdir data
+  mkdir tmp_upload; mkdir tmp_download; mkdir final; mkdir data
   ```
   
 ### Each time you resume (also after the first setup)
