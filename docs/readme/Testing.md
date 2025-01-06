@@ -11,6 +11,8 @@ You'll need a GitHub account for this.
 This will create a Codespace instance on GitHub, a Linux container, so we can test it.  
 The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month free for Codespace, which means 60 hours for that instance. We will connect to it from the browser and the local VSCode.
 
+For all the command line snippets below that are to be executed in Terminal, there is a Copy icon at the right of the text area. You can use that to copy the whole content. **PRESS ENTER AFTER YOU PASTE IT IN TERMINAL**. The first lines are auto-executed, but the last line is not: **YOU NEED TO PRESS ENTER**.
+
 ### First setup
 
 1. Open the [repo](https://github.com/xoriors/rencfs)
@@ -26,7 +28,6 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
   ```bash
   apt-get update && apt-get install fuse3
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
   ```
   Press 1 and Enter on Rust installation, accepting all defaults.
 
@@ -35,25 +36,23 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
     apt update
     apt install rustc
     rustc
-
   ```
 8. Create needed folders and a `tmp` folder, which we will use to copy files from our machine, by pasting this in the terminal:
   ```bash
   mkdir tmp_upload && mkdir tmp_download && mkdir final && mkdir data
-
   ```
   
-### Each resume and after the first setup
+### Each time you resume (also after the first setup)
 
 1. Open the [repo](https://github.com/xoriors/rencfs)
 2. Press `Code` button  
   ![image](https://github.com/user-attachments/assets/7c0e8872-fe1f-44b9-a833-2586ade4f618)
-3. Press ```...``` right to the instance in the list  
+3. Press ```...``` at the right of the instance name. In the image below, the instance name is `jubblant couscous`  
   ![image](https://github.com/user-attachments/assets/c621c258-009d-46bf-adb7-f81a3d7131f6)
 
 #### VSCode in Browser
 
-4. Press `Open in Browser`, or directly click on the container name
+4. Press `Open in Browser`. Alternatively to steps 3 & 4, you can directly press the instance name
 
 #### In local VSCode
 
@@ -63,7 +62,7 @@ Make sure you have VSCode installed locally, based on your OS.
 
 #### Continue
 
-Do step 6 from above.
+If the terminal panel is not at the bottom, do step 6 from above from `First setup`.
 
 5. Type this in the VSCode terminal, which will fetch the changes from the repo (if there are conflicts, accept Theirs):
   ```bash
@@ -71,7 +70,9 @@ Do step 6 from above.
   git pull
   rm -rf final && cargo run --release -- mount -m final -d data
   ```
-6. Input a password and confirm it the first time
+6. Input a password and confirm it the first time. This will expose the decrypted view in `final` folder.  
+   The terminal will no longer accept inputs and will show the app logs. Green and orange/yellow are good, and red is bad. If you notice red in the logs please report a bug, see below.
+   In case you want to stop
 
 You can now perform two types of tests; see below. In both cases, follow these steps.
 
@@ -113,3 +114,9 @@ Please use [this](https://github.com/xoriors/rencfs/issues/new?assignees=&labels
 ## Creating a test case
 
 Please add a new row in the `test cases` file and follow the template of the first row, for example. The same applies to smoke tests and acceptance tests.
+
+## Troubleshooting
+
+### Forgot password
+
+If you forgot the password, delete the `data` folder at the project's root and start the app again. **You will lose your previous encrypted data. There is no way to recover your data, which is good because an attacker cannot access it either**.
