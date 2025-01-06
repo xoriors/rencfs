@@ -31,13 +31,15 @@ For all the command line snippets below that are to be executed in Terminal, the
   ```
   Press 1 and Enter on Rust installation, accepting all defaults.
 
-  If installation aborts, then run these
-  ```bash
-    apt update
-    apt install rustc
-    rustc
-  ```
-8. Create needed folders and a `tmp` folder, which we will use to copy files from our machine, by pasting this in the terminal:
+  > [!WARNING]  
+  > If installation aborts, then run these:
+  > ```bash
+  >  apt update
+  >  apt install rustc
+  >  rustc
+  > ```
+
+8. After installing Rust, create needed folders and a `tmp` folder, which we will use to copy files from our machine, by pasting this in the terminal:
   ```bash
   mkdir tmp_upload && mkdir tmp_download && mkdir final && mkdir data
   ```
