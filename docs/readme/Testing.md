@@ -40,6 +40,7 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
 8. Create needed folders and a `tmp` folder, which we will use to copy files from our machine, by pasting this in the terminal:
   ```bash
   mkdir tmp_upload && mkdir tmp_download && mkdir final && mkdir data
+
   ```
   
 ### Each resume and after the first setup
