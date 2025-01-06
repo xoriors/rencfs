@@ -20,12 +20,13 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
   ![image](https://github.com/user-attachments/assets/5fee55f6-ef54-427c-b790-c135312d3355)
 4. This will create the container on GitHub. If it asks you to setup config, select the minimum possible CPU and RAM
 5. Start it and leave it to finish. This could take a bit longer. This will open a VSCode in the browser
-6. Goto terminal in the browser version of the VSCode editor you're presented with. It should be at the bottom. If not, open it from the `Terminal -> New Terminal` menu. You can find the menu in the top left, with 3 lines icon  
+6. If the terminal panel is not at the bottom, go to the terminal in the browser version of the VSCode editor you're presented with. It should be at the bottom. If not, open it from the `Terminal -> New Terminal` menu. You can find the menu in the top left, with 3 lines icon  
   ![image](https://github.com/user-attachments/assets/48681023-e450-49b3-8526-ec0323be0d40)
 7. Install Rust by pasting these in the terminal:
   ```bash
   apt-get update && apt-get install fuse3
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
   ```
   Press 1 and Enter on Rust installation, accepting all defaults.
 
@@ -34,6 +35,7 @@ The instance config is 2 CPUs and 4 GB RAM. You have 120 CPU hours per month fre
     apt update
     apt install rustc
     rustc
+
   ```
 8. Create needed folders and a `tmp` folder, which we will use to copy files from our machine, by pasting this in the terminal:
   ```bash
