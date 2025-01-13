@@ -102,7 +102,7 @@ Please look into [Flows](docs/readme/flows.md) for a detailed sequence flow desc
   hardware acceleration of AES
   on most CPUs via AES-NI. However, where hardware acceleration is unavailable, `ChaCha20Poly1305` is faster.
   Also, `ChaChaPoly1305` is better at `SIMD.`
-- [⚠️ Security ](docs/readme/Security.md)
+- [⚠️Security](docs/readme/Security.md)
 - [Cipher comparison](docs/readme/Cipher_comparison.md)
 - [Others](docs/readme/Considerations.md)
 
