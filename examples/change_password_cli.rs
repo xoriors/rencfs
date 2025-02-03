@@ -21,13 +21,13 @@ async fn main() {
     use rencfs::crypto::Cipher;
     print!("Enter old password: ");
     io::stdout().flush().unwrap();
-    let old_password = SecretString::from_str(&read_password().unwrap()).unwrap();
+    let old_password = SecretString::new(Box::new(read_password().unwrap()));
     print!("Enter new password: ");
     io::stdout().flush().unwrap();
-    let new_password = SecretString::from_str(&read_password().unwrap()).unwrap();
+    let new_password = SecretString::new(Box::new(read_password().unwrap()));
     print!("Confirm new password: ");
     io::stdout().flush().unwrap();
-    let new_password2 = SecretString::from_str(&read_password().unwrap()).unwrap();
+    let new_password2 = SecretString::new(Box::new(read_password().unwrap()));
     if new_password.expose_secret() != new_password2.expose_secret() {
         error!("Passwords do not match");
         return;

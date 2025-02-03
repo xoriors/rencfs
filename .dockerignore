@@ -1,7 +1,9 @@
 target
+java-bridge
 .git
 .github
 .devcontainer
+docker
 .fleet
 .vscode
 .gitignore
