@@ -12,6 +12,8 @@ You can compile, run, and try it quickly in the browser. After you start it from
 ```bash
 apt-get update && apt-get install fuse3
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+git clone git@github.com:xoriors/rencfs.git
+cd rencfs
 mkdir final && mkdir data
 cargo run --release -- mount -m final -d data
 ```
