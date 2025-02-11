@@ -17,7 +17,7 @@ stable release.
 > It's mostly ideal for experimental and learning projects.**
 
 An encrypted file system written in Rust mounted with FUSE on Linux. It can be used to create encrypted
-directories.
+directories. It offers end-to-end encryption at rest.
 
 You can then safely back up the encrypted directory to an untrusted server without worrying about the data being
 exposed.
