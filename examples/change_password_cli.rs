@@ -1,6 +1,6 @@
+use std::env::args;
 use std::io;
 use std::io::Write;
-use std::{env::args};
 
 use rpassword::read_password;
 use shush_rs::{ExposeSecret, SecretString};
