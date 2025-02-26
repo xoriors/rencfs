@@ -285,7 +285,6 @@ impl<W: CryptoInnerWriter + Send + Sync> CryptoWrite<W> for RingCryptoWrite<W> {
             .downcast::<W>()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "downcast failed"))?;
         Ok(*boxed)
-
     }
 }
 
