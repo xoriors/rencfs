@@ -1102,7 +1102,6 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(ls_dir)?;
-        let iter = fs::read_dir(ls_dir)?;
         let iter = iter.filter(|&entry|
             self.is_real_file_name(&entry.unwrap().file_name().into_string()).await
         ).collect();
