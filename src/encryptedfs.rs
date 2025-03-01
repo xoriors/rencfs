@@ -1102,9 +1102,6 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(ls_dir)?;
-        let iter = iter.filter(|&entry|
-            self.is_real_file_name(&entry.unwrap().file_name().into_string()).await
-        ).collect();
         let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
         self.set_attr(ino, set_attr).await?;
         Ok(self.create_directory_entry_iterator(iter).await)
@@ -1121,9 +1118,6 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(ls_dir)?;
-        let iter = iter.filter(|&entry|
-            self.is_real_file_name(&entry.unwrap().file_name().into_string()).await
-        ).collect();
         let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
         self.set_attr(ino, set_attr).await?;
         Ok(self.create_directory_entry_plus_iterator(iter).await)
