@@ -777,14 +777,14 @@ impl EncryptedFs {
                             // create extra folders
                             let num_folders = get_random_number(10, 100);
                             for _ in 1..num_folders {
-                                let fake_dir_name = get_random_secret_filename(&self).await?;
+                                let fake_dir_name = get_random_secret_filename(&self_clone).await?;
                                 let fake_dir_path = contents_dir.join(fake_dir_name);
                                 fs::create_dir(&fake_dir_path)?;
 
                                 // create extra files inside the folders
                                 let num_files = get_random_number(10, 100);
                                 for _ in 1..num_files {
-                                    let fake_file_name = get_random_secret_filename(&self).await?;
+                                    let fake_file_name = get_random_secret_filename(&self_clone).await?;
                                     File::create(&fake_dir_path.join(fake_file_name));
                                 }
                             }
@@ -792,8 +792,8 @@ impl EncryptedFs {
                             // create extra files
                             let num_files = get_random_number(10, 100);
                             for _ in 1..num_files {
-                                let fake_file_name = get_random_secret_filename(&self).await?;
-                                File::create(contents_dir.join(fake_file_name.into()));
+                                let fake_file_name = get_random_secret_filename(&self_clone).await?;
+                                File::create(contents_dir.join(fake_file_name));
                             }
 
                             // add "." and ".." entries
