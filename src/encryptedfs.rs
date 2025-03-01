@@ -1149,7 +1149,16 @@ impl EncryptedFs {
         #[allow(clippy::cast_possible_truncation)]
         let futures: Vec<_> = read_dir
             .into_iter()
-            .map(|entry| {
+            .filter_map(|entry| {
+                let real_file = self.is_real_file_name(
+                    &entry
+                        .as_ref()
+                        .unwrap()
+                        .file_name()
+                        .into_string()
+                        .unwrap()
+                ).unwrap();
+                if !real_file { return None; };
                 let fs = {
                     self.self_weak
                         .lock()
@@ -1159,7 +1168,7 @@ impl EncryptedFs {
                         .upgrade()
                         .unwrap()
                 };
-                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry_plus(entry).await })
+                Some(DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await }))
             })
             .collect();
 
@@ -1263,7 +1272,16 @@ impl EncryptedFs {
         #[allow(clippy::cast_possible_truncation)]
         let futures: Vec<_> = read_dir
             .into_iter()
-            .map(|entry| {
+            .filter_map(|entry| {
+                let real_file = self.is_real_file_name(
+                    &entry
+                        .as_ref()
+                        .unwrap()
+                        .file_name()
+                        .into_string()
+                        .unwrap()
+                ).unwrap();
+                if !real_file { return None; };
                 let fs = {
                     self.self_weak
                         .lock()
@@ -1273,7 +1291,7 @@ impl EncryptedFs {
                         .upgrade()
                         .unwrap()
                 };
-                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await })
+                Some(DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await }))
             })
             .collect();
 
