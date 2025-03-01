@@ -30,7 +30,7 @@ use crate::crypto::read::{CryptoRead, CryptoReadSeek};
 use crate::crypto::write::{CryptoInnerWriter, CryptoWrite, CryptoWriteSeek};
 use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
-use crate::{crypto, fs_util, stream_util};
+use crate::{async_util, crypto, fs_util, stream_util};
 use bon::bon;
 
 mod bench;
@@ -669,9 +669,11 @@ impl EncryptedFs {
         }
     }
 
-    async fn is_real_file_name(&self, filename: &str) -> FsResult<bool> {
-        let file = crypto::decrypt_file_name(filename, self.cipher, &*self.key.get().await?).unwrap();
-        Ok(!file.expose_secret().starts_with("0"))
+    fn is_real_file_name(&self, filename: &str) -> FsResult<bool> {
+        let file = async_util::call_async(async {
+            crypto::decrypt_file_name(filename, self.cipher, &*self.key.get().await.unwrap())
+        });
+        Ok(!file?.expose_secret().starts_with("0"))
     }
 
     /// Create a new node in the filesystem
