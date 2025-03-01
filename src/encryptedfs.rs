@@ -1168,7 +1168,7 @@ impl EncryptedFs {
                         .upgrade()
                         .unwrap()
                 };
-                Some(DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await }))
+                Some(DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry_plus(entry).await }))
             })
             .collect();
 
