@@ -5,9 +5,8 @@ on:
   pull_request:
     branches: [ main, release ]
   workflow_dispatch:
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+
+
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,9 +14,15 @@ env:
 
 jobs:
   version:
+    concurrency:
+      group: version-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     uses: xoriors/rencfs/.github/workflows/version_reusable.yaml@main
 
   build_and_test:
+    concurrency:
+      group: build-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     name: build and test
     uses: xoriors/rencfs/.github/workflows/build_and_tests_reusable.yaml@main
     secrets: inherit
