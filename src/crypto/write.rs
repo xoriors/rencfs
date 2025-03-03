@@ -210,7 +210,7 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
 impl<W: CryptoInnerWriter + Send + Sync> Write for RingCryptoWrite<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.writer.is_none() {
-            return io::Error::other("write called on already finished writer");
+            return Err(io::Error::other("write called on already finished writer"));
         }
         if self.pos() == 0 && self.buf.available() == 0 {
             if self.seek {
