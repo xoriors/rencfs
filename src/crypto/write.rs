@@ -130,9 +130,7 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
             .seal_in_place_separate_tag(aad, data)
             .map_err(|err| {
                 error!("error sealing in place: {}", err);
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("error sealing in place: {err}"),
+                io::Error::Other(format!("error sealing in place: {err}"),
                 )
             })?;
         let nonce_sequence = self.nonce_sequence.lock().unwrap();
@@ -212,10 +210,7 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
 impl<W: CryptoInnerWriter + Send + Sync> Write for RingCryptoWrite<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.writer.is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "write called on already finished writer",
-            ));
+            return io::Error::Other("write called on already finished writer");
         }
         if self.pos() == 0 && self.buf.available() == 0 {
             if self.seek {
