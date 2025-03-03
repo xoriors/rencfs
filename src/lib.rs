@@ -1,7 +1,6 @@
 #![feature(test)]
 #![feature(error_generic_member_access)]
 #![feature(seek_stream_len)]
-#![feature(box_into_inner)]
 //! # Encrypted File System
 //!
 //! An encrypted file system that mounts with FUSE on Linux. It can be used to create encrypted directories.

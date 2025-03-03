@@ -38,7 +38,7 @@ RUN apk upgrade busybox --repository=http://dl-cdn.alpinelinux.org/alpine/edge/m
 COPY --from=builder /usr/src/rencfs/target/x86_64-unknown-linux-musl/release/rencfs /usr/local/bin
 
 ARG USER=rencfs
-ENV HOME /home/$USER
+ENV HOME=/home/$USER
 
 # install sudo as rootdocker
 RUN apk add --update sudo

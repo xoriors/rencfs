@@ -125,22 +125,18 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
     fn encrypt_and_write(&mut self) -> io::Result<()> {
         let data = self.buf.as_mut();
         let aad = Aad::from(self.block_index.to_le_bytes());
+
         let tag = self
             .sealing_key
             .seal_in_place_separate_tag(aad, data)
-            .map_err(|err| {
-                error!("error sealing in place: {}", err);
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("error sealing in place: {err}"),
-                )
-            })?;
+            .map_err(|err| io::Error::other(format!("error sealing in place: {err}")))?; // Ensure tag is properly extracted
+
         let nonce_sequence = self.nonce_sequence.lock().unwrap();
         let nonce = &nonce_sequence.last_nonce;
         let writer = self
             .writer
             .as_mut()
-            .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
         writer.write_all(nonce)?;
         writer.write_all(data)?;
         self.buf.clear();
@@ -212,10 +208,7 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
 impl<W: CryptoInnerWriter + Send + Sync> Write for RingCryptoWrite<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.writer.is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "write called on already finished writer",
-            ));
+            return Err(io::Error::other("write called on already finished writer"));
         }
         if self.pos() == 0 && self.buf.available() == 0 {
             if self.seek {
@@ -283,8 +276,8 @@ impl<W: CryptoInnerWriter + Send + Sync> CryptoWrite<W> for RingCryptoWrite<W> {
             .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
             .into_any()
             .downcast::<W>()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "downcast failed"))?;
-        Ok(Box::into_inner(boxed))
+            .map_err(|_| io::Error::other("downcast failed"))?;
+        Ok(*boxed)
     }
 }
 

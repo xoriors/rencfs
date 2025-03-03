@@ -246,7 +246,7 @@ pub extern "system" fn Java_RustLibrary_umount(
         match handle
             .umount()
             .await
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+            .map_err(|err| io::Error::other(err))
         {
             Ok(()) => Ok(()),
             Err(err) => {
