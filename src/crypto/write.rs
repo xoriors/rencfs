@@ -283,7 +283,7 @@ impl<W: CryptoInnerWriter + Send + Sync> CryptoWrite<W> for RingCryptoWrite<W> {
             .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?
             .into_any()
             .downcast::<W>()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "downcast failed"))?;
+            .map_err(|_| io::Error::other("downcast failed"))?;
         Ok(*boxed)
     }
 }

@@ -55,7 +55,7 @@ macro_rules! decrypt_block {
                 let data = &mut data[NONCE_LEN..];
                 let plaintext = $opening_key.open_within(aad, data, 0..).map_err(|err| {
                     error!("error opening within: {}", err);
-                    io::Error::new(io::ErrorKind::Other, "error opening within")
+                    io::Error::other("error opening within")
                 })?;
                 len = plaintext.len();
             }
