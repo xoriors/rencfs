@@ -125,20 +125,18 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
     fn encrypt_and_write(&mut self) -> io::Result<()> {
         let data = self.buf.as_mut();
         let aad = Aad::from(self.block_index.to_le_bytes());
+
         let tag = self
             .sealing_key
             .seal_in_place_separate_tag(aad, data)
-            .map_err(|err| {
-                error!("error sealing in place: {}", err);
-                io::Error::other(format!("error sealing in place: {err}"),
-                )
-            })?;
+            .map_err(|err| io::Error::other(format!("error sealing in place: {err}")))?; // Ensure tag is properly extracted
+
         let nonce_sequence = self.nonce_sequence.lock().unwrap();
         let nonce = &nonce_sequence.last_nonce;
         let writer = self
             .writer
             .as_mut()
-            .ok_or(io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
         writer.write_all(nonce)?;
         writer.write_all(data)?;
         self.buf.clear();
