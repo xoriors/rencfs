@@ -670,6 +670,9 @@ impl EncryptedFs {
     }
 
     fn is_real_file_name(&self, filename: &str) -> FsResult<bool> {
+        if filename == "$." || filename == "$.." {
+            return Ok(true);
+        }
         let file = async_util::call_async(async {
             crypto::decrypt_file_name(filename, self.cipher, &*self.key.get().await.unwrap())
         });
@@ -1150,14 +1153,18 @@ impl EncryptedFs {
         let futures: Vec<_> = read_dir
             .into_iter()
             .filter_map(|entry| {
-                let real_file = self.is_real_file_name(
-                    &entry
+                let filename = entry
                         .as_ref()
                         .unwrap()
                         .file_name()
                         .into_string()
-                        .unwrap()
-                ).unwrap();
+                        .unwrap();
+
+                let real_file = match self.is_real_file_name(&filename) {
+                    Ok(file) => file,
+                    Err(e) => panic!("{filename} - {e}"),
+                };
+
                 if !real_file { return None; };
                 let fs = {
                     self.self_weak
@@ -1273,14 +1280,18 @@ impl EncryptedFs {
         let futures: Vec<_> = read_dir
             .into_iter()
             .filter_map(|entry| {
-                let real_file = self.is_real_file_name(
-                    &entry
+                let filename = entry
                         .as_ref()
                         .unwrap()
                         .file_name()
                         .into_string()
-                        .unwrap()
-                ).unwrap();
+                        .unwrap();
+
+                let real_file = match self.is_real_file_name(&filename) {
+                    Ok(file) => file,
+                    Err(e) => panic!("{filename} - {e}"),
+                };
+
                 if !real_file { return None; };
                 let fs = {
                     self.self_weak
