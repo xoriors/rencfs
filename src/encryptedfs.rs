@@ -674,7 +674,7 @@ impl EncryptedFs {
             return Ok(true);
         }
         let file = async_util::call_async(async {
-            crypto::decrypt_file_name(filename, self.cipher, &*self.key.get().await.unwrap())
+            crypto::decrypt_file_name(filename, self.cipher, &self.key.get().await.unwrap())
         });
         Ok(!file?.expose_secret().starts_with("0"))
     }
@@ -795,7 +795,7 @@ impl EncryptedFs {
                                 for _ in 1..num_files {
                                     let fake_file_name =
                                         get_random_secret_filename(&self_clone).await?;
-                                    File::create(&fake_dir_path.join(fake_file_name))?;
+                                    File::create(fake_dir_path.join(fake_file_name))?;
                                 }
                             }
 
