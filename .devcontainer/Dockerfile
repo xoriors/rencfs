@@ -24,8 +24,8 @@ RUN apt-get update && \
         python3-pip && \
         python3.12-venv \
     rm -rf /var/lib/apt/lists/*
-
 python3 -m venv venv
+alias python=python3
 source venv/bin/activate
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
