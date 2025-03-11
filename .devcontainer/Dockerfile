@@ -26,8 +26,6 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv venv
 RUN alias python=python3
-RUN source venv/bin/activate
-pip install pytest
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 RUN . ~/.cargo/env && rustup update 
