@@ -122,3 +122,15 @@ Please add a new row in the `test cases` file and follow the template of the fir
 ### Forgot password
 
 If you forgot the password, delete the `data` folder at the project's root and start the app again. **You will lose your previous encrypted data. There is no way to recover your data, which is good because an attacker cannot access it either**.
+
+# Automation
+
+## Setup env (just once)
+
+In terminal execute these
+
+```
+python3 -m venv venv
+source venv/bin/activate
+pip install pytest
+```
