@@ -22,7 +22,7 @@ For all the command line snippets below that are to be executed in Terminal, the
   ![image](https://github.com/user-attachments/assets/5fee55f6-ef54-427c-b790-c135312d3355)
 4. This will create the container on GitHub. If it asks you to setup config, select the minimum possible CPU and RAM
 5. Start it and leave it to finish. This could take a bit longer. This will open a VSCode in the browser
-6. If the terminal panel is not at the bottom, go to the terminal in the browser version of the VSCode editor you're presented with. It should be at the bottom. If not, open it from the `Terminal -> New Terminal` menu. You can find the menu in the top left, with 3 lines icon  
+6. If the terminal panel is not at the bottom, go the menu in the top left, 3 horizontal lines icon and `Terminal -> New Terminal`
   ![image](https://github.com/user-attachments/assets/48681023-e450-49b3-8526-ec0323be0d40)
 7. Install Rust by pasting these in the terminal:
   ```bash
