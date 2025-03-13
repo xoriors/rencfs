@@ -125,12 +125,24 @@ If you forgot the password, delete the `data` folder at the project's root and s
 
 # Automation
 
+Here's a video on generating and running Python tests from test cases using ChatGPT.
+
+Open a new terminal by going to the menu at the top left, clicking the three horizontal lines icon, and selecting `Terminal -> New Terminal`.
+
 ## Setup env (just once)
 
-In terminal execute these
+Run in terminal:
 
 ```
 python3 -m venv venv
 source venv/bin/activate
 pip install pytest
+```
+
+## Each time you resume (also after the first setup)
+
+Use the opened terminal to run your tests like:
+
+```bash
+pytest tests/test1.py
 ```
