@@ -125,7 +125,7 @@ If you forgot the password, delete the `data` folder at the project's root and s
 
 # Automation
 
-Here's a video on generating and running Python tests from test cases using ChatGPT.
+Here's a [video](https://www.youtube.com/watch?v=AGyNxYoIHB0&list=PLzPrvFZbOBZCn8i1CkwpVGByYv2nd7EQW&index=5) on generating and running Python tests from test cases using ChatGPT.
 
 Open a new terminal by going to the menu at the top left, clicking the three horizontal lines icon, and selecting `Terminal -> New Terminal`.
 
