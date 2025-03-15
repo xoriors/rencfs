@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use lru::LruCache;
 use num_format::{Locale, ToFormattedString};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use shush_rs::{ExposeSecret, SecretBox, SecretString, SecretVec};
 use std::backtrace::Backtrace;
@@ -29,7 +30,7 @@ use crate::crypto::read::{CryptoRead, CryptoReadSeek};
 use crate::crypto::write::{CryptoInnerWriter, CryptoWrite, CryptoWriteSeek};
 use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
-use crate::{crypto, fs_util, stream_util};
+use crate::{async_util, crypto, fs_util, stream_util};
 use bon::bon;
 
 mod bench;
@@ -668,6 +669,16 @@ impl EncryptedFs {
         }
     }
 
+    fn is_real_file_name(&self, filename: &str) -> FsResult<bool> {
+        if filename == "$." || filename == "$.." {
+            return Ok(true);
+        }
+        let file = async_util::call_async(async {
+            crypto::decrypt_file_name(filename, self.cipher, &self.key.get().await.unwrap())
+        });
+        Ok(!file?.expose_secret().starts_with("0"))
+    }
+
     /// Create a new node in the filesystem
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
@@ -748,6 +759,53 @@ impl EncryptedFs {
                             // used to keep hashes of encrypted file names used by [`exists_by_name`] and [`find_by_name`]
                             // this optimizes the search process as we don't need to decrypt all file names and search
                             fs::create_dir(contents_dir.join(HASH_DIR))?;
+
+                            fn get_random_number(from: u8, to: u8) -> u8 {
+                                rand::thread_rng().gen_range(from..to)
+                            }
+
+                            async fn get_random_secret_filename(
+                                encryptedfs: &EncryptedFs,
+                            ) -> FsResult<String> {
+                                let length = rand::thread_rng().gen_range(5..20);
+                                let rng = rand::thread_rng();
+                                let random_name: String = rng
+                                    .sample_iter(rand::distributions::Alphanumeric)
+                                    .take(length)
+                                    .map(char::from)
+                                    .collect();
+                                let secret_name =
+                                    SecretString::from_str(&format!("0{random_name}")).unwrap();
+                                crypto::encrypt_file_name(
+                                    &secret_name,
+                                    encryptedfs.cipher,
+                                    &*encryptedfs.key.get().await?,
+                                )
+                            }
+
+                            // create extra folders
+                            let num_folders = get_random_number(10, 100);
+                            for _ in 1..num_folders {
+                                let fake_dir_name = get_random_secret_filename(&self_clone).await?;
+                                let fake_dir_path = contents_dir.join(fake_dir_name);
+                                fs::create_dir(&fake_dir_path)?;
+
+                                // create extra files inside the folders
+                                let num_files = get_random_number(10, 100);
+                                for _ in 1..num_files {
+                                    let fake_file_name =
+                                        get_random_secret_filename(&self_clone).await?;
+                                    File::create(fake_dir_path.join(fake_file_name))?;
+                                }
+                            }
+
+                            // create extra files
+                            let num_files = get_random_number(10, 100);
+                            for _ in 1..num_files {
+                                let fake_file_name =
+                                    get_random_secret_filename(&self_clone).await?;
+                                File::create(contents_dir.join(fake_file_name))?;
+                            }
 
                             // add "." and ".." entries
                             self_clone
@@ -1100,7 +1158,17 @@ impl EncryptedFs {
         #[allow(clippy::cast_possible_truncation)]
         let futures: Vec<_> = read_dir
             .into_iter()
-            .map(|entry| {
+            .filter_map(|entry| {
+                let filename = entry.as_ref().unwrap().file_name().into_string().unwrap();
+
+                let real_file = match self.is_real_file_name(&filename) {
+                    Ok(file) => file,
+                    Err(e) => panic!("{filename} - {e}"),
+                };
+
+                if !real_file {
+                    return None;
+                };
                 let fs = {
                     self.self_weak
                         .lock()
@@ -1110,7 +1178,10 @@ impl EncryptedFs {
                         .upgrade()
                         .unwrap()
                 };
-                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry_plus(entry).await })
+                Some(
+                    DIR_ENTRIES_RT
+                        .spawn(async move { fs.create_directory_entry_plus(entry).await }),
+                )
             })
             .collect();
 
@@ -1214,7 +1285,17 @@ impl EncryptedFs {
         #[allow(clippy::cast_possible_truncation)]
         let futures: Vec<_> = read_dir
             .into_iter()
-            .map(|entry| {
+            .filter_map(|entry| {
+                let filename = entry.as_ref().unwrap().file_name().into_string().unwrap();
+
+                let real_file = match self.is_real_file_name(&filename) {
+                    Ok(file) => file,
+                    Err(e) => panic!("{filename} - {e}"),
+                };
+
+                if !real_file {
+                    return None;
+                };
                 let fs = {
                     self.self_weak
                         .lock()
@@ -1224,7 +1305,7 @@ impl EncryptedFs {
                         .upgrade()
                         .unwrap()
                 };
-                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await })
+                Some(DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await }))
             })
             .collect();
 
