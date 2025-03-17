@@ -127,7 +127,7 @@ If you forgot the password, delete the `data` folder at the project's root and s
 
 Here's a [video](https://www.youtube.com/watch?v=AGyNxYoIHB0&list=PLzPrvFZbOBZCn8i1CkwpVGByYv2nd7EQW&index=5) on generating and running Python tests from test cases using ChatGPT.
 
-Prompt to use to generate tests in Python:
+Prompt to generate tests:
 
 ```text
 create a test un python based on the test case steps and expected results
