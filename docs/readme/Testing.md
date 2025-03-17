@@ -127,6 +127,22 @@ If you forgot the password, delete the `data` folder at the project's root and s
 
 Here's a [video](https://www.youtube.com/watch?v=AGyNxYoIHB0&list=PLzPrvFZbOBZCn8i1CkwpVGByYv2nd7EQW&index=5) on generating and running Python tests from test cases using ChatGPT.
 
+Prompt to use to generate tests in Python:
+
+```text
+create a test un python based on the test case steps and expected results
+all operations shul dbe ade relative to final folder, change to that as needed
+    * generate simple python code without logging and try/cath just using assert
+
+steps
+[ADD-STEPS-HERE]
+
+expected results
+[ADD-RESULTS-HERE]
+```
+
+Replace `[ADD-STEPS-HERE]` and `[ADD-RESULTS-HERE]` based on the test case.
+
 Open a new terminal by going to the menu at the top left, clicking the three horizontal lines icon, and selecting `Terminal -> New Terminal`.
 
 ## Setup env (just once)
