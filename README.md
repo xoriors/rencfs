@@ -33,7 +33,7 @@ data.
   Create a `simple,` `performant,` `modular` and `ergonomic` yet `very secure` `encrypted filesystem` focused
   on `privacy`, also `open source`, which correctly and safely uses `well-known and audited` crates
   as `cryptographic primitives`.
-- Read an article [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://medium.com/system-weakness/hitchhikers-guide-to-building-a-distributed-filesystem-in-rust-the-very-beginning-2c02eb7313e7).
+- Read an article [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://medium.com/system-weakness/the-hitchhikers-guide-to-building-an-encrypted-filesystem-in-rust-4d678c57d65c).
 - A one-pager [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](docs/The_Hitchhiker_s_Guide_to_Building_an_Encrypted_Filesystem_in_Rust.pdf).
 - Talks
     - [The Hitchhiker’s Guide to Building an Encrypted Filesystem in Rust](https://startech-rd.io/hitchhikers-guide-to/) @[meetup.com/star-tech-rd-reloaded](https://www.meetup.com/star-tech-rd-reloaded/) and @[OmniOpenCon](https://omniopencon.org/).
