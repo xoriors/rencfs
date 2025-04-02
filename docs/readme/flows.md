@@ -8,6 +8,8 @@ interactions between the various filesystem components, meaning some details hav
 
 - [Overview](../uml/overview.md)
 
+---
+
 - [Mount](../uml/mount.md)
 - [Change Password](../uml/change_pass.md)
 - [Open File](../uml/open_file.md)
