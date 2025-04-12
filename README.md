@@ -127,6 +127,7 @@ How to contribute:
 
 # Get in touch
 
+- Part of [xorio](https://xorio.rs/)
 - [Slack](https://bit.ly/3UU1oXi)
 - [hello@xorio.rs](mailto:hello@xorio.rs)
 - [LinkedIn](https://www.linkedin.com/company/xorio)
