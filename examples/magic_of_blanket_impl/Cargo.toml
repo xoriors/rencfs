@@ -1,0 +1,6 @@
+[package]
+name = "magic_of_blanket_impl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]

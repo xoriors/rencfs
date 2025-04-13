@@ -1,0 +1,12 @@
+[package]
+name = "change_password_cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rencfs = "0.14.11"
+rpassword = "7.3.1"
+shush-rs = "0.1.11"
+tracing = "0.1.41"
+tokio = { version = "1.36", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
