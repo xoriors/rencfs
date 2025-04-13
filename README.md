@@ -6,7 +6,7 @@
 [![build-and-tests](https://github.com/xoriors/rencfs/actions/workflows/build_and_tests.yaml/badge.svg)](https://github.com/xoriors/rencfs/actions/workflows/build_and_tests.yaml)
 [![release](https://github.com/xoriors/rencfs/actions/workflows/release.yaml/badge.svg)](https://github.com/xoriors/rencfs/actions/workflows/release.yaml)
 [![codecov](https://codecov.io/gh/xoriors/rencfs/graph/badge.svg?token=NUQI6XGF2Y)](https://codecov.io/gh/xoriors/rencfs)
-<a href="https://bit.ly/3UU1oXi"><img src="website/resources/slack.png" style = "width: 20px; height: 20px;"/></a>
+<a href="https://join.slack.com/t/rencfs/shared_invite/zt-2w9cpnql2-o0qtN_rXFNjHvp92qFhXCg"><img src="website/resources/slack.png" style = "width: 20px; height: 20px;"/></a>
 [![Open Source Helpers](https://www.codetriage.com/xoriors/rencfs/badges/users.svg?count=20)](https://www.codetriage.com/xoriors/rencfs)
 
 > [!WARNING]  
