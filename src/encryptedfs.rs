@@ -1327,15 +1327,63 @@ impl EncryptedFs {
             .serialize_update_inode_locks
             .get_or_insert_with(ino, || Mutex::new(false));
         let _serialize_update_guard = serialize_update_lock.lock().await;
-
+    
+        // If a new file size is specified, handle it before processing other attributes
+        if let Some(new_size) = set_attr.size {
+            let mut attr = self.get_attr(ino).await?;
+    
+            // Only proceed if the requested size differs from the current size
+            if attr.size != new_size {
+                // Acquire exclusive access for modifying file contents
+                let lock = self
+                    .read_write_locks
+                    .get_or_insert_with(ino, || RwLock::new(false));
+                let _write_guard = lock.write().await;
+    
+                let file_path = self.contents_path(ino);
+    
+                if new_size == 0 {
+                    // Handle empty file case by truncating the file
+                    let file = OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(&file_path)?;
+                    file.sync_all()?;
+                } else {
+                    // Truncate file to the new size (simplified handling for encrypted files)
+                    attr.size = new_size;
+    
+                    let file = OpenOptions::new()
+                        .write(true)
+                        .open(&file_path)?;
+                    file.set_len(new_size)?;
+                    file.sync_all()?;
+                }
+    
+                // Update timestamps after size modification
+                let now = SystemTime::now();
+                attr.mtime = now;
+                attr.ctime = now;
+                attr.atime = now;
+    
+                // Persist the updated attributes
+                self.write_inode_to_storage(&attr).await?;
+    
+                // Skip remaining attribute updates since size change was handled separately
+                return Ok(());
+            }
+        }
+    
+        // For all other attributes (when size is unchanged), update them accordingly
         let mut attr = self.get_attr(ino).await?;
         merge_attr(&mut attr, &set_attr, overwrite_size);
+    
         let now = SystemTime::now();
         attr.ctime = now;
         attr.atime = now;
-
+    
         self.write_inode_to_storage(&attr).await?;
-
+    
         Ok(())
     }
 
