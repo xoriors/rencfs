@@ -9,7 +9,7 @@
 <a href="https://join.slack.com/t/rencfs/shared_invite/zt-2w9cpnql2-o0qtN_rXFNjHvp92qFhXCg"><img src="website/resources/slack.png" style = "width: 20px; height: 20px;"/></a>
 [![Open Source Helpers](https://www.codetriage.com/xoriors/rencfs/badges/users.svg?count=20)](https://www.codetriage.com/xoriors/rencfs)
 
-> [!WARNING]  
+> ⚠️ **Warning** 
 > **This crate hasn't been audited; it's using `ring` crate, which is a well-known audited library, so in principle, at
 least the primitives should offer a similar level of security.  
 > This is still under development. Please do not use it with sensitive data for now; please wait for a
