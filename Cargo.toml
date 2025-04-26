@@ -63,7 +63,7 @@ criterion = { version = "0.5.1", features = ["html_reports"] }
 fuse3 = { version = "0.8.1", features = ["tokio-runtime", "unprivileged"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-fuser = { version = "0.14", features = ["tokio"] }
+fuser = { version = "0.14"}
 
 [[bench]]
 name = "crypto_read"
