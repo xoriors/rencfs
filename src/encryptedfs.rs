@@ -732,7 +732,7 @@ impl EncryptedFs {
                                     .parent()
                                     .expect("oops, we don't have a parent"),
                             )?
-                                .sync_all()?;
+                            .sync_all()?;
                             Ok::<(), FsError>(())
                         });
                     }
@@ -1600,32 +1600,30 @@ impl EncryptedFs {
     /// If the file is not opened for writing,
     /// it will return an error of type [FsError::InvalidFileHandle].
     #[instrument(skip(self, buf), fields(len = %buf.len()), ret(level = Level::DEBUG))]
-    pub async fn write(&self, ino: u64, mut offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
+    pub async fn write(&self, ino: u64, offset: u64, buf: &[u8], handle: u64) -> FsResult<usize> {
         if self.read_only {
             return Err(FsError::ReadOnly);
         }
-
         if !self.exists(ino) {
             return Err(FsError::InodeNotFound);
         }
-
         if !self.is_file(ino) {
             return Err(FsError::InvalidInodeType);
         }
-
         {
-            let write_handles = self.write_handles.read().await;
-            if let Some(ctx_lock) = write_handles.get(&handle) {
-                let ctx = ctx_lock.lock().await;
-                if ctx.ino != ino {
-                    return Err(FsError::InvalidFileHandle);
-                }
-            } else {
+            if !self.write_handles.read().await.contains_key(&handle) {
                 return Err(FsError::InvalidFileHandle);
             }
         }
-
+        {
+            let guard = self.write_handles.read().await;
+            let ctx = guard.get(&handle).unwrap().lock().await;
+            if ctx.ino != ino {
+                return Err(FsError::InvalidFileHandle);
+            }
+        }
         if buf.is_empty() {
+            // no-op
             return Ok(0);
         }
 
@@ -1637,50 +1635,64 @@ impl EncryptedFs {
         let guard = self.write_handles.read().await;
         let mut ctx = guard.get(&handle).unwrap().lock().await;
 
-        let mut total_written = 0;
-        let max_block_size = self.cipher.max_plaintext_len();
-
-        while total_written < buf.len() {
+        // write new data
+        let (pos, len) = {
+            if offset > self.cipher.max_plaintext_len() as u64 {
+                return Err(FsError::MaxFilesizeExceeded(
+                    self.cipher.max_plaintext_len(),
+                ));
+            }
             let writer = ctx.writer.as_mut().unwrap();
-
             let pos = writer.seek(SeekFrom::Start(offset)).map_err(|err| {
                 error!(err = %err, "seeking");
                 err
             })?;
-
             if offset != pos {
-                return Ok(total_written);
+                // we could not seek to the desired position
+                return Ok(0);
             }
-
-            let remaining = buf.len() - total_written;
-            let max_write = std::cmp::min(remaining, max_block_size - offset as usize);
-            let chunk = &buf[total_written..total_written + max_write];
-
-            let len = writer.write(chunk).map_err(|err| {
-                error!(err = %err, "writing");
-                err
-            })?;
-
-            offset += len as u64;
-            total_written += len;
-
-            if len == 0 {
-                break; // safety
+            // keep block size to max the cipher can handle
+            #[allow(clippy::cast_possible_truncation)]
+            let buf = if offset + buf.len() as u64 > self.cipher.max_plaintext_len() as u64 {
+                warn!("writing more than max block size, truncating");
+                &buf[..(self.cipher.max_plaintext_len() - offset as usize)]
+            } else {
+                buf
+            };
+            // let len = writer.write(buf).map_err(|err| {
+            //     error!(err = %err, "writing");
+            //     err
+            // })?;
+            // (writer.stream_position()?, len)
+            let mut total_written = 0;
+            while total_written < buf.len() {
+                let slice = &buf[total_written..];
+                let written = writer.write(slice).map_err(|err| {
+                    error!(err = %err, "writing");
+                    err
+                })?;
+                if written == 0 {
+                    return Err(FsError::Other("Write returned 0 before buffer fully written"));
+                }
+                total_written += written;
             }
-        }
+            let pos = writer.stream_position()?;
+            (pos, total_written)
+        };
 
-        if offset > ctx.attr.size {
-            ctx.attr.size = offset;
+        // let size = ctx.attr.size;
+        if pos > ctx.attr.size {
+            // if we write pass file size set the new size
+            debug!("setting new file size {}", pos);
+            ctx.attr.size = pos;
         }
-
         let now = SystemTime::now();
         ctx.attr.mtime = now;
         ctx.attr.ctime = now;
         ctx.attr.atime = now;
-
         drop(ctx);
-        drop(write_guard);
 
+        drop(write_guard);
         self.reset_handles(ino, Some(handle), true).await?;
 
         self.sizes_write
@@ -1688,11 +1700,25 @@ impl EncryptedFs {
             .await
             .get_mut(&ino)
             .unwrap()
-            .fetch_add(total_written as u64, Ordering::SeqCst);
+            .fetch_add(len as u64, Ordering::SeqCst);
+        if buf.len() != len {
+            // error!(
+            //     "size mismatch in write(), size {size} offset {offset} buf_len {} len {len}",
+            //     buf.len()
+            // );
+        }
+        // warn!(
+        //     "written uncommited for {ino} size {}",
+        //     self.sizes_write
+        //         .lock()
+        //         .await
+        //         .get(&ino)
+        //         .unwrap()
+        //         .load(Ordering::SeqCst)
+        // );
 
-        Ok(total_written)
+        Ok(len)
     }
-
 
     /// Flush the data to the underlying storage.
     #[allow(clippy::missing_panics_doc)]
@@ -1796,7 +1822,7 @@ impl EncryptedFs {
                 *handle.as_ref().unwrap(),
                 ReadHandleContextOperation::Create { ino },
             )
-                .await?;
+            .await?;
         }
         if write {
             if self.opened_files_for_write.read().await.contains_key(&ino) {
@@ -2035,7 +2061,7 @@ impl EncryptedFs {
                 kind: attr.kind,
             },
         )
-            .await?;
+        .await?;
 
         if attr.kind == FileType::Directory {
             // add the parent link to the new directory
@@ -2047,7 +2073,7 @@ impl EncryptedFs {
                     kind: FileType::Directory,
                 },
             )
-                .await?;
+            .await?;
         }
 
         let now = SystemTime::now();
@@ -2295,7 +2321,7 @@ impl EncryptedFs {
                 rdev: 0,
                 flags: 0,
             }
-                .into();
+            .into();
             attr.ino = ROOT_INODE;
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             unsafe {
@@ -2319,7 +2345,7 @@ impl EncryptedFs {
                     kind: FileType::Directory,
                 },
             )
-                .await?;
+            .await?;
         }
 
         Ok(())
@@ -2396,7 +2422,7 @@ impl EncryptedFs {
             )?;
             Ok::<(), FsError>(())
         })
-            .await??;
+        .await??;
         h.await??;
         Ok(())
     }
@@ -2579,9 +2605,9 @@ async fn check_structure(data_dir: &Path, ignore_empty: bool) -> FsResult<()> {
     if vec != vec2
         || !data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME).is_file()
         || !data_dir
-        .join(SECURITY_DIR)
-        .join(KEY_SALT_FILENAME)
-        .is_file()
+            .join(SECURITY_DIR)
+            .join(KEY_SALT_FILENAME)
+            .is_file()
     {
         return Err(FsError::InvalidDataDirStructure);
     }
