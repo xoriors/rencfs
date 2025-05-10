@@ -32,25 +32,61 @@ if [ -n "$DISALLOWED" ]; then
   exit 1
 fi
 
-# generate THIRD-PARTY-LICENSES.md
-echo -e "# THIRD PARTY LICENSES:\n" > docs/THIRD-PARTY-LICENSES.md
-cargo license --all-features --direct-deps-only --json |
-  jq -r '
-    .[] | 
-    "## \(.name)\n" +
-    "- Version: \(.version)\n" +
-    "- License: \(.license // "UNKNOWN")\n" +
-    "- Repository: \(.repository // "")\n"
-  ' >> docs/THIRD-PARTY-LICENSES.md
+echo -e "All licenses approved.\n"
 
-# copy license specific files
-mkdir -p docs/third-party-licenses
+# prepare output paths
+LICENSES_DIR="licenses"
+OUTPUT_MD="THIRD-PARTY-LICENSES.md"
+
+mkdir -p "$LICENSES_DIR"
+rm -f "$OUTPUT_MD"
+
+echo "Vendoring dependencies..."
 cargo vendor --versioned-dirs vendor >/dev/null 2>&1
-find vendor -type f \
-    \( -iname 'LICENSE*' -o -iname 'NOTICE*' -o -iname 'COPYING*' \) \
-    -exec cp --parents {} docs/third-party-licenses/ \;
+
+echo -e "# Third-Party Licenses:\n" >> "$OUTPUT_MD"
+
+# generate output
+cargo license --all-features --direct-deps-only --json | jq -c '.[]' | \
+    while read -r crate; do
+  NAME=$(echo "$crate" | jq -r '.name')
+  VERSION=$(echo "$crate" | jq -r '.version')
+  LICENSE=$(echo "$crate" | jq -r '.license // "UNKNOWN"')
+  REPO=$(echo "$crate" | jq -r '.repository // "N/A"')
+
+  echo "Processing $NAME $VERSION..."
+
+  echo "## $NAME" >> "$OUTPUT_MD"
+  echo "- Version: $VERSION" >> "$OUTPUT_MD"
+  echo "- License: $LICENSE" >> "$OUTPUT_MD"
+  echo "- Repository: $REPO" >> "$OUTPUT_MD"
+
+  CRATE_DIR=$(find vendor -type d -name "${NAME}-${VERSION}" | head -n1)
+
+  # copy files to license/ and add the paths to THIRD-PARTY-LICENSES.md
+  FOUND_LICENSE="false"
+  if [[ -d "$CRATE_DIR" ]]; then
+    for file in "$CRATE_DIR"/{LICENSE*,COPYING*,NOTICE*}; do
+      if [[ -f "$file" ]]; then
+        base=$(basename "$file")
+        new_name="${NAME}-${VERSION}-${base}"
+        cp "$file" "${LICENSES_DIR}/${new_name}"
+        echo "- License File: ${LICENSES_DIR}/${new_name}" >> "$OUTPUT_MD"
+        FOUND_LICENSE="true"
+      fi
+    done
+  fi
+
+  if [[ "$FOUND_LICENSE" == "false" ]]; then
+    echo "- License File: Not found" >> "$OUTPUT_MD"
+  fi
+
+  echo "" >> "$OUTPUT_MD"
+done
 
 # cleanup
 rm -rf vendor
 
-echo "License check passed"
+echo ""
+echo "License report generated at /$OUTPUT_MD"
+echo "Individual license files in: /$LICENSES_DIR/"
