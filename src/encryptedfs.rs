@@ -31,7 +31,7 @@ use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
 use crate::{crypto, fs_util, stream_util};
 use bon::bon;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, Error as WalkDirError, WalkDir};
 mod bench;
 #[cfg(test)]
 mod test;
@@ -1096,11 +1096,15 @@ impl EncryptedFs {
         &self,
         dir_path: &Path,
     ) -> DirectoryEntryPlusIterator {
-        let entries: Vec<_> = WalkDir::new(dir_path)
+        let entries: Vec<Result<DirEntry, WalkDirError>> = WalkDir::new(dir_path)
             .max_depth(1)
             .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path() != dir_path) // skip the root dir itself
+            .filter(|entry_result| {
+                match entry_result {
+                    Ok(entry) => entry.path() != dir_path, // skip root
+                    Err(_) => true,                        // keep errors to handle them
+                }
+            })
             .collect();
 
         let futures: Vec<_> = entries
@@ -1115,7 +1119,12 @@ impl EncryptedFs {
                         .upgrade()
                         .unwrap()
                 };
-                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry_plus(entry).await })
+                DIR_ENTRIES_RT.spawn(async move {
+                    match entry {
+                        Ok(valid_entry) => fs.create_directory_entry_plus(valid_entry).await,
+                        Err(_err) => Err(FsError::Other("Failed to process directory entry")),
+                    }
+                })
             })
             .collect();
 
@@ -1207,8 +1216,10 @@ impl EncryptedFs {
         let walkdir_iter = WalkDir::new(&dir_path)
             .max_depth(1)
             .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path() != dir_path); // skip the root itself
+            .filter(|entry| match entry {
+                Ok(e) => e.path() != dir_path,
+                Err(_) => true, // keep errors to handle them
+            });
 
         #[allow(clippy::cast_possible_truncation)]
         let futures: Vec<_> = walkdir_iter
@@ -1222,7 +1233,12 @@ impl EncryptedFs {
                         .upgrade()
                         .unwrap()
                 };
-                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await })
+                DIR_ENTRIES_RT.spawn(async move {
+                    match entry {
+                        Ok(valid_entry) => fs.create_directory_entry(valid_entry).await,
+                        Err(_err) => Err(FsError::Other("Failed to process directory entry")),
+                    }
+                })
             })
             .collect();
 
