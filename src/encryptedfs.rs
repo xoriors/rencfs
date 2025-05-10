@@ -8,7 +8,7 @@ use shush_rs::{ExposeSecret, SecretBox, SecretString, SecretVec};
 use std::backtrace::Backtrace;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
-use std::fs::{DirEntry, File, OpenOptions, ReadDir};
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::{NonZeroUsize, ParseIntError};
 use std::path::{Path, PathBuf};
@@ -31,7 +31,7 @@ use crate::crypto::Cipher;
 use crate::expire_value::{ExpireValue, ValueProvider};
 use crate::{crypto, fs_util, stream_util};
 use bon::bon;
-
+use walkdir::WalkDir;
 mod bench;
 #[cfg(test)]
 mod test;
@@ -1054,13 +1054,12 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
 
-        let iter = fs::read_dir(ls_dir)?;
         let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
         self.set_attr(ino, set_attr).await?;
-        Ok(self.create_directory_entry_iterator(iter).await)
+        Ok(self.create_directory_entry_iterator(ls_dir).await)
     }
 
-    /// Like [`EncryptedFs::read_dir`] but with [`FileAttr`] so we don't need to query again for those.
+    // Like [`EncryptedFs::read_dir`] but with [`FileAttr`] so we don't need to query again for those.
     pub async fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
         if !self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
@@ -1069,16 +1068,17 @@ impl EncryptedFs {
         if !ls_dir.is_dir() {
             return Err(FsError::InvalidInodeType);
         }
-
-        let iter = fs::read_dir(ls_dir)?;
+    
         let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
         self.set_attr(ino, set_attr).await?;
-        Ok(self.create_directory_entry_plus_iterator(iter).await)
+    
+        Ok(self.create_directory_entry_plus_iterator(&ls_dir).await)
     }
+    
 
     async fn create_directory_entry_plus(
         &self,
-        entry: io::Result<DirEntry>,
+        entry: walkdir::DirEntry,
     ) -> FsResult<DirectoryEntryPlus> {
         let entry = self.create_directory_entry(entry).await?;
         let lock = self.serialize_inode_locks.clone();
@@ -1092,13 +1092,20 @@ impl EncryptedFs {
             attr,
         })
     }
+    
 
     async fn create_directory_entry_plus_iterator(
         &self,
-        read_dir: ReadDir,
+        dir_path: &Path,
     ) -> DirectoryEntryPlusIterator {
-        #[allow(clippy::cast_possible_truncation)]
-        let futures: Vec<_> = read_dir
+        let entries: Vec<_> = WalkDir::new(dir_path)
+            .max_depth(1)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path() != dir_path)  // skip the root dir itself
+            .collect();
+    
+        let futures: Vec<_> = entries
             .into_iter()
             .map(|entry| {
                 let fs = {
@@ -1113,27 +1120,22 @@ impl EncryptedFs {
                 DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry_plus(entry).await })
             })
             .collect();
-
-        // do these futures in parallel and return them
+    
         let mut res = VecDeque::with_capacity(futures.len());
         for f in futures {
             res.push_back(f.await.unwrap());
         }
         DirectoryEntryPlusIterator(res)
     }
+    
+    
 
     async fn create_directory_entry(
         &self,
-        entry: io::Result<DirEntry>,
-    ) -> FsResult<DirectoryEntry> {
-        if entry.is_err() {
-            return Err(entry.err().unwrap().into());
-        }
-        if let Err(e) = entry {
-            error!(err = %e, "reading directory entry");
-            return Err(e.into());
-        }
-        let entry = entry.unwrap();
+        entry: walkdir::DirEntry,
+    ) -> FsResult<DirectoryEntry>
+    {
+        
         let name = entry.file_name().to_string_lossy().to_string();
         let name = {
             if name == "$." {
@@ -1210,24 +1212,30 @@ impl EncryptedFs {
         self.dir_entries_name_cache.get().await
     }
 
-    async fn create_directory_entry_iterator(&self, read_dir: ReadDir) -> DirectoryEntryIterator {
-        #[allow(clippy::cast_possible_truncation)]
-        let futures: Vec<_> = read_dir
-            .into_iter()
-            .map(|entry| {
-                let fs = {
-                    self.self_weak
-                        .lock()
-                        .unwrap()
-                        .as_ref()
-                        .unwrap()
-                        .upgrade()
-                        .unwrap()
-                };
-                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await })
-            })
-            .collect();
 
+    async fn create_directory_entry_iterator(&self, dir_path: PathBuf) -> DirectoryEntryIterator {
+        let walkdir_iter = WalkDir::new(&dir_path)
+            .max_depth(1)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path() != dir_path); // skip the root itself
+    
+        #[allow(clippy::cast_possible_truncation)]
+        let futures: Vec<_> = walkdir_iter.map(|entry| {
+            let fs = {
+                self.self_weak
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .upgrade()
+                    .unwrap()
+            };
+            DIR_ENTRIES_RT.spawn(async move { 
+                fs.create_directory_entry(entry).await 
+            })
+        }).collect();
+        
         // do these futures in parallel and return them
         let mut res = VecDeque::with_capacity(futures.len());
         for f in futures {
@@ -1235,6 +1243,9 @@ impl EncryptedFs {
         }
         DirectoryEntryIterator(res)
     }
+    
+
+
 
     #[allow(clippy::missing_errors_doc)]
     async fn get_inode_from_storage(&self, ino: u64) -> FsResult<FileAttr> {
