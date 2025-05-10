@@ -39,17 +39,6 @@ jobs:
           cargo install cargo-aur
           cargo install cargo-generate-rpm          
 
-      - name: setup licence tools
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
-          cargo install cargo-license
-
-      - name: licence check
-        if: matrix.os == 'ubuntu-latest'
-        run: bash scripts/check-licenses.sh
-
       - name: build
         run: |
           cargo build --all-targets --all-features

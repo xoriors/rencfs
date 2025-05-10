@@ -30,6 +30,15 @@ jobs:
           cargo install cargo-aur
           cargo install cargo-generate-rpm          
 
+      - name: setup licence tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          cargo install cargo-license
+
+      - name: licence check
+        run: bash scripts/check-licenses.sh
+
       - name: run cargo aur and generate-rpm
         run: |
           cargo aur
