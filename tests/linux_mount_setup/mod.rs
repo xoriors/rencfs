@@ -46,7 +46,7 @@ impl TestResource {
         Self {
             mount_handle: match mh {
                 Ok(mh) => Some(mh),
-                Err(e) => panic!("Encountered an error mounting {}", e),
+                Err(e) => panic!("Encountered an error mounting {e}"),
             },
             runtime,
         }
@@ -64,8 +64,7 @@ impl Drop for TestResource {
             Ok(_) => println!("Succesfully unmounted"),
             Err(e) => {
                 panic!(
-                    "Something went wrong when unmounting {}.You may need to manually unmount",
-                    e
+                    "Something went wrong when unmounting {e}.You may need to manually unmount"
                 )
             }
         }
