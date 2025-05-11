@@ -24,7 +24,7 @@ use fuse3::raw::{Filesystem, MountHandle, Request, Session};
 use fuse3::{Errno, Inode, MountOptions, Result, SetAttr, Timestamp};
 use futures_util::stream::Iter;
 use futures_util::{stream, FutureExt};
-use libc::{EACCES, EEXIST, EFBIG, EIO, EISDIR, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
+use libc::{EACCES, EEXIST, EFBIG, EIO, ENAMETOOLONG, ENOENT, ENOTDIR, ENOTEMPTY, EPERM};
 use shush_rs::{ExposeSecret, SecretString};
 use tracing::{debug, error, instrument, trace, warn};
 use tracing::{info, Level};
@@ -749,7 +749,7 @@ impl Filesystem for EncryptedFsFuse3 {
         {
             error!(err = %err);
             return match err {
-                FsError::NotEmpty => Err(EISDIR.into()),
+                FsError::NotEmpty => Err(ENOTEMPTY.into()),
                 _ => Err(EIO.into()),
             };
         }
