@@ -357,68 +357,10 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     })?;
     let mount_handle = Arc::new(Mutex::new(Some(Some(mount_handle))));
     let mount_handle_clone = mount_handle.clone();
+
     // cleanup on process kill
-    // this sets up a signal handler
-    /*
-    set_handler(move || {
-        // can't use tracing methods here as guard cannot be dropper to flush content before we exit
-        eprintln!("Received signal to exit");
-        let mut status: Option<ExitStatusError> = None;
-        // this creates a mutable variable
-        remove_pass();
-        // this erases password before the program exits
-        eprintln!("Unmounting {mountpoint}");
-        // this unmounts the filesystem at the specified mountpoint
-        // create new tokio runtime
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all() // enables all tokio features
-            .build() // builds the runtime
-            .unwrap(); // ensures that the runtime is successfully created
-        let _ = rt
-            // runs an async block of code on the newly created Tokio runtime
-            // blocks the current thread
-            .block_on(async {
-                let res = mount_handle_clone
-                // unmount the filesystem
-                    .lock()
-                    .await
-                    .replace(None)
-                    .unwrap()
-                    .unwrap()
-                    .umount()
-                    .await;
-                if res.is_err() {
-                    // forcefull unmount
-                    mount::umount(mountpoint.as_str())?;
-                }
-                Ok::<(), io::Error>(())
-            })
-            .map_err(|err| {
-                // if async block returns error
-                eprintln!("Error: {err}");
-                status.replace(ExitStatusError::Failure(1));
-                err
-            });
-        eprintln!("Bye!");
-        process::exit(status.map_or(0, |x| match x {
-            ExitStatusError::Failure(status) => status,
-        }));
-    })?;
-
-    // spawns a blocking task to keep the program alive indefinitely
-    task::spawn_blocking(|| {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            tokio::time::sleep(tokio::time::Duration::from_secs(u64::MAX)).await;
-        });
-    })
-    .await?;
-    */
-
     // setting up an asynchronous signal handler
     ctrlc_async::set_async_handler(async move{
-        // this block of code will run asynchronously
-        // move = ensures variables captured by the closure are moved safely inside the handler
         eprintln!("Received signal to exit");
 
         let mut status: Option<ExitStatusError> = None;
@@ -430,8 +372,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
 
         let res = if let Some(handle) = mount_handle_clone.lock().await.replace(None) {
             // lock the mutex so the program can safely access the shared resource
-            // take = replace current value of the Option and return old value
-            // let Some = check if mounthandle exists
             if let Some(mount_handle) = handle {
                 // handle exists, check if it contains a valid MountHandle
                 mount_handle.umount().await
@@ -463,7 +403,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         }));
 
     }).expect("Cannot create Ctrl+C handler?");
-
 
     // keep the process alive
     tokio::time::sleep(tokio::time::Duration::from_secs(u64::MAX)).await;
