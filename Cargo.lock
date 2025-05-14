@@ -1887,6 +1887,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tracing-test",
+ "walkdir",
 ]
 
 [[package]]
