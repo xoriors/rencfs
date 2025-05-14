@@ -1059,7 +1059,7 @@ impl EncryptedFs {
         Ok(self.create_directory_entry_iterator(ls_dir).await)
     }
 
-    // Like [`EncryptedFs::read_dir`] but with [`FileAttr`] so we don't need to query again for those.
+    /// Like [`EncryptedFs::read_dir`] but with [`FileAttr`] so we don't need to query again for those.
     pub async fn read_dir_plus(&self, ino: u64) -> FsResult<DirectoryEntryPlusIterator> {
         if !self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
@@ -1127,7 +1127,8 @@ impl EncryptedFs {
                 })
             })
             .collect();
-
+        
+        // do these futures in parallel and return them
         let mut res = VecDeque::with_capacity(futures.len());
         for f in futures {
             res.push_back(f.await.unwrap());
