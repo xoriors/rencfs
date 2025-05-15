@@ -8,7 +8,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0 # TODO: remove this when we cache the builds
+  # CARGO_INCREMENTAL: 0
 
 jobs:
   tests:
@@ -33,6 +33,8 @@ jobs:
           rustup component add rust-analysis  # Rust analysis for tools
           rustup update
           rustup show
+
+      - uses: Swatinem/rust-cache@v1
 
       - name: setup Rust
         run: |
