@@ -21,6 +21,8 @@ use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
 use tracing::{debug, error, instrument};
 use write::CryptoInnerWriter;
+use once_cell::sync::OnceCell;
+use pad::{Alignment, PadStr};
 
 use crate::crypto::read::{CryptoRead, CryptoReadSeek, RingCryptoRead};
 use crate::crypto::write::{CryptoWrite, CryptoWriteSeek, RingCryptoWrite};
@@ -216,9 +218,10 @@ pub fn decrypt(s: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretStr
 }
 
 #[allow(clippy::missing_errors_doc)]
-pub fn decrypt_file_name(name: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretString> {
-    let name = String::from(name).replace('|', "/");
-    decrypt(&name, cipher, key)
+ pub fn decrypt_file_name(name: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretString> {
+    let without_padding = name.trim_end_matches(PAD_CHAR);
+    let b64 = without_padding.replace('|', "/");
+    decrypt(&b64, cipher, key)
 }
 
 #[instrument(skip(password, salt))]
@@ -233,26 +236,50 @@ pub fn derive_key(password: &SecretString, cipher: Cipher, salt: &[u8]) -> Resul
     Ok(SecretVec::new(Box::new(dk)))
 }
 
+const PAD_CHAR: char = '!';
+const FILENAME_PAD_LEN: usize = 240;
+
+static CIPHER_OVERHEAD: OnceCell<usize> = OnceCell::new();
+
+fn cipher_overhead(cipher: Cipher, key: &SecretVec<u8>) -> usize {
+    *CIPHER_OVERHEAD.get_or_init(|| {
+        let empty = SecretString::default();
+        encrypt(&empty, cipher, key).map(|s| s.len()).unwrap_or(0)
+    })
+}
+
 #[allow(clippy::missing_errors_doc)]
 pub fn encrypt_file_name(
     name: &SecretString,
     cipher: Cipher,
     key: &SecretVec<u8>,
 ) -> FsResult<String> {
-    let secret_string = name.expose_secret();
+    // 1️⃣  criptăm textul clar
+    let mut encrypted = encrypt(name, cipher, key)?;
+    encrypted = encrypted.replace('/', "|");          // path-safe
 
-    match secret_string.as_str() {
-        "$." | "$.." => Ok(secret_string.clone()),
-        "." | ".." => Ok(format!("${secret_string}")),
-        _ => {
-            let secret = SecretString::from_str(&secret_string)
-                .map_err(|err| Error::GenericString(err.to_string()))?;
-            let mut encrypted = encrypt(&secret, cipher, key)?;
-            encrypted = encrypted.replace('/', "|");
-
-            Ok(encrypted)
-        }
+    // 2️⃣  verificăm lungimea
+    let encrypted_len = encrypted.len();
+    if encrypted_len > FILENAME_PAD_LEN {
+        return Err(
+            Error::GenericString(format!(
+                "encrypted filename too long: {} bytes (max {})",
+                encrypted_len,
+                FILENAME_PAD_LEN
+            ))
+            .into(),                                  // Error -> FsError
+        );
     }
+
+    // 3️⃣  completăm cu ‘!’ până la 251  bytes
+    let padded = encrypted
+        .as_str()                                     // `pad` e pe `&str`
+        .pad(FILENAME_PAD_LEN, PAD_CHAR, Alignment::Left, false);
+
+    // (opțional) calculăm o singură dată overhead-ul
+    let _ = cipher_overhead(cipher, key);
+
+    Ok(padded)
 }
 
 #[allow(clippy::missing_errors_doc)]
@@ -649,5 +676,48 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod filename_padding_tests {
+    use super::*;
+    use shush_rs::SecretString;
+
+    fn test_key(cipher: Cipher) -> SecretVec<u8> {
+        SecretVec::new(Box::new(vec![0x42; cipher.key_len()]))
+    }
+
+    #[test]
+    fn padded_filename_has_fixed_len() {
+        let secret_name = SecretString::from_str("foo.txt").unwrap();
+        for &cipher in &[Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+            let key = test_key(cipher);
+            let enc = encrypt_file_name(&secret_name, cipher, &key).unwrap();
+            assert_eq!(enc.len(), FILENAME_PAD_LEN);
+            assert!(!enc.starts_with(&PAD_CHAR.to_string()));
+            assert_eq!(enc.chars().last().unwrap(), PAD_CHAR);
+        }
+    }
+
+    #[test]
+    fn decrypt_removes_padding_and_recovers_plaintext() {
+        let secret_name = SecretString::from_str("my_precious_document.pdf").unwrap();
+        for &cipher in &[Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+            let key = test_key(cipher);
+            let enc = encrypt_file_name(&secret_name, cipher, &key).unwrap();
+            let dec = decrypt_file_name(&enc, cipher, &key).unwrap();
+            assert_eq!(dec.expose_secret(), secret_name.expose_secret());
+        }
+    }
+
+    #[test]
+    fn error_when_plaintext_too_long() {
+        let long_name = "x".repeat(300);
+        let secret_name = SecretString::from_str(&long_name).unwrap();
+        let cipher = Cipher::ChaCha20Poly1305;
+        let key = test_key(cipher);
+        let res = encrypt_file_name(&secret_name, cipher, &key);
+        assert!(res.is_err());
     }
 }
