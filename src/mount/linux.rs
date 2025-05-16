@@ -1099,6 +1099,7 @@ impl Filesystem for EncryptedFsFuse3 {
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
         trace!("");
 
+        // Read the directory entries asynchronously
         #[allow(clippy::cast_sign_loss)]
         let iter = match self.get_fs().read_dir(inode).await {
             Err(err) => {
@@ -1107,7 +1108,22 @@ impl Filesystem for EncryptedFsFuse3 {
             }
             Ok(iter) => iter,
         };
+
         let iter = DirectoryEntryIterator(iter, 0);
+
+        // ⚠️ NOTE: The `offset` used here is positional, not the actual FUSE directory entry offset.
+        // This causes problems when a client (like `rm *`) tries to resume a directory listing
+        // and expects to pick up exactly where it left off using that offset.
+        // 
+        // The `skip(offset as usize)` line assumes that FUSE's offset is a zero-based index,
+        // but that’s not always the case. FUSE may give us back the exact `entry.offset`
+        // previously emitted — not a count.
+        //
+        // This mismatch can lead to clients only *seeing* the first 100 entries (due to a broken resume),
+        // but still *deleting* everything (because they iterate over all with different offsets).
+        //
+        // Fixing this properly would require tracking and matching `entry.offset` values,
+        // which means rewriting the iterator and reply logic — a much bigger refactor.
 
         Ok(ReplyDirectory {
             #[allow(clippy::cast_possible_truncation)]
@@ -1115,7 +1131,6 @@ impl Filesystem for EncryptedFsFuse3 {
             entries: stream::iter(iter.skip(offset as usize)),
         })
     }
-
     #[instrument(skip(self), err(level = Level::WARN), ret(level = Level::DEBUG))]
     async fn releasedir(&self, req: Request, inode: Inode, fh: u64, flags: u32) -> Result<()> {
         trace!("");
