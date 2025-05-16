@@ -1092,30 +1092,42 @@ impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn readdir(
         &self,
-        req: Request,
+        _req: Request,
         inode: u64,
-        fh: u64,
+        _fh: u64,
         offset: i64,
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
         trace!("");
 
-        #[allow(clippy::cast_sign_loss)]
-        let iter = match self.get_fs().read_dir(inode).await {
+        let dir_entries = match self.get_fs().read_dir(inode).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());
             }
-            Ok(iter) => iter,
+            Ok(entries) => entries,
         };
-        let iter = DirectoryEntryIterator(iter, 0);
+
+        let iter = DirectoryEntryIterator(dir_entries, 0);
+
+        let entries = iter
+            .skip_while(move |entry| {
+                if offset == 0 {
+                    false
+                } else {
+                    match entry {
+                        Ok(e) => e.offset != offset,
+                        Err(_) => false,
+                    }
+                }
+            })
+            .skip(if offset == 0 { 0 } else { 1 });
 
         Ok(ReplyDirectory {
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_sign_loss)]
-            entries: stream::iter(iter.skip(offset as usize)),
+            entries: stream::iter(entries),
         })
     }
-
     #[instrument(skip(self), err(level = Level::WARN), ret(level = Level::DEBUG))]
     async fn releasedir(&self, req: Request, inode: Inode, fh: u64, flags: u32) -> Result<()> {
         trace!("");
