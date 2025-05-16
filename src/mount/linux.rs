@@ -1092,40 +1092,43 @@ impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn readdir(
         &self,
-        _req: Request,
+        req: Request,
         inode: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
         trace!("");
 
-        let dir_entries = match self.get_fs().read_dir(inode).await {
+        // Read the directory entries asynchronously
+        #[allow(clippy::cast_sign_loss)]
+        let iter = match self.get_fs().read_dir(inode).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());
             }
-            Ok(entries) => entries,
+            Ok(iter) => iter,
         };
 
-        let iter = DirectoryEntryIterator(dir_entries, 0);
+        let iter = DirectoryEntryIterator(iter, 0);
 
-        let entries = iter
-            .skip_while(move |entry| {
-                if offset == 0 {
-                    false
-                } else {
-                    match entry {
-                        Ok(e) => e.offset != offset,
-                        Err(_) => false,
-                    }
-                }
-            })
-            .skip(if offset == 0 { 0 } else { 1 });
+        // ⚠️ NOTE: The `offset` used here is positional, not the actual FUSE directory entry offset.
+        // This causes problems when a client (like `rm *`) tries to resume a directory listing
+        // and expects to pick up exactly where it left off using that offset.
+        // 
+        // The `skip(offset as usize)` line assumes that FUSE's offset is a zero-based index,
+        // but that’s not always the case. FUSE may give us back the exact `entry.offset`
+        // previously emitted — not a count.
+        //
+        // This mismatch can lead to clients only *seeing* the first 100 entries (due to a broken resume),
+        // but still *deleting* everything (because they iterate over all with different offsets).
+        //
+        // Fixing this properly would require tracking and matching `entry.offset` values,
+        // which means rewriting the iterator and reply logic — a much bigger refactor.
 
         Ok(ReplyDirectory {
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_sign_loss)]
-            entries: stream::iter(entries),
+            entries: stream::iter(iter.skip(offset as usize)),
         })
     }
     #[instrument(skip(self), err(level = Level::WARN), ret(level = Level::DEBUG))]
