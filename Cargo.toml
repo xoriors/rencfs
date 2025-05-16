@@ -60,7 +60,7 @@ subtle = "2.6.1"
 bon = "3.3.0"
 shush-rs = "0.1.10"
 criterion = { version = "0.5.1", features = ["html_reports"] }
-
+ctrlc-async = "3.2.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 fuse3 = { version = "0.8.1", features = ["tokio-runtime", "unprivileged"] }
 

@@ -6,7 +6,6 @@ use std::{env, io, panic, process};
 
 use anyhow::Result;
 use clap::{crate_authors, crate_name, crate_version, Arg, ArgAction, ArgMatches, Command};
-use ctrlc::set_handler;
 use rpassword::read_password;
 use shush_rs::{ExposeSecret, SecretString};
 use strum::IntoEnumIterator;
@@ -14,6 +13,8 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::{fs, task};
 use tracing::{error, info, warn, Level};
+use ctrlc_async;
+
 
 use crate::keyring;
 use rencfs::crypto::Cipher;
@@ -356,51 +357,55 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     })?;
     let mount_handle = Arc::new(Mutex::new(Some(Some(mount_handle))));
     let mount_handle_clone = mount_handle.clone();
-    // cleanup on process kill
-    set_handler(move || {
-        // can't use tracing methods here as guard cannot be dropper to flush content before we exit
-        eprintln!("Received signal to exit");
-        let mut status: Option<ExitStatusError> = None;
-        remove_pass();
-        eprintln!("Unmounting {mountpoint}");
-        // create new tokio runtime
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let _ = rt
-            .block_on(async {
-                let res = mount_handle_clone
-                    .lock()
-                    .await
-                    .replace(None)
-                    .unwrap()
-                    .unwrap()
-                    .umount()
-                    .await;
-                if res.is_err() {
-                    mount::umount(mountpoint.as_str())?;
-                }
-                Ok::<(), io::Error>(())
-            })
-            .map_err(|err| {
-                eprintln!("Error: {err}");
-                status.replace(ExitStatusError::Failure(1));
-                err
-            });
-        eprintln!("Bye!");
-        process::exit(status.map_or(0, |x| match x {
-            ExitStatusError::Failure(status) => status,
-        }));
-    })?;
 
-    task::spawn_blocking(|| {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            tokio::time::sleep(tokio::time::Duration::from_secs(u64::MAX)).await;
-        });
-    })
-    .await?;
+    // cleanup on process kill
+    // setting up an asynchronous signal handler
+    ctrlc_async::set_async_handler(async move{
+        eprintln!("Received signal to exit");
+
+        let mut status: Option<ExitStatusError> = None;
+
+        remove_pass();
+        // erase password before the program exits
+        eprintln!("Unmounting {mountpoint}");
+        // unmount the filesystem at the specified mountpoint
+
+        let res = if let Some(handle) = mount_handle_clone.lock().await.replace(None) {
+            // lock the mutex so the program can safely access the shared resource
+            if let Some(mount_handle) = handle {
+                // handle exists, check if it contains a valid MountHandle
+                mount_handle.umount().await
+                // unmount filesystem
+            } else {
+                Err(io::Error::new(io::ErrorKind::Other, "No mount handle available"))
+            }
+        } else {
+            eprintln!("No mount handle available, skipping unmount.");
+            Ok(())
+        };
+
+        // handle unmount errors
+        if let Err(err) = res {
+            eprintln!("Error during unmount: {err}");
+            if let Err(force_err) = mount::umount(&mountpoint) {
+                // the forceful unmount
+                eprintln!("Error force-unmounting: {force_err}");
+                status = Some(ExitStatusError::Failure(1));
+            } else {
+                status = Some(ExitStatusError::Failure(1));
+            }
+        }
+
+        eprintln!("Bye!");
+        // terminate with appropriate exit code
+        process::exit(status.map_or(0, |x| match x {
+            ExitStatusError::Failure(code) => code,
+        }));
+
+    }).expect("Cannot create Ctrl+C handler?");
+
+    // keep the process alive
+    tokio::time::sleep(tokio::time::Duration::from_secs(u64::MAX)).await;
 
     Ok(())
 }
