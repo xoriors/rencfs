@@ -1092,47 +1092,31 @@ impl Filesystem for EncryptedFsFuse3 {
     #[instrument(skip(self), err(level = Level::DEBUG))]
     async fn readdir(
         &self,
-        _req: Request,
+        req: Request,
         inode: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
     ) -> Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
         trace!("");
-
-        let dir_entries = match self.get_fs().read_dir(inode).await {
+        // Read the directory entries asynchronously
+        #[allow(clippy::cast_sign_loss)]
+        let iter = match self.get_fs().read_dir(inode).await {
             Err(err) => {
                 error!(err = %err);
                 return Err(EIO.into());
             }
-            Ok(entries) => entries,
+            Ok(iter) => iter,
         };
-
-        let iter = DirectoryEntryIterator(dir_entries, 0);
-
-        let entries = iter
-            .skip_while(move |entry| {
-                if offset == 0 {
-                    false
-                } else {
-                    match entry {
-                        Ok(e) => e.offset != offset,
-                        Err(_) => false,
-                    }
-                }
-            })
-            .skip(if offset == 0 { 0 } else { 1 });
+        let iter = DirectoryEntryIterator(iter, 0);
+        // FUSE expects offset to match entry.offset, not just index.
+        // This mismatch can cause truncated listings in tools like `rm *`.
+        // Fixing it would require deeper changes to entry handling.
 
         Ok(ReplyDirectory {
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_sign_loss)]
-            entries: stream::iter(entries),
+            entries: stream::iter(iter.skip(offset as usize)),
         })
-    }
-    #[instrument(skip(self), err(level = Level::WARN), ret(level = Level::DEBUG))]
-    async fn releasedir(&self, req: Request, inode: Inode, fh: u64, flags: u32) -> Result<()> {
-        trace!("");
-
-        Ok(())
     }
 
     #[instrument(skip(self), err(level = Level::WARN), ret(level = Level::DEBUG))]
