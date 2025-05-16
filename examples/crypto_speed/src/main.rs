@@ -7,7 +7,6 @@ use std::time::Instant;
 use std::{fs, io};
 
 use anyhow::Result;
-use rand_core::RngCore;
 use shush_rs::SecretVec;
 
 use rencfs::crypto;
@@ -155,6 +154,8 @@ where
 
 fn get_key(cipher: Cipher) -> io::Result<SecretVec<u8>> {
     let mut key = vec![0; cipher.key_len()];
-    crypto::create_rng().fill_bytes(key.as_mut_slice());
+    let mut rng = crypto::create_rng();
+    // Cast to &mut dyn RngCore to access trait methods
+    rand_core::RngCore::fill_bytes(&mut rng, key.as_mut_slice());
     Ok(SecretVec::from(key))
 }
