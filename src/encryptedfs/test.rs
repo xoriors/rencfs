@@ -23,7 +23,7 @@ use crate::{crypto, test_common};
 
 static ROOT_INODE_STR: &str = "1";
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_write() {
@@ -530,7 +530,7 @@ async fn test_copy_file_range() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_read_dir() {
@@ -726,7 +726,7 @@ async fn test_read_dir() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_read_dir_plus() {
@@ -1188,7 +1188,7 @@ async fn test_create_structure_and_root() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_create() {
@@ -1379,7 +1379,7 @@ async fn test_create() {
     .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 async fn test_rename() {
