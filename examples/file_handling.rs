@@ -19,7 +19,7 @@ struct PasswordProviderImpl;
 
 impl PasswordProvider for PasswordProviderImpl {
     fn get_password(&self) -> Option<SecretString> {
-        Some(SecretString::from_str("password").unwrap())
+        Some(SecretString::from_str("password")?)
     }
 }
 
@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    let file_name = SecretString::from_str("file1").unwrap();
+    let file_name = SecretString::from_str("file1")?;
     let (file_handle, attr) = fs
         .create(ROOT_INODE, &file_name, file_attributes(), false, true)
         .await?;
@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-const fn file_attributes() -> CreateFileAttr {
+fn file_attributes() -> CreateFileAttr {
     CreateFileAttr {
         kind: FileType::RegularFile,
         perm: 0o644, // Permissions

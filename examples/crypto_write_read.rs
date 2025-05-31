@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     let mut file = File::open(path_in.clone())?;
     let mut writer = crypto::create_write(File::create(out.clone())?, cipher, &key);
     info!("encrypt file");
-    io::copy(&mut file, &mut writer).unwrap();
+    io::copy(&mut file, &mut writer)?;
     writer.finish()?;
 
     let mut reader = crypto::create_read(File::open(out)?, cipher, &key);
