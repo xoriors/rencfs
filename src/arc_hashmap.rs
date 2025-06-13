@@ -43,16 +43,16 @@ impl<K: Eq + Hash, V> Default for ArcHashMap<K, V> {
 }
 
 impl<K: Eq + Hash, V> ArcHashMap<K, V> {
-    pub fn insert(&self, key: K, value: V) -> Holder<K, V> {
+    pub fn insert(&self, key: K, value: V) -> Holder<'_, K, V> {
         self.get_or_insert_with(key, || value)
     }
 
     #[allow(clippy::missing_panics_doc)]
-    pub fn get(&self, key: &K) -> Option<Holder<K, V>> {
+    pub fn get(&self, key: &K) -> Option<Holder<'_, K, V>> {
         self.get_internal(self.map.read().expect("cannot obtain lock").get(key))
     }
 
-    fn get_internal(&self, v: Option<&Value<V>>) -> Option<Holder<K, V>> {
+    fn get_internal(&self, v: Option<&Value<V>>) -> Option<Holder<'_, K, V>> {
         if let Some((v, rc)) = v {
             rc.fetch_add(1, Ordering::SeqCst);
             return Some(Holder {
@@ -65,7 +65,7 @@ impl<K: Eq + Hash, V> ArcHashMap<K, V> {
     }
 
     #[allow(clippy::missing_panics_doc)]
-    pub fn get_or_insert_with<F>(&self, key: K, f: F) -> Holder<K, V>
+    pub fn get_or_insert_with<F>(&self, key: K, f: F) -> Holder<'_, K, V>
     where
         F: FnOnce() -> V,
     {
