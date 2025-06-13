@@ -63,9 +63,7 @@ impl Drop for TestResource {
         match res {
             Ok(_) => println!("Succesfully unmounted"),
             Err(e) => {
-                panic!(
-                    "Something went wrong when unmounting {e}.You may need to manually unmount"
-                )
+                panic!("Something went wrong when unmounting {e}.You may need to manually unmount")
             }
         }
     }
