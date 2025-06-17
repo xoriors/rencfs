@@ -29,7 +29,7 @@ data.
 # Introduction
 
 - It all started as a learning project for Rust and then evolved into something more.
-- Motivation
+- Motivation  
   Create a `simple,` `performant,` `modular` and `ergonomic` yet `very secure` `encrypted filesystem` focused
   on `privacy`, also `open source`, which correctly and safely uses `well-known and audited` crates
   as `cryptographic primitives`.
