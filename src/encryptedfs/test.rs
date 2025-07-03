@@ -1540,8 +1540,14 @@ async fn test_create() {
                 .unwrap();
 
             // File in a nested directory from another nested directory
-            let partial_path_file_2 = SecretString::from_str("test-dir-3/test-dir-4/test-file-2").unwrap();
-            let partial_path_ino = fs.find_by_name(ROOT_INODE, &test_dir).await.unwrap().unwrap().ino;
+            let partial_path_file_2 =
+                SecretString::from_str("test-dir-3/test-dir-4/test-file-2").unwrap();
+            let partial_path_ino = fs
+                .find_by_name(ROOT_INODE, &test_dir)
+                .await
+                .unwrap()
+                .unwrap()
+                .ino;
             let (_fh, _attr) = fs
                 .create(
                     partial_path_ino,
