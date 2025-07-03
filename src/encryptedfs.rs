@@ -668,6 +668,39 @@ impl EncryptedFs {
         }
     }
 
+    // Must be given a path (as SecretString) and the root ino for the path
+    // Parses the path for its components and checks if each component exists EXCLUDING the last one.
+    // The last file/directory must be checked separately.
+    // If given only a file/directory name returns them again.
+    // When given a path, returns the file/directory name and the new ino
+    async fn handle_path(&self, parent: u64, name: SecretString) -> FsResult<(u64, SecretString)> {
+        let input = name.expose_secret().to_string();
+        let path = input.strip_prefix(".").unwrap_or(&input).to_owned();
+        let mut path_segments = vec![];
+        for segment in path.split("/") {
+            if segment.is_empty() {
+                continue;
+            }
+            let segment = SecretString::from_str(segment).unwrap();
+            path_segments.push(segment);
+        }
+        let file_name = path_segments
+            .last()
+            .ok_or_else(|| FsError::InvalidInput("No filename"))?
+            .clone();
+        let mut current_ino: u64 = parent;
+        if path_segments.len() > 1 {
+            for segment in path_segments.iter().take(path_segments.len() - 1) {
+                current_ino = self
+                    .find_by_name(current_ino, &segment.clone())
+                    .await?
+                    .ok_or_else(|| FsError::InodeNotFound)?
+                    .ino;
+            }
+        }
+        Ok((current_ino, file_name))
+    }
+
     /// Create a new node in the filesystem
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::missing_errors_doc)]
@@ -689,10 +722,10 @@ impl EncryptedFs {
         if !self.exists(parent) {
             return Err(FsError::InodeNotFound);
         }
-        if self.exists_by_name(parent, name)? {
+        let (parent, name) = self.handle_path(parent, name.clone()).await?;
+        if self.exists_by_name(parent, &name)? {
             return Err(FsError::AlreadyExists);
         }
-        self.validate_filename(name)?;
 
         // spawn on a dedicated runtime to not interfere with other higher priority tasks
         let self_clone = self
@@ -891,12 +924,12 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
 
-        if !self.exists_by_name(parent, name)? {
+        let (parent, name) = self.handle_path(parent, name.clone()).await?;
+        if !self.exists_by_name(parent, &name)? {
             return Err(FsError::NotFound("name not found"));
         }
-
         let attr = self
-            .find_by_name(parent, name)
+            .find_by_name(parent, &name)
             .await?
             .ok_or(FsError::NotFound("name not found"))?;
         if !matches!(attr.kind, FileType::Directory) {
@@ -967,12 +1000,13 @@ impl EncryptedFs {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
-        if !self.exists_by_name(parent, name)? {
+        let (parent, name) = self.handle_path(parent, name.clone()).await?;
+        if !self.exists_by_name(parent, &name)? {
             return Err(FsError::NotFound("name not found"));
         }
 
         let attr = self
-            .find_by_name(parent, name)
+            .find_by_name(parent, &name)
             .await?
             .ok_or(FsError::NotFound("name not found"))?;
         if !matches!(attr.kind, FileType::RegularFile) {
@@ -2011,10 +2045,11 @@ impl EncryptedFs {
         if !self.is_dir(new_parent) {
             return Err(FsError::InvalidInodeType);
         }
-        if !self.exists_by_name(parent, name)? {
+        let (parent, name) = self.handle_path(parent, name.clone()).await?;
+        if !self.exists_by_name(parent, &name)? {
             return Err(FsError::NotFound("name not found"));
         }
-        self.validate_filename(new_name)?;
+        let (new_parent, new_name) = self.handle_path(new_parent, new_name.clone()).await?;
 
         if parent == new_parent && name.expose_secret() == new_name.expose_secret() {
             // no-op
@@ -2022,21 +2057,21 @@ impl EncryptedFs {
         }
 
         // Only overwrite an existing directory if it's empty
-        if let Ok(Some(new_attr)) = self.find_by_name(new_parent, new_name).await {
+        if let Ok(Some(new_attr)) = self.find_by_name(new_parent, &new_name).await {
             if new_attr.kind == FileType::Directory && self.len(new_attr.ino)? > 0 {
                 return Err(FsError::NotEmpty);
             }
         }
 
         let attr = self
-            .find_by_name(parent, name)
+            .find_by_name(parent, &name)
             .await?
             .ok_or(FsError::NotFound("name not found"))?;
         // remove from parent contents
-        self.remove_directory_entry(parent, name).await?;
+        self.remove_directory_entry(parent, &name).await?;
         // remove from new_parent contents, if exists
-        if self.exists_by_name(new_parent, new_name)? {
-            self.remove_directory_entry(new_parent, new_name).await?;
+        if self.exists_by_name(new_parent, &new_name)? {
+            self.remove_directory_entry(new_parent, &new_name).await?;
         }
         // add to new parent contents
         self.insert_directory_entry(
@@ -2421,6 +2456,7 @@ impl EncryptedFs {
         self.data_dir.join(CONTENTS_DIR).join(ino.to_string())
     }
 
+    // TO-DO-handle-path-maybe
     async fn remove_directory_entry(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         let parent_path = self.contents_path(parent);
         // remove from HASH

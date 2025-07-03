@@ -351,6 +351,7 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
 impl<W: CryptoInnerWriter + Send + Sync> Seek for RingCryptoWrite<W> {
     #[allow(clippy::cast_possible_wrap)]
     #[allow(clippy::cast_sign_loss)]
+    #[allow(clippy::manual_is_multiple_of)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let new_pos = match pos {
             SeekFrom::Start(pos) => pos as i64,
