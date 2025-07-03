@@ -188,12 +188,7 @@ pub async fn read_exact(fs: &EncryptedFs, ino: u64, offset: u64, buf: &mut [u8],
 }
 
 #[allow(dead_code)]
-pub fn bench<F: Future + Send + Sync>(
-    key: &'static str,
-    worker_threads: usize,
-    read_only: bool,
-    f: F,
-) {
+pub fn bench<F: Future + Send>(key: &'static str, worker_threads: usize, read_only: bool, f: F) {
     block_on(
         async {
             run_test(TestSetup { key, read_only }, f).await;
