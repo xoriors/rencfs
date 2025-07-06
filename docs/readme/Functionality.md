@@ -1,5 +1,7 @@
 # Functionality
 
+[Tech slides](https://miro.com/app/board/uXjVLa8i1h0=/?share_link_id=169887669731).
+
 Some of these are still being worked on and marked with `[WIP]`.
 
 - It keeps all `encrypted` data and `master encryption key` in a dedicated directory with files structured on `inodes` (with
