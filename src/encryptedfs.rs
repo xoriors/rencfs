@@ -1742,48 +1742,108 @@ impl EncryptedFs {
         Ok(())
     }
 
-    /// Helpful when we want to copy just some portions of the file.
+    // /// Helpful when we want to copy just some portions of the file.
+    // pub async fn copy_file_range(
+    //     &self,
+    //     file_range_req: &CopyFileRangeReq,
+    //     size: usize,
+    // ) -> FsResult<usize> {
+    //     if self.read_only {
+    //         return Err(FsError::ReadOnly);
+    //     }
+    //     if self.is_dir(file_range_req.src_ino) || self.is_dir(file_range_req.dest_ino) {
+    //         return Err(FsError::InvalidInodeType);
+    //     }
+
+    //     let mut buf = vec![0; size];
+    //     let len = self
+    //         .read(
+    //             file_range_req.src_ino,
+    //             file_range_req.src_offset,
+    //             &mut buf,
+    //             file_range_req.src_fh,
+    //         )
+    //         .await?;
+    //     if len == 0 {
+    //         return Ok(0);
+    //     }
+    //     let mut copied = 0;
+    //     while copied < size {
+    //         let len = self
+    //             .write(
+    //                 file_range_req.dest_ino,
+    //                 file_range_req.dest_offset,
+    //                 &buf[copied..len],
+    //                 file_range_req.dest_fh,
+    //             )
+    //             .await?;
+    //         if len == 0 && copied < size {
+    //             error!(len, "Failed to copy all read bytes");
+    //             return Err(FsError::Other("Failed to copy all read bytes"));
+    //         }
+    //         copied += len;
+    //     }
+    //     Ok(len)
+    // }
+
+    /// Copy `size` bytes from `src` to `dest`, honoring the cipher’s maximum
+    /// plaintext chunk length so we never exceed a single-block encrypt/write.
     pub async fn copy_file_range(
         &self,
-        file_range_req: &CopyFileRangeReq,
-        size: usize,
+        req: &CopyFileRangeReq,
+        size: usize
     ) -> FsResult<usize> {
+        // Safety guards
         if self.read_only {
-            return Err(FsError::ReadOnly);
+            return Err(FsError::ReadOnly);   // volume mounted read-only
         }
-        if self.is_dir(file_range_req.src_ino) || self.is_dir(file_range_req.dest_ino) {
-            return Err(FsError::InvalidInodeType);
+        if self.is_dir(req.src_ino) || self.is_dir(req.dest_ino) {
+            return Err(FsError::InvalidInodeType);   // can’t copy directories
         }
 
-        let mut buf = vec![0; size];
-        let len = self
-            .read(
-                file_range_req.src_ino,
-                file_range_req.src_offset,
-                &mut buf,
-                file_range_req.src_fh,
-            )
-            .await?;
-        if len == 0 {
-            return Ok(0);
-        }
-        let mut copied = 0;
-        while copied < size {
-            let len = self
-                .write(
-                    file_range_req.dest_ino,
-                    file_range_req.dest_offset,
-                    &buf[copied..len],
-                    file_range_req.dest_fh,
-                )
+        // Copy in chunks no larger than the cipher can handle in one go
+        let chunk = self.cipher.max_plaintext_len();
+        let mut left = size;
+        let mut total = 0usize;
+        let mut src_off = req.src_offset;
+        let mut dest_off = req.dest_offset;
+        let mut buffer = vec![0u8; chunk.min(size)];
+
+        while left > 0 {
+            // 1) Read a chunk from src
+            let want = left.min(buffer.len());
+            let n = self
+                .read(req.src_ino, src_off, &mut buffer[..want], req.src_fh)
                 .await?;
-            if len == 0 && copied < size {
-                error!(len, "Failed to copy all read bytes");
-                return Err(FsError::Other("Failed to copy all read bytes"));
+            if n == 0 {
+                break;
+            } // hit EOF early — stop
+
+            // 2) Write the entire chunk into dest file
+            let mut written = 0;
+            while written < n {
+                let w = self
+                    .write(
+                        req.dest_ino,
+                        dest_off + written as u64,
+                        &buffer[written..n],
+                        req.dest_fh,
+                    )
+                    .await?;
+                if w == 0 {
+                    return Err(FsError::Other("Failed to copy all read bytes"));
+                }
+                written += w;
             }
-            copied += len;
+
+            // Advance offsets / counters for next iteration
+            src_off += n as u64;
+            dest_off += n as u64;
+            total += n;
+            left -= n;
         }
-        Ok(len)
+
+        Ok(total) // return exact bytes copied
     }
 
     /// Open a file. We can open multiple times for read but only one to write at a time.
