@@ -674,16 +674,13 @@ impl EncryptedFs {
     // If given only a file/directory name returns them again.
     // When given a path, returns the file/directory name and the new ino
     async fn handle_path(&self, parent: u64, name: SecretString) -> FsResult<(u64, SecretString)> {
-        let input = name.expose_secret().to_string();
+        let input = name.expose_secret();
         let path = input.strip_prefix(".").unwrap_or(&input).to_owned();
-        let mut path_segments = vec![];
-        for segment in path.split(std::path::MAIN_SEPARATOR) {
-            if segment.is_empty() {
-                continue;
-            }
-            let segment = SecretString::from_str(segment).unwrap();
-            path_segments.push(segment);
-        }
+        let path_segments: Vec<SecretString> = path
+            .split(std::path::MAIN_SEPARATOR)
+            .filter(|s| !s.is_empty())
+            .map(|s| SecretString::from_str(s).unwrap())
+            .collect();
         let file_name = path_segments
             .last()
             .ok_or_else(|| FsError::InvalidInput("No filename"))?
@@ -692,7 +689,7 @@ impl EncryptedFs {
         if path_segments.len() > 1 {
             for segment in path_segments.iter().take(path_segments.len() - 1) {
                 current_ino = self
-                    .find_by_name(current_ino, &segment.clone())
+                    .find_by_name(current_ino, segment)
                     .await?
                     .ok_or_else(|| FsError::InodeNotFound)?
                     .ino;
