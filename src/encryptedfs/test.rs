@@ -1016,6 +1016,7 @@ async fn test_remove_dir() {
         },
         async {
             let fs = get_fs().await;
+            // directories in root
             for dir in ["test-dir", "test-dir_", "test-dir-"] {
                 let test_dir = SecretString::from_str(dir).unwrap();
                 let _ = fs
@@ -1044,6 +1045,58 @@ async fn test_remove_dir() {
                         .count()
                 );
             }
+
+            // nested directories in root
+            let test_dir = SecretString::from_str("test-dir").unwrap();
+            let (_, attr1) = fs
+                .create(
+                    ROOT_INODE,
+                    &test_dir,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let test_dir1 = SecretString::from_str("test-dir/test-dir-1").unwrap();
+            let (_, attr2) = fs
+                .create(
+                    ROOT_INODE,
+                    &test_dir1,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let test_dir2 = SecretString::from_str("test-dir/test-dir-1/test-dir-2").unwrap();
+            let (_, _) = fs
+                .create(
+                    ROOT_INODE,
+                    &test_dir2,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+            // Remove nested folder, not empty
+            assert!(matches!(
+                fs.remove_dir(ROOT_INODE, &test_dir1).await,
+                Err(FsError::NotEmpty)
+            ));
+
+            // Remove nested folders
+            fs.remove_dir(ROOT_INODE, &test_dir2).await.unwrap();
+            assert!(!fs.exists_by_name(attr2.ino, &test_dir2).unwrap());
+
+            fs.remove_dir(ROOT_INODE, &test_dir1).await.unwrap();
+            assert!(!fs.exists_by_name(attr1.ino, &test_dir1).unwrap());
+
+            fs.remove_dir(ROOT_INODE, &test_dir).await.unwrap();
+            assert!(!fs.exists_by_name(ROOT_INODE, &test_dir).unwrap());
         },
     )
     .await;
@@ -1090,6 +1143,48 @@ async fn test_remove_file() {
                         .count()
                 );
             }
+
+            // nested directories in root
+            let test_dir = SecretString::from_str("test-dir").unwrap();
+            let (_, _) = fs
+                .create(
+                    ROOT_INODE,
+                    &test_dir,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let test_dir1 = SecretString::from_str("test-dir/test-dir-1").unwrap();
+            let (_, _) = fs
+                .create(
+                    ROOT_INODE,
+                    &test_dir1,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            // File in nested directory
+            let test_file = SecretString::from_str("test-dir/test-dir-1/test-file").unwrap();
+            let (_, _) = fs
+                .create(
+                    ROOT_INODE,
+                    &test_file,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            // Remove nested folders
+            fs.remove_file(ROOT_INODE, &test_file).await.unwrap();
+            assert!(!fs.exists_by_name(ROOT_INODE, &test_file).unwrap());
         },
     )
     .await;
@@ -1349,6 +1444,134 @@ async fn test_create() {
                 fs.find_by_name(parent, &test_dir_2).await.unwrap().unwrap()
             );
 
+            // directory in another directory from ROOT
+            let test_dir_3 = SecretString::from_str("test-dir/test-dir-3").unwrap();
+            let (_fh, attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &test_dir_3,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let test_dir_3 = SecretString::from_str("test-dir-3").unwrap();
+            let _ = fs.find_by_name(attr.ino, &test_dir_3).await.unwrap();
+
+            let test_dir_4 = SecretString::from_str("test-dir/test-dir-3/test-dir-4").unwrap();
+            let (_fh, _attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &test_dir_4,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            // existing dir
+            assert!(matches!(
+                fs.create(
+                    ROOT_INODE,
+                    &test_dir_4,
+                    create_attr(FileType::Directory),
+                    false,
+                    false
+                )
+                .await,
+                Err(FsError::AlreadyExists)
+            ));
+
+            // incorrect path
+            let test_dir_bogus =
+                SecretString::from_str("test-dir/test-dir-3/test-dir-bogus/test-dir-5").unwrap();
+            assert!(matches!(
+                fs.create(
+                    ROOT_INODE,
+                    &test_dir_bogus,
+                    create_attr(FileType::Directory),
+                    false,
+                    false
+                )
+                .await,
+                Err(FsError::InodeNotFound)
+            ));
+            // File in a nested directory from root
+            let test_file_2 = SecretString::from_str("test-dir/test-file-1").unwrap();
+            let (_fh, _attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &test_file_2,
+                    create_attr(FileType::RegularFile),
+                    true,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            // existing file
+            assert!(matches!(
+                fs.create(
+                    ROOT_INODE,
+                    &test_file_2,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    false
+                )
+                .await,
+                Err(FsError::AlreadyExists)
+            ));
+
+            // File in deeper nested dir from root
+            let test_file_3 =
+                SecretString::from_str("test-dir/test-dir-3/test-dir-4/test-file-1").unwrap();
+            let (_fh, _attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &test_file_3,
+                    create_attr(FileType::RegularFile),
+                    true,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            // File in a nested directory from another nested directory
+            let partial_path_file_2 =
+                SecretString::from_str("test-dir-3/test-dir-4/test-file-2").unwrap();
+            let partial_path_ino = fs
+                .find_by_name(ROOT_INODE, &test_dir)
+                .await
+                .unwrap()
+                .unwrap()
+                .ino;
+            let (_fh, _attr) = fs
+                .create(
+                    partial_path_ino,
+                    &partial_path_file_2,
+                    create_attr(FileType::RegularFile),
+                    true,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            // existing file
+            assert!(matches!(
+                fs.create(
+                    ROOT_INODE,
+                    &test_file_3,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    false
+                )
+                .await,
+                Err(FsError::AlreadyExists)
+            ));
+
             // existing file
             assert!(matches!(
                 fs.create(
@@ -1578,6 +1801,117 @@ async fn test_rename() {
                     .count(),
                 1
             );
+
+            // new file to another directory with absolute paths
+            let nested_a_dir = SecretString::from_str("nested_A_dir").unwrap();
+            let (_, _attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &nested_a_dir,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+            let nested_a_dir_1 = SecretString::from_str("nested_A_dir/nested_A_dir_1").unwrap();
+            let (_, _attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &nested_a_dir_1,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+            let nested_a_dir_2 =
+                SecretString::from_str("nested_A_dir/nested_A_dir_1/nested_A_dir_2").unwrap();
+            let (_, nested_source_attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &nested_a_dir_2,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let nested_b_dir = SecretString::from_str("nested_B_dir").unwrap();
+            let (_, _attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &nested_b_dir,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+            let nested_b_dir_1 = SecretString::from_str("nested_B_dir/nested_B_dir_1").unwrap();
+            let (_, _attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &nested_b_dir_1,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+            let nested_b_dir_2 =
+                SecretString::from_str("nested_B_dir/nested_B_dir_1/nested_B_dir_2").unwrap();
+            let (_, nested_dest_attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &nested_b_dir_2,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let nested_file =
+                SecretString::from_str("nested_A_dir/nested_A_dir_1/nested_A_dir_2/nested_file")
+                    .unwrap();
+            let nested_file_alone = SecretString::from_str("nested_file").unwrap();
+            let (_, _attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &nested_file,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let nested_file_new = SecretString::from_str(
+                "nested_B_dir/nested_B_dir_1/nested_B_dir_2/nested_file_new",
+            )
+            .unwrap();
+            let nested_file_new_alone = SecretString::from_str("nested_file_new").unwrap();
+            fs.rename(ROOT_INODE, &nested_file, ROOT_INODE, &nested_file_new)
+                .await
+                .unwrap();
+            assert!(fs
+                .exists_by_name(nested_dest_attr.ino, &nested_file_new_alone)
+                .unwrap());
+            assert!(!fs
+                .exists_by_name(nested_source_attr.ino, &nested_file_alone)
+                .unwrap());
+
+            // rename existing nested directory
+            let nested_b_dir_2_new =
+                SecretString::from_str("nested_B_dir/nested_B_dir_1/nested_B_dir_2_new").unwrap();
+            fs.rename(ROOT_INODE, &nested_b_dir_2, ROOT_INODE, &nested_b_dir_2_new)
+                .await
+                .unwrap();
+            assert!(fs
+                .exists_by_name(nested_dest_attr.ino, &nested_file_new_alone)
+                .unwrap());
 
             // new directory to another directory
             let new_parent = new_parent_attr.ino;
