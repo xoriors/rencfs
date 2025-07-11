@@ -73,6 +73,7 @@ impl PasswordProvider for PasswordProviderImpl {
     }
 }
 #[allow(dead_code)]
+
 async fn setup(setup: TestSetup) -> SetupResult {
     let path = TESTS_DATA_DIR.join(setup.key);
     let read_only = setup.read_only;

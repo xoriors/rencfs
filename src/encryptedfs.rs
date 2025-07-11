@@ -2456,7 +2456,6 @@ impl EncryptedFs {
         self.data_dir.join(CONTENTS_DIR).join(ino.to_string())
     }
 
-    // TO-DO-handle-path-maybe
     async fn remove_directory_entry(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         let parent_path = self.contents_path(parent);
         // remove from HASH
