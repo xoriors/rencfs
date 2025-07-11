@@ -720,6 +720,8 @@ impl EncryptedFs {
             return Err(FsError::InodeNotFound);
         }
         let (parent, name) = self.handle_path(parent, name.clone()).await?;
+        self.validate_filename(&name)?;
+
         if self.exists_by_name(parent, &name)? {
             return Err(FsError::AlreadyExists);
         }
@@ -922,6 +924,8 @@ impl EncryptedFs {
         }
 
         let (parent, name) = self.handle_path(parent, name.clone()).await?;
+        self.validate_filename(&name)?;
+
         if !self.exists_by_name(parent, &name)? {
             return Err(FsError::NotFound("name not found"));
         }
@@ -998,6 +1002,8 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
         let (parent, name) = self.handle_path(parent, name.clone()).await?;
+        self.validate_filename(&name)?;
+
         if !self.exists_by_name(parent, &name)? {
             return Err(FsError::NotFound("name not found"));
         }
@@ -2043,10 +2049,12 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
         let (parent, name) = self.handle_path(parent, name.clone()).await?;
+        self.validate_filename(&name)?;
         if !self.exists_by_name(parent, &name)? {
             return Err(FsError::NotFound("name not found"));
         }
         let (new_parent, new_name) = self.handle_path(new_parent, new_name.clone()).await?;
+        self.validate_filename(&new_name)?;
 
         if parent == new_parent && name.expose_secret() == new_name.expose_secret() {
             // no-op
