@@ -72,8 +72,8 @@ impl PasswordProvider for PasswordProviderImpl {
         Some(SecretString::from_str("password").unwrap())
     }
 }
-#[allow(dead_code)]
 
+#[allow(dead_code)]
 async fn setup(setup: TestSetup) -> SetupResult {
     let path = TESTS_DATA_DIR.join(setup.key);
     let read_only = setup.read_only;
