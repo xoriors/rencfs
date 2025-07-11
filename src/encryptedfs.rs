@@ -677,7 +677,7 @@ impl EncryptedFs {
         let input = name.expose_secret().to_string();
         let path = input.strip_prefix(".").unwrap_or(&input).to_owned();
         let mut path_segments = vec![];
-        for segment in path.split("/") {
+        for segment in path.split(std::path::MAIN_SEPARATOR) {
             if segment.is_empty() {
                 continue;
             }
