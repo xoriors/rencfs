@@ -24,7 +24,7 @@ thiserror = "2.0.6"
 rand = "0.8.5"
 rand_core = "0.6.4"
 base64 = "0.22.1"
-tokio = { version = "1.36", features = ["full"] }
+tokio = { version = "1.43", features = ["full"] }
 tokio-stream = { version = "0.1.15", features = ["fs"] }
 futures-util = "0.3.30"
 bytes = "1.5"
@@ -44,7 +44,7 @@ argon2 = "0.5.3"
 keyring = "2.3.2"
 retainer = "0.3.0"
 num-format = "0.4.4"
-ring = "0.17.12"
+ring = "0.17.13"
 hex = "0.4.3"
 rand_chacha = "0.3.1"
 lru = "0.12.3"
