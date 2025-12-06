@@ -29,6 +29,7 @@ use crate::{fs_util, stream_util};
 
 pub mod buf_mut;
 pub mod read;
+pub mod rs;
 pub mod write;
 
 pub static BASE64: GeneralPurpose = GeneralPurpose::new(&STANDARD, NO_PAD);
