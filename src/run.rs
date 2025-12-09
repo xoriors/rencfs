@@ -16,6 +16,7 @@ use tokio::{fs, task};
 use tracing::{error, info, warn, Level};
 
 use crate::keyring;
+// use crate::auth; // Accessed via crate::auth::... below
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
@@ -268,73 +269,77 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
 
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
 
-    // --- SECURE CREDENTIAL LOADING ---
+    // retrieve credentials
     let raw_client_id = env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
     let raw_client_secret = env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default();
 
-    // Sanitize: Remove whitespace AND strictly remove surrounding quotes if present
+    // refine credentials
     let google_client_id = raw_client_id.trim().trim_matches('"').trim_matches('\'').to_string();
     let google_client_secret = raw_client_secret.trim().trim_matches('"').trim_matches('\'').to_string();
 
-    // -------------------------------------------------------------
-    // PHASE 1: GOOGLE AUTH (Token Caching)
-    // -------------------------------------------------------------
-    // We check for a stored REFRESH TOKEN for Google, not the master password.
-    // If the token exists and works, we skip the browser.
-    
     if !google_client_id.is_empty() {
-        // Try to load Google Refresh Token from Keyring
-        // FIX: expose_secret() and convert to String, because authenticate_google expects Option<String>
+        // try to load token from keyring
         let stored_token = keyring::get("google_refresh_token")
             .ok()
             .map(|s| s.expose_secret().to_string());
         
-        // Authenticate (Silent Refresh OR Browser Flow)
+        // authenticate with Google
         let valid_refresh_token = crate::auth::authenticate_google(
             google_client_id.clone(), 
             google_client_secret.clone(),
             stored_token
         ).await?;
         
-        // Save the valid token back to keyring (in case it was new)
-        // FIX: Wrap String in SecretString before saving
+        // save the valid token back to keyring
         let secret_token = SecretString::new(Box::new(valid_refresh_token));
         let _ = keyring::save(&secret_token, "google_refresh_token").map_err(|e| {
             warn!("Failed to save Google token to keyring: {}", e);
         });
     }
 
-    // -------------------------------------------------------------
-    // PHASE 2: MASTER PASSWORD (Always Manual)
-    // -------------------------------------------------------------
-    // We do NOT check keyring for this. We always ask the user.
-    
-    print!("Enter password: ");
-    io::stdout().flush().unwrap();
-    let p = SecretString::new(Box::new(read_password()?));
-
-    if !PathBuf::new().join(data_dir.clone()).is_dir()
-        || fs::read_dir(&data_dir)
-            .await
-            .unwrap()
-            .next_entry()
-            .await
-            .unwrap()
-            .is_none()
-    {
-        // first run / empty dir logic: confirm password
-        print!("Confirm password: ");
+    // when running from IDE we can't read from stdin with rpassword, get it from env var
+    let mut password = SecretString::from_str(
+        env::var("RENCFS_PASSWORD")
+            .unwrap_or_else(|_| String::new())
+            .as_str(),
+    )
+    .unwrap();
+    if password.expose_secret().is_empty() {
+        // read password from stdin
+        print!("Enter password: ");
         io::stdout().flush().unwrap();
-        let confirm_password = SecretString::new(Box::new(read_password()?));
-        if p.expose_secret() != confirm_password.expose_secret() {
-            error!("Passwords do not match");
-            return Err(ExitStatusError::Failure(1).into());
+        password = SecretString::new(Box::new(read_password()?));
+
+        if !PathBuf::new().join(data_dir.clone()).is_dir()
+            || fs::read_dir(&data_dir)
+                .await
+                .unwrap()
+                .next_entry()
+                .await
+                .unwrap()
+                .is_none()
+        {
+            // first run, ask to confirm password
+            print!("Confirm password: ");
+            io::stdout().flush().unwrap();
+            let confirm_password = SecretString::new(Box::new(read_password()?));
+            if password.expose_secret() != confirm_password.expose_secret() {
+                error!("Passwords do not match");
+                return Err(ExitStatusError::Failure(1).into());
+            }
         }
     }
-
-    // Keep password in memory for the mount lifecycle
-    unsafe {
-        PASS = Some(p.clone());
+    // save password in keyring
+    info!("Save password in keyring");
+    let res = keyring::save(&password, "password").map_err(|err| {
+        warn!(err = %err);
+    });
+    if res.is_err() {
+        // maybe we don't have a security manager, keep it in mem
+        unsafe {
+            warn!("Cannot save password in keyring, keep it in memory");
+            PASS = Some(password.clone());
+        }
     }
 
     if matches.get_flag("umount-on-start") {
@@ -344,40 +349,50 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         });
     }
 
-    struct PasswordProviderImpl {
-        pass: SecretString,
-    }
+    struct PasswordProviderImpl {}
+    #[allow(clippy::items_after_statements)]
+    #[allow(static_mut_refs)]
     impl PasswordProvider for PasswordProviderImpl {
         fn get_password(&self) -> Option<SecretString> {
-            Some(self.pass.clone())
+            unsafe {
+                if PASS.is_some() {
+                    info!("Get password from memory");
+                    PASS.clone()
+                } else {
+                    info!("Get password from keyring");
+                    keyring::get("password")
+                        .map_err(|err| {
+                            error!(err = %err, "cannot get password from keyring");
+                            err
+                        })
+                        .ok()
+                }
+            }
         }
     }
-
     let mount_point = mount::create_mount_point(
         Path::new(&mountpoint),
         Path::new(&data_dir),
-        Box::new(PasswordProviderImpl { pass: p }), 
+        Box::new(PasswordProviderImpl {}),
         cipher,
         matches.get_flag("allow-root"),
         matches.get_flag("allow-other"),
         matches.get_flag("read-only"),
     );
-
     let mount_handle = mount_point.mount().await.map_err(|err| {
         error!(err = %err);
         ExitStatusError::Failure(1)
     })?;
     let mount_handle = Arc::new(Mutex::new(Some(Some(mount_handle))));
     let mount_handle_clone = mount_handle.clone();
-    
+    // cleanup on process kill
     set_handler(move || {
+        // can't use tracing methods here as guard cannot be dropper to flush content before we exit
         eprintln!("Received signal to exit");
         let mut status: Option<ExitStatusError> = None;
-        
-        // Cleanup memory on exit
-        remove_pass(); 
-
+        remove_pass();
         eprintln!("Unmounting {mountpoint}");
+        // create new tokio runtime
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -420,12 +435,18 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
 }
 
 #[allow(static_mut_refs)]
-#[allow(dead_code)] 
 fn remove_pass() {
     unsafe {
-        // We only clear memory now. We do NOT touch the keyring 
-        // because we never saved the password there in the first place.
-        info!("Remove password from memory");
-        PASS = None;
+        if PASS.is_none() {
+            info!("Delete password from keyring");
+            keyring::remove("password")
+                .map_err(|err| {
+                    error!(err = %err);
+                })
+                .ok();
+        } else {
+            info!("Remove password from memory");
+            PASS = None;
+        }
     }
 }
