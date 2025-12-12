@@ -646,6 +646,52 @@ impl EncryptedFs {
         data_dir.join(SECURITY_DIR).join(IDENTITY_FILENAME).exists()
     }
 
+    // Encrypts and saves the TOTP secret to the vault.
+    pub async fn bind_totp_secret(
+        data_dir: &Path,
+        password: &SecretString,
+        cipher: Cipher,
+        secret: &str,
+    ) -> FsResult<()> {
+        ensure_structure_created(&data_dir.to_path_buf()).await?;
+        
+        let key_path = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
+        let salt_path = data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME);
+        let identity_path = data_dir.join(SECURITY_DIR).join(IDENTITY_FILENAME);
+
+        // Derive key from password to encrypt the secret
+        let key = read_or_create_key(&key_path, &salt_path, password, cipher)?;
+        
+        crypto::atomic_serialize_encrypt_into(
+            &identity_path, 
+            &secret.to_string(), 
+            cipher, 
+            &key
+        )?;
+        Ok(())
+    }
+
+    // Decrypts and retrieves the TOTP secret from the vault.
+    pub fn get_totp_secret(
+        data_dir: &Path,
+        password: &SecretString,
+        cipher: Cipher,
+    ) -> FsResult<String> {
+        let identity_path = data_dir.join(SECURITY_DIR).join(IDENTITY_FILENAME);
+        let key_path = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
+        let salt_path = data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME);
+
+        let key = read_or_create_key(&key_path, &salt_path, password, cipher)?;
+        let reader = crypto::create_read(File::open(&identity_path)?, cipher, &key);
+        
+        let secret: String = bincode::deserialize_from(reader)
+            .map_err(|e| {
+                error!("Failed to decrypt identity: {}", e);
+                FsError::Other("Failed to decrypt 2FA secret. Wrong password?")
+            })?;
+        Ok(secret)
+    }
+
     // decrypts and returns the bound identity (subject ID) if it exists.
     pub fn get_bound_identity(
         data_dir: &Path,

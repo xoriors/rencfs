@@ -16,14 +16,13 @@ use tokio::{fs, task};
 use tracing::{error, info, warn, Level};
 
 use crate::keyring;
-
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
 use rencfs::{log, mount};
+use totp_rs::{Algorithm, Secret, TOTP};
 
 static mut PASS: Option<SecretString> = None;
-
 
 #[derive(Debug, Error)]
 enum ExitStatusError {
@@ -54,7 +53,6 @@ pub(super) async fn run() -> Result<()> {
         })
     })
     .await;
-
     match res {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(err))) => {
@@ -279,7 +277,8 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
 
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
     let data_path = Path::new(&data_dir);
-    
+
+    // 1. Get Password FIRST
     let mut password = SecretString::from_str(
         env::var("RENCFS_PASSWORD")
             .unwrap_or_else(|_| String::new())
@@ -292,7 +291,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         io::stdout().flush().unwrap();
         password = SecretString::new(Box::new(read_password()?));
 
-        // confirm password logic for new directories
+        // Logic for new directory confirmation
         if !PathBuf::new().join(data_dir.clone()).is_dir()
             || fs::read_dir(&data_dir)
                 .await
@@ -312,7 +311,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         }
     }
 
-    // save password in keyring
+    // Save password to keyring
     info!("Save password in keyring");
     let res = keyring::save(&password, "password").map_err(|err| {
         warn!(err = %err);
@@ -324,40 +323,88 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         }
     }
 
-    // check 2FA Requirement
+    // 2. TOTP 2FA Logic
     let is_bound = EncryptedFs::is_identity_bound(data_path);
     let init_2fa = matches.get_flag("init-2fa");
-    
-    if is_bound || init_2fa {
-        info!("2FA is required. Checking identity...");
 
-        let raw_client_id = env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
-        let raw_client_secret = env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default();
-        let google_client_id = raw_client_id.trim().trim_matches('"').trim_matches('\'').to_string();
-        let google_client_secret = raw_client_secret.trim().trim_matches('"').trim_matches('\'').to_string();
-
-        if google_client_id.is_empty() || google_client_secret.is_empty() {
-             return Err(anyhow::anyhow!("CRITICAL: GOOGLE_CLIENT_ID/SECRET missing."));
+    if init_2fa {
+        // --- SETUP MODE ---
+        if is_bound {
+             error!("2FA is already initialized for this vault.");
+             return Err(ExitStatusError::Failure(1).into());
         }
 
-        // determine expected User
-        let expected_sub = if is_bound {
-             EncryptedFs::get_bound_identity(data_path, &password, cipher)?
+        info!("Initializing TOTP 2FA...");
+        
+        // Generate a new Secret
+        let secret = Secret::generate_secret();
+        let secret_str = secret.to_encoded().to_string();
+        
+        let totp = TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            secret.to_bytes().unwrap(),
+            Some("Rencfs".to_string()),
+            "MyVault".to_string(),
+        ).unwrap();
+        
+        // FIX: Map the String error to an anyhow::Error
+        let qr_base64 = totp.get_qr_base64()
+            .map_err(|e| anyhow::anyhow!("QR Code generation error: {}", e))?;
+
+        println!("\n=== 2FA SETUP REQUIRED ===");
+        println!("1. Open Google Authenticator (or similar app).");
+        println!("2. Scan this QR Code (copy data URI to browser if terminal doesn't support it):");
+        println!("data:image/png;base64,{}", qr_base64);
+        println!("\nOR enter this secret manually: {}\n", secret_str);
+        
+        print!("Enter the 6-digit code to verify and save: ");
+        io::stdout().flush().unwrap();
+        let mut code = String::new();
+        io::stdin().read_line(&mut code)?;
+        
+        if totp.check_current(code.trim()).unwrap_or(false) {
+            info!("Code verified. Saving encrypted 2FA secret...");
+            EncryptedFs::bind_totp_secret(data_path, &password, cipher, &secret_str).await?;
+            println!("2FA enabled successfully.");
         } else {
-             None
-        };
-
-        // authenticate
-        let (_refresh_token, subject) = crate::auth::authenticate_google(
-            google_client_id, 
-            google_client_secret,
-            expected_sub
-        ).await?;
-
-        // bind if this was a new initialization
-        if !is_bound {
-            EncryptedFs::verify_or_bind_identity(data_path, &password, cipher, &subject).await?;
+            error!("Invalid code. Setup aborted.");
+            return Err(ExitStatusError::Failure(1).into());
         }
+
+    } else if is_bound {
+        // --- VERIFICATION MODE ---
+        info!("Locked by 2FA.");
+        
+        let secret_str = EncryptedFs::get_totp_secret(data_path, &password, cipher)
+            .map_err(|_| {
+                error!("Failed to unlock 2FA. Password might be incorrect.");
+                ExitStatusError::Failure(1)
+            })?;
+
+        let secret = Secret::Encoded(secret_str);
+        let totp = TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            secret.to_bytes().unwrap(),
+            None,
+            String::new(),
+        ).unwrap();
+
+        print!("Enter 2FA Code: ");
+        io::stdout().flush().unwrap();
+        let mut code = String::new();
+        io::stdin().read_line(&mut code)?;
+
+        if !totp.check_current(code.trim()).unwrap_or(false) {
+             error!("Invalid 2FA Code. Access Denied.");
+             return Err(ExitStatusError::Failure(1).into());
+        }
+        info!("2FA Validated. Mounting...");
     }
 
     if matches.get_flag("umount-on-start") {
