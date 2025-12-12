@@ -389,3 +389,59 @@ pub unsafe extern "C" fn rencfs_rename(
         }
     }
 }
+
+/// Schimbă parola volumului criptat.
+///
+/// # Safety
+/// Toți pointerii trebuie să fie string-uri C valide.
+#[no_mangle]
+pub unsafe extern "C" fn rencfs_change_password(
+    base_path: *const c_char,
+    old_pass: *const c_char,
+    new_pass: *const c_char,
+) -> c_int {
+    if base_path.is_null() || old_pass.is_null() || new_pass.is_null() {
+        return -1;
+    }
+
+    // Conversii C -> Rust
+    let c_path = CStr::from_ptr(base_path);
+    let path_str = match c_path.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let path_buf = PathBuf::from(path_str);
+
+    let c_old = CStr::from_ptr(old_pass);
+    let old_str = match c_old.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let secret_old = SecretString::new(Box::new(old_str.to_string()));
+
+    let c_new = CStr::from_ptr(new_pass);
+    let new_str = match c_new.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let secret_new = SecretString::new(Box::new(new_str.to_string()));
+
+    // Cream un Runtime temporar doar pentru aceasta operatie
+    let rt = match Runtime::new() {
+        Ok(r) => r,
+        Err(_) => return -1,
+    };
+
+    let result = rt.block_on(async {
+        // Folosim acelasi algoritm ca la init (ChaCha20Poly1305)
+        EncryptedFs::passwd(&path_buf, secret_old, secret_new, Cipher::ChaCha20Poly1305).await
+    });
+
+    match result {
+        Ok(_) => 0,
+        Err(e) => {
+            eprintln!("Eroare change_password: {:?}", e);
+            -1
+        }
+    }
+}

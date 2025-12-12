@@ -30,6 +30,10 @@ int rencfs_rmdir(RencfsContext* ctx, uint64_t parent_ino, const char* filename);
 
 // Redenumeste/Muta un fisier.
 int rencfs_rename(RencfsContext* ctx, uint64_t parent, const char* old_name, uint64_t new_parent, const char* new_name);
+
+// Schimba parola. Nu necesita context (lucreaza direct pe path).
+int rencfs_change_password(const char* base_path, const char* old_pass, const char* new_pass);
+
 // Scrie in fisier.
 int rencfs_write(RencfsContext* ctx, uint64_t ino, uint64_t handle, const unsigned char* buf, size_t len, uint64_t offset);
 

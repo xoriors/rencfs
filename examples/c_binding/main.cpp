@@ -82,6 +82,27 @@ int main() {
     std::cout << "[CPP] Freeing context..." << std::endl;
     rencfs_free(ctx);
 
+	// 10. Test CHANGE PASSWORD
+    std::cout << "[CPP] Changing password..." << std::endl;
+    const char* new_pass = "parola_noua_super_secreta";
+    
+    if (rencfs_change_password(path, pass, new_pass) == 0) {
+        std::cout << "[CPP] Password changed successfully!" << std::endl;
+    } else {
+        std::cerr << "[CPP] Change password failed!" << std::endl;
+        return 1;
+    }
+
+    // 11. Re-Init cu noua parola (Verificare)
+    std::cout << "[CPP] Re-initializing with NEW password..." << std::endl;
+    RencfsContext* ctx2 = rencfs_init(path, new_pass);
+    if (ctx2) {
+        std::cout << "[CPP] Auth with new password successful!" << std::endl;
+        rencfs_free(ctx2);
+    } else {
+        std::cerr << "[CPP] Auth with new password FAILED!" << std::endl;
+    }
+
     std::cout << "[CPP] Done." << std::endl;
     return 0;
 }
