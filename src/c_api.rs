@@ -281,3 +281,35 @@ pub unsafe extern "C" fn rencfs_mkdir(
         }
     }
 }
+
+/// Șterge un fișier.
+///
+/// # Safety
+/// `ctx` must be valid.
+/// `filename` must be a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn rencfs_unlink(
+    ctx: *mut RencfsContext,
+    parent_ino: c_ulonglong,
+    filename: *const c_char,
+) -> c_int {
+    let context = &mut *ctx;
+    let c_name = CStr::from_ptr(filename);
+    let name_str = match c_name.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let secret_name = SecretString::new(Box::new(name_str.to_string()));
+
+    let result = context.rt.block_on(async {
+        context.fs.remove_file(parent_ino, &secret_name).await
+    });
+
+    match result {
+        Ok(_) => 0,
+        Err(e) => {
+            eprintln!("Eroare unlink: {:?}", e);
+            -1
+        }
+    }
+}
