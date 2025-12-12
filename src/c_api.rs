@@ -69,7 +69,7 @@ pub unsafe extern "C" fn rencfs_init(
     // Inițializăm FS-ul (Async executat sincron)
     let fs_result = rt.block_on(async {
         let provider = Box::new(SimplePasswordProvider { password: secret_pass });
-        // Folosim ChaCha20Poly1305 ca default pentru demo
+        // Folosim ChaCha20Poly1305 ca default
         EncryptedFs::new(path_buf, provider, Cipher::ChaCha20Poly1305, false).await
     });
 
@@ -229,6 +229,54 @@ pub unsafe extern "C" fn rencfs_close(
         Ok(_) => 0,
         Err(e) => {
             eprintln!("Eroare close: {:?}", e);
+            -1
+        }
+    }
+}
+
+/// Creează un director nou.
+///
+/// # Safety
+/// `ctx` must be valid.
+/// `filename` must be a valid C string.
+/// `out_ino` must be a valid pointer.
+#[no_mangle]
+pub unsafe extern "C" fn rencfs_mkdir(
+    ctx: *mut RencfsContext,
+    parent_ino: c_ulonglong,
+    filename: *const c_char,
+    out_ino: *mut c_ulonglong,
+) -> c_int {
+    let context = &mut *ctx;
+    let c_name = CStr::from_ptr(filename);
+    let name_str = match c_name.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let secret_name = SecretString::new(Box::new(name_str.to_string()));
+
+    // Atribute pentru folder (Directory, permisiuni 755)
+    let attr = CreateFileAttr {
+        kind: FileType::Directory,
+        perm: 0o755,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        flags: 0,
+    };
+
+    let result = context.rt.block_on(async {
+        // create returneaza (handle, attr). Directoarele au handle 0.
+        context.fs.create(parent_ino, &secret_name, attr, false, false).await
+    });
+
+    match result {
+        Ok((_, file_attr)) => {
+            *out_ino = file_attr.ino;
+            0
+        }
+        Err(e) => {
+            eprintln!("Eroare mkdir: {:?}", e);
             -1
         }
     }
