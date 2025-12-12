@@ -15,10 +15,9 @@ use webbrowser;
 /// Authenticates with Google.
 /// 
 /// Triggers a browser flow to authenticate the user.
-/// Enforces strict user presence (Passkey/2FA) via `max_age=0`.
 /// 
 /// If `expected_sub` is provided, it verifies that the authenticated user's
-/// Subject ID matches the expected one.
+/// subject ID matches the expected one.
 /// 
 /// Returns a tuple: (Refresh Token, Subject ID)
 pub async fn authenticate_google(
@@ -27,7 +26,6 @@ pub async fn authenticate_google(
     expected_sub: Option<String>
 ) -> Result<(String, String)> {
     
-    // 1. Setup Client
     let google_issuer = IssuerUrl::new("https://accounts.google.com".to_string())?;
 
     let provider_metadata = CoreProviderMetadata::discover_async(google_issuer, async_http_client)
@@ -41,10 +39,9 @@ pub async fn authenticate_google(
     )
     .set_redirect_uri(RedirectUrl::new("http://localhost:8080".to_string())?);
 
-    // 2. Browser Login Flow
     println!("Initiating Google 2FA (Passkey Check)...");
 
-    // We keep the `nonce` to verify the ID token later
+    // keep the `nonce` to verify the ID token later
     let (authorize_url, csrf_state, nonce) = client
         .authorize_url(
             AuthenticationFlow::<CoreResponseType>::AuthorizationCode,
@@ -102,7 +99,7 @@ pub async fn authenticate_google(
             .await
             .context("Failed to exchange auth code for token")?;
 
-        // 3. Verify ID Token and Check Subject
+        // verify ID token and check subject
         let id_token = token_response.id_token()
             .ok_or_else(|| anyhow::anyhow!("Google did not return an ID token"))?;
         
@@ -119,15 +116,16 @@ pub async fn authenticate_google(
                 ));
             }
         } else {
-            println!("First run detected. Binding this file system to user ID: {}", subject);
+            println!("Authenticated as user ID: {}", subject);
         }
 
         println!("Google Authentication and Identity Verification successful.");
 
-        let refresh_token = token_response.refresh_token()
-            .ok_or_else(|| anyhow::anyhow!("Google did not return a refresh token"))?;
+       let refresh_token = token_response.refresh_token()
+            .map(|t| t.secret().clone())
+            .unwrap_or_else(String::new);
 
-        Ok((refresh_token.secret().clone(), subject))
+        Ok((refresh_token, subject))
     } else {
         Err(anyhow::anyhow!("Failed to receive connection from browser"))
     }
