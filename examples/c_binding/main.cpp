@@ -7,7 +7,6 @@ int main() {
     std::cout << "--- Rencfs C++ Binding Demo ---" << std::endl;
 
     // 1. Initializare
-    // ATENTIE: Asigura-te ca folderul /tmp/rencfs_test exista sau e un loc unde se poate scrie
     const char* path = "/tmp/rencfs_cpp_test";
     const char* pass = "parola_mea_secreta";
 
@@ -45,10 +44,41 @@ int main() {
     std::cout << "[CPP] Closing file (flush)..." << std::endl;
     rencfs_close(ctx, handle);
 
-    // 5. Open/Read (pentru simplitate in demo, presupunem ca il citim cu un handle nou sau ne-am baza pe open,
-    // dar aici doar inchidem contextul pentru a arata cleanup-ul).
+    // 5. Test MKDIR (Facem folderul pe care il vom sterge la final)
+    uint64_t dir_ino = 0;
+    std::cout << "[CPP] Creating directory 'my_secrets'..." << std::endl;
+    if (rencfs_mkdir(ctx, 1, "my_secrets", &dir_ino) == 0) {
+        std::cout << "[CPP] Directory created! Inode: " << dir_ino << std::endl;
+    } else {
+        std::cerr << "[CPP] Mkdir failed!" << std::endl;
+    }
 
-    // 6. Cleanup
+    // 6. Test RENAME
+    const char* new_filename = "redenumit_secret.txt";
+    std::cout << "[CPP] Renaming '" << filename << "' to '" << new_filename << "'..." << std::endl;
+    if (rencfs_rename(ctx, 1, filename, 1, new_filename) == 0) {
+        std::cout << "[CPP] Rename success!" << std::endl;
+    } else {
+        std::cerr << "[CPP] Rename failed!" << std::endl;
+    }
+
+    // 7. Test UNLINK (Stergem fisierul redenumit)
+    std::cout << "[CPP] Deleting file '" << new_filename << "'..." << std::endl;
+    if (rencfs_unlink(ctx, 1, new_filename) == 0) {
+        std::cout << "[CPP] File deleted successfully!" << std::endl;
+    } else {
+        std::cerr << "[CPP] Unlink failed!" << std::endl;
+    }
+
+    // 8. Test RMDIR (Stergem directorul creat la pasul 5)
+    std::cout << "[CPP] Removing directory 'my_secrets'..." << std::endl;
+    if (rencfs_rmdir(ctx, 1, "my_secrets") == 0) {
+        std::cout << "[CPP] Rmdir success!" << std::endl;
+    } else {
+        std::cerr << "[CPP] Rmdir failed!" << std::endl;
+    }
+
+    // 9. Cleanup
     std::cout << "[CPP] Freeing context..." << std::endl;
     rencfs_free(ctx);
 

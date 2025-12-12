@@ -313,3 +313,79 @@ pub unsafe extern "C" fn rencfs_unlink(
         }
     }
 }
+
+/// Șterge un director (trebuie să fie gol).
+///
+/// # Safety
+/// `ctx` must be valid.
+/// `filename` must be a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn rencfs_rmdir(
+    ctx: *mut RencfsContext,
+    parent_ino: c_ulonglong,
+    filename: *const c_char,
+) -> c_int {
+    let context = &mut *ctx;
+    let c_name = CStr::from_ptr(filename);
+    let name_str = match c_name.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let secret_name = SecretString::new(Box::new(name_str.to_string()));
+
+    let result = context.rt.block_on(async {
+        context.fs.remove_dir(parent_ino, &secret_name).await
+    });
+
+    match result {
+        Ok(_) => 0,
+        Err(e) => {
+            eprintln!("Eroare rmdir: {:?}", e);
+            -1
+        }
+    }
+}
+
+/// Redenumește un fișier sau director.
+///
+/// # Safety
+/// `ctx` must be valid.
+/// `old_name` and `new_name` must be valid C strings.
+#[no_mangle]
+pub unsafe extern "C" fn rencfs_rename(
+    ctx: *mut RencfsContext,
+    parent: c_ulonglong,
+    old_name: *const c_char,
+    new_parent: c_ulonglong,
+    new_name: *const c_char,
+) -> c_int {
+    let context = &mut *ctx;
+    
+    // Conversie old_name
+    let c_old = CStr::from_ptr(old_name);
+    let old_str = match c_old.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let secret_old = SecretString::new(Box::new(old_str.to_string()));
+
+    // Conversie new_name
+    let c_new = CStr::from_ptr(new_name);
+    let new_str = match c_new.to_str() {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+    let secret_new = SecretString::new(Box::new(new_str.to_string()));
+
+    let result = context.rt.block_on(async {
+        context.fs.rename(parent, &secret_old, new_parent, &secret_new).await
+    });
+
+    match result {
+        Ok(_) => 0,
+        Err(e) => {
+            eprintln!("Eroare rename: {:?}", e);
+            -1
+        }
+    }
+}

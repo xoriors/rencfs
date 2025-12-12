@@ -382,7 +382,7 @@ impl<W: CryptoInnerWriter + Send + Sync> Seek for RingCryptoWrite<W> {
                 self.block_index = 0;
                 self.decrypt_block()?;
             }
-            let at_full_block_end = self.pos() % self.plaintext_block_size as u64 == 0
+            let at_full_block_end = self.pos().is_multiple_of(self.plaintext_block_size as u64)
                 && self.buf.pos_write() == self.buf.available();
             if self.buf.available() == 0
                 // this checks if we are at the end of the current block,
