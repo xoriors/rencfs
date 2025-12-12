@@ -21,6 +21,7 @@ use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
 use rencfs::{log, mount};
 use totp_rs::{Algorithm, Secret, TOTP};
+use webbrowser;
 
 static mut PASS: Option<SecretString> = None;
 
@@ -354,10 +355,56 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         let qr_base64 = totp.get_qr_base64()
             .map_err(|e| anyhow::anyhow!("QR Code generation error: {}", e))?;
 
+        // --- NEW: Generate HTML and Open Browser ---
+        let html_content = format!(
+            r#"
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Rencfs 2FA Setup</title>
+                <style>
+                    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #f0f2f5; }}
+                    .card {{ background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }}
+                    img {{ border: 1px solid #ddd; padding: 10px; border-radius: 4px; margin-bottom: 1rem; }}
+                    code {{ background: #eee; padding: 4px 8px; border-radius: 4px; font-weight: bold; word-break: break-all; }}
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <h2>Setup 2FA</h2>
+                    <p>Scan this QR code with your Authenticator App:</p>
+                    <img src="data:image/png;base64,{}" alt="QR Code" width="250" height="250">
+                    <p>Or enter this secret manually:</p>
+                    <p><code>{}</code></p>
+                </div>
+            </body>
+            </html>
+            "#,
+            qr_base64, secret_str
+        );
+
+        let setup_file_path = std::env::current_dir()?.join("rencfs_2fa_setup.html");
+
+        // FIX 3: Use a scope block to force the file to close/flush immediately
+        {
+            let mut file = std::fs::File::create(&setup_file_path)?;
+            file.write_all(html_content.as_bytes())?;
+            file.flush()?; 
+        }
+
+        info!("Opening QR code in default browser...");
+        
+        // Pass the absolute path to the browser
+        if webbrowser::open(setup_file_path.to_str().unwrap_or("")).is_err() {
+            warn!("Could not open browser automatically.");
+            println!("Please open this file manually: {}", setup_file_path.display());
+        }
+        
         println!("\n=== 2FA SETUP REQUIRED ===");
         println!("1. Open Google Authenticator (or similar app).");
-        println!("2. Scan this QR Code (copy data URI to browser if terminal doesn't support it):");
-        println!("data:image/png;base64,{}", qr_base64);
+        println!("2. Scan this QR Code from browser:");
         println!("\nOR enter this secret manually: {}\n", secret_str);
         
         print!("Enter the 6-digit code to verify and save: ");
