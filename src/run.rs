@@ -273,24 +273,31 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     let raw_client_id = env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
     let raw_client_secret = env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default();
 
-    // refine credentials
     let google_client_id = raw_client_id.trim().trim_matches('"').trim_matches('\'').to_string();
     let google_client_secret = raw_client_secret.trim().trim_matches('"').trim_matches('\'').to_string();
 
     if !google_client_id.is_empty() {
-        // try to load token from keyring
-        let stored_token = keyring::get("google_refresh_token")
+        // Try to load the known Owner ID (sub) from keyring
+        let stored_sub = keyring::get("google_owner_sub")
             .ok()
             .map(|s| s.expose_secret().to_string());
         
-        // authenticate with Google
-        let valid_refresh_token = crate::auth::authenticate_google(
+        // Authenticate with Google (Passkey + Identity Check)
+        let (valid_refresh_token, subject) = crate::auth::authenticate_google(
             google_client_id.clone(), 
             google_client_secret.clone(),
-            stored_token
+            stored_sub.clone() // Pass the expected sub (or None if first run)
         ).await?;
         
-        // save the valid token back to keyring
+        // If this was the first run (no stored sub), save the verified sub as the owner
+        if stored_sub.is_none() {
+            let secret_sub = SecretString::new(Box::new(subject));
+            let _ = keyring::save(&secret_sub, "google_owner_sub").map_err(|e| {
+                warn!("Failed to save Google Owner ID to keyring: {}", e);
+            });
+        }
+
+        // Save the valid refresh token back to keyring
         let secret_token = SecretString::new(Box::new(valid_refresh_token));
         let _ = keyring::save(&secret_token, "google_refresh_token").map_err(|e| {
             warn!("Failed to save Google token to keyring: {}", e);

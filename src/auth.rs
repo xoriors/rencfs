@@ -1,10 +1,11 @@
+// src/auth.rs
 use anyhow::{Context, Result};
 use openidconnect::core::{CoreClient, CoreProviderMetadata, CoreResponseType};
 use openidconnect::reqwest::async_http_client;
-// UPDATED IMPORT: Added OAuth2TokenResponse based on compiler hint
+// UPDATED IMPORT: Added TokenResponse (for id_token() method)
 use openidconnect::{
     AuthenticationFlow, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce,
-    RedirectUrl, Scope, RefreshToken, OAuth2TokenResponse,
+    RedirectUrl, Scope, RefreshToken, OAuth2TokenResponse, TokenResponse,
 };
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -13,15 +14,18 @@ use webbrowser;
 
 /// Authenticates with Google.
 /// 
-/// If `stored_refresh_token` is provided, it tries to use it to silently refresh the session.
-/// If that fails or no token is provided, it triggers the full browser flow.
+/// Triggers a browser flow to authenticate the user.
+/// Enforces strict user presence (Passkey/2FA) via `max_age=0`.
 /// 
-/// Returns the valid Refresh Token string to be saved.
+/// If `expected_sub` is provided, it verifies that the authenticated user's
+/// Subject ID matches the expected one.
+/// 
+/// Returns a tuple: (Refresh Token, Subject ID)
 pub async fn authenticate_google(
     client_id: String, 
     client_secret: String,
-    stored_refresh_token: Option<String>
-) -> Result<String> {
+    expected_sub: Option<String>
+) -> Result<(String, String)> {
     
     // 1. Setup Client
     let google_issuer = IssuerUrl::new("https://accounts.google.com".to_string())?;
@@ -37,32 +41,11 @@ pub async fn authenticate_google(
     )
     .set_redirect_uri(RedirectUrl::new("http://localhost:8080".to_string())?);
 
-    // 2. Try Silent Auth (Refresh Token) if available
-    if let Some(token_str) = stored_refresh_token {
-        println!("Validating cached Google session...");
-        let refresh_token = RefreshToken::new(token_str.clone());
-        
-        let response = client
-            .exchange_refresh_token(&refresh_token)
-            .request_async(async_http_client)
-            .await;
+    // 2. Browser Login Flow
+    println!("Initiating Google 2FA (Passkey Check)...");
 
-        match response {
-            Ok(_) => {
-                println!("Google session is valid. Skipping browser.");
-                return Ok(token_str); // Return the existing token as it is still valid
-            },
-            Err(_) => {
-                println!("Cached session expired or invalid. Re-authenticating...");
-                // Fall through to browser login
-            }
-        }
-    }
-
-    // 3. Browser Login Flow
-    println!("Initiating Google 2FA...");
-
-    let (authorize_url, csrf_state, _nonce) = client
+    // We keep the `nonce` to verify the ID token later
+    let (authorize_url, csrf_state, nonce) = client
         .authorize_url(
             AuthenticationFlow::<CoreResponseType>::AuthorizationCode,
             CsrfToken::new_random,
@@ -70,10 +53,9 @@ pub async fn authenticate_google(
         )
         .add_scope(Scope::new("email".to_string()))
         .add_scope(Scope::new("profile".to_string()))
-        // CRITICAL: Request offline access to get a Refresh Token
         .add_extra_param("access_type", "offline") 
-        // Force consent to ensure we get a refresh token every time we do the full flow
-        .add_extra_param("prompt", "consent") 
+        .add_extra_param("prompt", "login") // Force login UI
+        .add_extra_param("max_age", "0")    // Force fresh authentication (Passkey)
         .url();
 
     println!("Opening browser for authentication...");
@@ -120,13 +102,32 @@ pub async fn authenticate_google(
             .await
             .context("Failed to exchange auth code for token")?;
 
-        println!("Google Authentication successful.");
+        // 3. Verify ID Token and Check Subject
+        let id_token = token_response.id_token()
+            .ok_or_else(|| anyhow::anyhow!("Google did not return an ID token"))?;
+        
+        let claims = id_token.claims(&client.id_token_verifier(), &nonce)
+            .context("Failed to verify ID token claims")?;
+        
+        let subject = claims.subject().to_string();
 
-        // Extract the Refresh Token to save it
+        if let Some(expected) = &expected_sub {
+            if *expected != subject {
+                return Err(anyhow::anyhow!(
+                    "Security Alert: Authenticated user ({}) does not match the owner ({})!", 
+                    subject, expected
+                ));
+            }
+        } else {
+            println!("First run detected. Binding this file system to user ID: {}", subject);
+        }
+
+        println!("Google Authentication and Identity Verification successful.");
+
         let refresh_token = token_response.refresh_token()
-            .ok_or_else(|| anyhow::anyhow!("Google did not return a refresh token (check access_type=offline)"))?;
+            .ok_or_else(|| anyhow::anyhow!("Google did not return a refresh token"))?;
 
-        Ok(refresh_token.secret().clone())
+        Ok((refresh_token.secret().clone(), subject))
     } else {
         Err(anyhow::anyhow!("Failed to receive connection from browser"))
     }
