@@ -1,128 +1,104 @@
+use shush_rs::{ExposeSecret, SecretString};
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_uchar, c_ulonglong};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::ptr;
+use std::sync::Arc;
 use tokio::runtime::Runtime;
-use shush_rs::SecretString;
 
-use crate::encryptedfs::{EncryptedFs, PasswordProvider, CreateFileAttr, FileType, ROOT_INODE};
 use crate::crypto::Cipher;
+use crate::encryptedfs::{
+    CreateFileAttr, DirectoryEntryIterator, EncryptedFs, FileType, PasswordProvider, ROOT_INODE,
+};
 
-// --- Structuri Ajutătoare ---
-
-// Aceasta este structura opacă pe care o va ține C++ (void*)
+// Context structure to hold the runtime and fs instance
 pub struct RencfsContext {
     rt: Runtime,
     fs: Arc<EncryptedFs>,
 }
 
-// Avem nevoie de un provider simplu de parolă pentru init
-struct SimplePasswordProvider {
-    password: SecretString,
+// Simple provider for password
+struct SimplePass {
+    p: SecretString,
 }
 
-impl PasswordProvider for SimplePasswordProvider {
+impl PasswordProvider for SimplePass {
     fn get_password(&self) -> Option<SecretString> {
-        Some(self.password.clone())
+        Some(self.p.clone())
     }
 }
 
-// --- API-ul C (FFI) ---
-
-/// Inițializează filesystem-ul.
-/// Returnează un pointer către context (sau NULL dacă eșuează).
-///
 /// # Safety
-/// Pointers `base_path` and `password` must be valid, null-terminated C strings.
-/// The caller is responsible for freeing the returned pointer using `rencfs_free`.
+/// Pointers must be valid.
 #[no_mangle]
 pub unsafe extern "C" fn rencfs_init(
-    base_path: *const c_char,
-    password: *const c_char,
+    path: *const c_char,
+    pass: *const c_char,
 ) -> *mut RencfsContext {
-    if base_path.is_null() || password.is_null() {
+    if path.is_null() || pass.is_null() {
         return ptr::null_mut();
     }
 
-    // Conversie C strings -> Rust
-    let c_path = CStr::from_ptr(base_path);
-    let path_str = match c_path.to_str() {
+    let c_path = CStr::from_ptr(path);
+    let s_path = match c_path.to_str() {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };
-    let path_buf = PathBuf::from(path_str);
+    let path_buf = PathBuf::from(s_path);
 
-    let c_pass = CStr::from_ptr(password);
-    let pass_str = match c_pass.to_str() {
+    let c_pass = CStr::from_ptr(pass);
+    let s_pass = match c_pass.to_str() {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };
-    let secret_pass = SecretString::new(Box::new(pass_str.to_string()));
+    let secret = SecretString::new(Box::new(s_pass.to_string()));
 
-    // Pornim Runtime-ul Tokio
     let rt = match Runtime::new() {
         Ok(r) => r,
         Err(_) => return ptr::null_mut(),
     };
 
-    // Inițializăm FS-ul (Async executat sincron)
-    let fs_result = rt.block_on(async {
-        let provider = Box::new(SimplePasswordProvider { password: secret_pass });
-        // Folosim ChaCha20Poly1305 ca default
-        EncryptedFs::new(path_buf, provider, Cipher::ChaCha20Poly1305, false).await
+    // run init inside tokio runtime
+    let res = rt.block_on(async {
+        let prov = Box::new(SimplePass { p: secret });
+        EncryptedFs::new(path_buf, prov, Cipher::ChaCha20Poly1305, false).await
     });
 
-    match fs_result {
+    match res {
         Ok(fs) => {
-            let context = Box::new(RencfsContext { rt, fs });
-            Box::into_raw(context)
+            let ctx = Box::new(RencfsContext { rt, fs });
+            Box::into_raw(ctx)
         }
-        Err(e) => {
-            eprintln!("Eroare la init rencfs: {:?}", e);
-            ptr::null_mut()
-        }
+        Err(_) => ptr::null_mut(),
     }
 }
 
-/// Eliberează memoria contextului.
-///
 /// # Safety
-/// `ctx` must be a valid pointer created by `rencfs_init`.
-/// After calling this, `ctx` becomes invalid.
+/// ctx must be valid.
 #[no_mangle]
 pub unsafe extern "C" fn rencfs_free(ctx: *mut RencfsContext) {
     if !ctx.is_null() {
-        // Rust va face "drop" automat când pointerul revine în Box
         let _ = Box::from_raw(ctx);
-        println!("Rencfs context eliberat.");
     }
 }
 
-/// Creează un fișier nou în root.
-/// Returnează 0 la succes, -1 la eroare.
-/// Completează out_ino și out_handle.
-///
 /// # Safety
-/// `ctx` must be a valid pointer.
-/// `filename` must be a valid null-terminated C string.
-/// `out_ino` and `out_handle` must be valid pointers to writeable memory.
+/// pointers must be valid.
 #[no_mangle]
 pub unsafe extern "C" fn rencfs_create_file(
     ctx: *mut RencfsContext,
-    filename: *const c_char,
+    fname: *const c_char,
     out_ino: *mut c_ulonglong,
-    out_handle: *mut c_ulonglong,
+    out_fh: *mut c_ulonglong,
 ) -> c_int {
-    let context = &mut *ctx;
-    let c_name = CStr::from_ptr(filename);
-    let name_str = match c_name.to_str() {
+    let c = &mut *ctx;
+    let c_name = CStr::from_ptr(fname);
+    let s_name = match c_name.to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let secret_name = SecretString::new(Box::new(name_str.to_string()));
+    let secret = SecretString::new(Box::new(s_name.to_string()));
 
-    // Configurare atribute default (RegularFile, permisiuni 644)
     let attr = CreateFileAttr {
         kind: FileType::RegularFile,
         perm: 0o644,
@@ -132,130 +108,94 @@ pub unsafe extern "C" fn rencfs_create_file(
         flags: 0,
     };
 
-    let result = context.rt.block_on(async {
-        context.fs.create(ROOT_INODE, &secret_name, attr, true, true).await
-    });
+    let res =
+        c.rt.block_on(async { c.fs.create(ROOT_INODE, &secret, attr, true, true).await });
 
-    match result {
-        Ok((handle, file_attr)) => {
-            *out_ino = file_attr.ino;
-            *out_handle = handle;
+    match res {
+        Ok((fh, fattr)) => {
+            *out_ino = fattr.ino;
+            *out_fh = fh;
             0
         }
-        Err(e) => {
-            eprintln!("Eroare create file: {:?}", e);
-            -1
-        }
+        Err(_) => -1,
     }
 }
 
-/// Scrie date într-un fișier deschis.
-/// Returnează numărul de bytes scriși sau -1 la eroare.
-///
 /// # Safety
-/// `ctx` must be a valid pointer.
-/// `buf` must be a valid pointer to a byte array of at least `len` size.
+/// valid pointers required.
 #[no_mangle]
 pub unsafe extern "C" fn rencfs_write(
     ctx: *mut RencfsContext,
     ino: c_ulonglong,
-    handle: c_ulonglong,
+    fh: c_ulonglong,
     buf: *const c_uchar,
     len: usize,
-    offset: c_ulonglong,
+    off: c_ulonglong,
 ) -> c_int {
-    let context = &mut *ctx;
-    let data_slice = std::slice::from_raw_parts(buf, len);
+    let c = &mut *ctx;
+    let data = std::slice::from_raw_parts(buf, len);
 
-    let result = context.rt.block_on(async {
-        context.fs.write(ino, offset, data_slice, handle).await
-    });
+    let res =
+        c.rt.block_on(async { c.fs.write(ino, off, data, fh).await });
 
-    match result {
-        Ok(bytes_written) => bytes_written as c_int,
-        Err(e) => {
-            eprintln!("Eroare write: {:?}", e);
-            -1
-        }
+    match res {
+        Ok(n) => n as c_int,
+        Err(_) => -1,
     }
 }
 
-/// Citește date dintr-un fișier.
-/// Returnează numărul de bytes citiți sau -1 la eroare.
-///
 /// # Safety
-/// `ctx` must be a valid pointer.
-/// `buf` must be a valid pointer to a writeable buffer of at least `len` size.
+/// valid pointers required.
 #[no_mangle]
 pub unsafe extern "C" fn rencfs_read(
     ctx: *mut RencfsContext,
     ino: c_ulonglong,
-    handle: c_ulonglong,
+    fh: c_ulonglong,
     buf: *mut c_uchar,
     len: usize,
-    offset: c_ulonglong,
+    off: c_ulonglong,
 ) -> c_int {
-    let context = &mut *ctx;
-    let data_slice = std::slice::from_raw_parts_mut(buf, len);
+    let c = &mut *ctx;
+    let data = std::slice::from_raw_parts_mut(buf, len);
 
-    let result = context.rt.block_on(async {
-        context.fs.read(ino, offset, data_slice, handle).await
-    });
+    let res = c.rt.block_on(async { c.fs.read(ino, off, data, fh).await });
 
-    match result {
-        Ok(bytes_read) => bytes_read as c_int,
-        Err(e) => {
-            eprintln!("Eroare read: {:?}", e);
-            -1
-        }
+    match res {
+        Ok(n) => n as c_int,
+        Err(_) => -1,
     }
 }
 
-/// Închide un handle (release).
-///
 /// # Safety
-/// `ctx` must be a valid pointer.
+/// ctx valid.
 #[no_mangle]
-pub unsafe extern "C" fn rencfs_close(
-    ctx: *mut RencfsContext,
-    handle: c_ulonglong,
-) -> c_int {
-    let context = &mut *ctx;
-    let result = context.rt.block_on(async {
-        context.fs.release(handle).await
-    });
+pub unsafe extern "C" fn rencfs_close(ctx: *mut RencfsContext, fh: c_ulonglong) -> c_int {
+    let c = &mut *ctx;
+    let res = c.rt.block_on(async { c.fs.release(fh).await });
 
-    match result {
+    match res {
         Ok(_) => 0,
-        Err(e) => {
-            eprintln!("Eroare close: {:?}", e);
-            -1
-        }
+        Err(_) => -1,
     }
 }
 
-/// Creează un director nou.
-///
 /// # Safety
-/// `ctx` must be valid.
-/// `filename` must be a valid C string.
-/// `out_ino` must be a valid pointer.
+/// pointers valid.
 #[no_mangle]
 pub unsafe extern "C" fn rencfs_mkdir(
     ctx: *mut RencfsContext,
-    parent_ino: c_ulonglong,
-    filename: *const c_char,
+    p_ino: c_ulonglong,
+    fname: *const c_char,
     out_ino: *mut c_ulonglong,
 ) -> c_int {
-    let context = &mut *ctx;
-    let c_name = CStr::from_ptr(filename);
-    let name_str = match c_name.to_str() {
+    let c = &mut *ctx;
+    let c_name = CStr::from_ptr(fname);
+    let s_name = match c_name.to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let secret_name = SecretString::new(Box::new(name_str.to_string()));
+    let secret = SecretString::new(Box::new(s_name.to_string()));
 
-    // Atribute pentru folder (Directory, permisiuni 755)
     let attr = CreateFileAttr {
         kind: FileType::Directory,
         perm: 0o755,
@@ -265,183 +205,228 @@ pub unsafe extern "C" fn rencfs_mkdir(
         flags: 0,
     };
 
-    let result = context.rt.block_on(async {
-        // create returneaza (handle, attr). Directoarele au handle 0.
-        context.fs.create(parent_ino, &secret_name, attr, false, false).await
-    });
+    let res =
+        c.rt.block_on(async { c.fs.create(p_ino, &secret, attr, false, false).await });
 
-    match result {
-        Ok((_, file_attr)) => {
-            *out_ino = file_attr.ino;
+    match res {
+        Ok((_, fattr)) => {
+            *out_ino = fattr.ino;
             0
         }
-        Err(e) => {
-            eprintln!("Eroare mkdir: {:?}", e);
-            -1
-        }
+        Err(_) => -1,
     }
 }
 
-/// Șterge un fișier.
-///
 /// # Safety
-/// `ctx` must be valid.
-/// `filename` must be a valid C string.
+/// pointers valid.
 #[no_mangle]
 pub unsafe extern "C" fn rencfs_unlink(
     ctx: *mut RencfsContext,
-    parent_ino: c_ulonglong,
-    filename: *const c_char,
+    p_ino: c_ulonglong,
+    fname: *const c_char,
 ) -> c_int {
-    let context = &mut *ctx;
-    let c_name = CStr::from_ptr(filename);
-    let name_str = match c_name.to_str() {
+    let c = &mut *ctx;
+    let c_name = CStr::from_ptr(fname);
+    let s_name = match c_name.to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let secret_name = SecretString::new(Box::new(name_str.to_string()));
+    let secret = SecretString::new(Box::new(s_name.to_string()));
 
-    let result = context.rt.block_on(async {
-        context.fs.remove_file(parent_ino, &secret_name).await
-    });
+    let res =
+        c.rt.block_on(async { c.fs.remove_file(p_ino, &secret).await });
 
-    match result {
+    match res {
         Ok(_) => 0,
-        Err(e) => {
-            eprintln!("Eroare unlink: {:?}", e);
-            -1
-        }
+        Err(_) => -1,
     }
 }
 
-/// Șterge un director (trebuie să fie gol).
-///
 /// # Safety
-/// `ctx` must be valid.
-/// `filename` must be a valid C string.
+/// pointers valid.
 #[no_mangle]
 pub unsafe extern "C" fn rencfs_rmdir(
     ctx: *mut RencfsContext,
-    parent_ino: c_ulonglong,
-    filename: *const c_char,
+    p_ino: c_ulonglong,
+    fname: *const c_char,
 ) -> c_int {
-    let context = &mut *ctx;
-    let c_name = CStr::from_ptr(filename);
-    let name_str = match c_name.to_str() {
+    let c = &mut *ctx;
+    let c_name = CStr::from_ptr(fname);
+    let s_name = match c_name.to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let secret_name = SecretString::new(Box::new(name_str.to_string()));
+    let secret = SecretString::new(Box::new(s_name.to_string()));
 
-    let result = context.rt.block_on(async {
-        context.fs.remove_dir(parent_ino, &secret_name).await
-    });
+    let res =
+        c.rt.block_on(async { c.fs.remove_dir(p_ino, &secret).await });
 
-    match result {
+    match res {
         Ok(_) => 0,
-        Err(e) => {
-            eprintln!("Eroare rmdir: {:?}", e);
-            -1
-        }
+        Err(_) => -1,
     }
 }
 
-/// Redenumește un fișier sau director.
-///
 /// # Safety
-/// `ctx` must be valid.
-/// `old_name` and `new_name` must be valid C strings.
+/// pointers valid.
 #[no_mangle]
 pub unsafe extern "C" fn rencfs_rename(
     ctx: *mut RencfsContext,
     parent: c_ulonglong,
-    old_name: *const c_char,
+    old: *const c_char,
     new_parent: c_ulonglong,
-    new_name: *const c_char,
+    new_n: *const c_char,
 ) -> c_int {
-    let context = &mut *ctx;
-    
-    // Conversie old_name
-    let c_old = CStr::from_ptr(old_name);
-    let old_str = match c_old.to_str() {
+    let c = &mut *ctx;
+
+    let c_old = CStr::from_ptr(old);
+    let s_old = match c_old.to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let secret_old = SecretString::new(Box::new(old_str.to_string()));
+    let sec_old = SecretString::new(Box::new(s_old.to_string()));
 
-    // Conversie new_name
-    let c_new = CStr::from_ptr(new_name);
-    let new_str = match c_new.to_str() {
+    let c_new = CStr::from_ptr(new_n);
+    let s_new = match c_new.to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let secret_new = SecretString::new(Box::new(new_str.to_string()));
+    let sec_new = SecretString::new(Box::new(s_new.to_string()));
 
-    let result = context.rt.block_on(async {
-        context.fs.rename(parent, &secret_old, new_parent, &secret_new).await
-    });
+    let res =
+        c.rt.block_on(async { c.fs.rename(parent, &sec_old, new_parent, &sec_new).await });
 
-    match result {
+    match res {
         Ok(_) => 0,
-        Err(e) => {
-            eprintln!("Eroare rename: {:?}", e);
-            -1
-        }
+        Err(_) => -1,
     }
 }
 
-/// Schimbă parola volumului criptat.
-///
 /// # Safety
-/// Toți pointerii trebuie să fie string-uri C valide.
+/// pointers valid.
 #[no_mangle]
 pub unsafe extern "C" fn rencfs_change_password(
-    base_path: *const c_char,
-    old_pass: *const c_char,
-    new_pass: *const c_char,
+    path: *const c_char,
+    old: *const c_char,
+    new_p: *const c_char,
 ) -> c_int {
-    if base_path.is_null() || old_pass.is_null() || new_pass.is_null() {
+    if path.is_null() || old.is_null() || new_p.is_null() {
         return -1;
     }
 
-    // Conversii C -> Rust
-    let c_path = CStr::from_ptr(base_path);
-    let path_str = match c_path.to_str() {
+    let c_path = CStr::from_ptr(path);
+    let s_path = match c_path.to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let path_buf = PathBuf::from(path_str);
+    let p_buf = PathBuf::from(s_path);
 
-    let c_old = CStr::from_ptr(old_pass);
-    let old_str = match c_old.to_str() {
+    let c_old = CStr::from_ptr(old);
+    let s_old = match c_old.to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let secret_old = SecretString::new(Box::new(old_str.to_string()));
+    let sec_old = SecretString::new(Box::new(s_old.to_string()));
 
-    let c_new = CStr::from_ptr(new_pass);
-    let new_str = match c_new.to_str() {
+    let c_new = CStr::from_ptr(new_p);
+    let s_new = match c_new.to_str() {
         Ok(s) => s,
         Err(_) => return -1,
     };
-    let secret_new = SecretString::new(Box::new(new_str.to_string()));
+    let sec_new = SecretString::new(Box::new(s_new.to_string()));
 
-    // Cream un Runtime temporar doar pentru aceasta operatie
     let rt = match Runtime::new() {
         Ok(r) => r,
         Err(_) => return -1,
     };
 
-    let result = rt.block_on(async {
-        // Folosim acelasi algoritm ca la init (ChaCha20Poly1305)
-        EncryptedFs::passwd(&path_buf, secret_old, secret_new, Cipher::ChaCha20Poly1305).await
+    let res = rt.block_on(async {
+        EncryptedFs::passwd(&p_buf, sec_old, sec_new, Cipher::ChaCha20Poly1305).await
     });
 
-    match result {
+    match res {
         Ok(_) => 0,
-        Err(e) => {
-            eprintln!("Eroare change_password: {:?}", e);
-            -1
+        Err(_) => -1,
+    }
+}
+
+// Directory listing
+
+pub struct RencfsDirIterator {
+    iter: DirectoryEntryIterator,
+}
+
+/// # Safety
+/// pointers valid.
+#[no_mangle]
+pub unsafe extern "C" fn rencfs_opendir(
+    ctx: *mut RencfsContext,
+    ino: c_ulonglong,
+) -> *mut RencfsDirIterator {
+    let c = &mut *ctx;
+
+    let res = c.rt.block_on(async { c.fs.read_dir(ino).await });
+
+    match res {
+        Ok(iter) => {
+            let d = Box::new(RencfsDirIterator { iter });
+            Box::into_raw(d)
         }
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// # Safety
+/// pointers valid.
+#[no_mangle]
+pub unsafe extern "C" fn rencfs_readdir(
+    dir_ctx: *mut RencfsDirIterator,
+    out_name: *mut c_char,
+    n_len: usize,
+    out_ino: *mut c_ulonglong,
+    out_type: *mut c_uchar,
+) -> c_int {
+    if dir_ctx.is_null() {
+        return -1;
+    }
+    let it = &mut *dir_ctx;
+
+    match it.iter.next() {
+        Some(res) => {
+            match res {
+                Ok(entry) => {
+                    *out_ino = entry.ino;
+
+                    // Aici era eroarea: am scos _ => 0
+                    *out_type = match entry.kind {
+                        FileType::Directory => 1,
+                        FileType::RegularFile => 2,
+                    };
+
+                    let s = entry.name.expose_secret();
+                    let b = s.as_bytes();
+
+                    if b.len() >= n_len {
+                        return -1;
+                    }
+
+                    ptr::copy_nonoverlapping(b.as_ptr(), out_name as *mut u8, b.len());
+                    *out_name.add(b.len()) = 0;
+
+                    1
+                }
+                Err(_) => -1,
+            }
+        }
+        None => 0,
+    }
+}
+
+/// # Safety
+/// valid pointer.
+#[no_mangle]
+pub unsafe extern "C" fn rencfs_closedir(d: *mut RencfsDirIterator) {
+    if !d.is_null() {
+        let _ = Box::from_raw(d);
     }
 }

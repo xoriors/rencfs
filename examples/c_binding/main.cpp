@@ -62,6 +62,28 @@ int main() {
         std::cerr << "[CPP] Rename failed!" << std::endl;
     }
 
+	// --- TEST LS (LIST FILES) ---
+    std::cout << "\n[CPP] --- Listing Root Directory ---" << std::endl;
+    // Deschidem directorul root (inode 1)
+    RencfsDirIterator* iter = rencfs_opendir(ctx, 1);
+    
+    if (iter) {
+        char name_buf[256];
+        uint64_t entry_ino;
+        unsigned char entry_type;
+        
+        // Bucla while care citeste cat timp rencfs_readdir returneaza 1
+        while (rencfs_readdir(iter, name_buf, sizeof(name_buf), &entry_ino, &entry_type) == 1) {
+            std::string type_str = (entry_type == 1) ? "[DIR] " : "[FILE]";
+            std::cout << "  " << type_str << " " << name_buf << " (ino: " << entry_ino << ")" << std::endl;
+        }
+        
+        rencfs_closedir(iter);
+        std::cout << "[CPP] --- End Listing ---\n" << std::endl;
+    } else {
+        std::cerr << "[CPP] Failed to open directory!" << std::endl;
+    }
+
     // 7. Test UNLINK (Stergem fisierul redenumit)
     std::cout << "[CPP] Deleting file '" << new_filename << "'..." << std::endl;
     if (rencfs_unlink(ctx, 1, new_filename) == 0) {

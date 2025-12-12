@@ -34,6 +34,21 @@ int rencfs_rename(RencfsContext* ctx, uint64_t parent, const char* old_name, uin
 // Schimba parola. Nu necesita context (lucreaza direct pe path).
 int rencfs_change_password(const char* base_path, const char* old_pass, const char* new_pass);
 
+// --- Directory Listing ---
+
+typedef struct RencfsDirIterator RencfsDirIterator;
+
+// Deschide director. Returneaza pointer sau NULL.
+RencfsDirIterator* rencfs_opendir(RencfsContext* ctx, uint64_t ino);
+
+// Citeste urmatorul element.
+// Return: 1 (OK), 0 (Done), -1 (Error)
+// out_type: 1 = Directory, 2 = Regular File
+int rencfs_readdir(RencfsDirIterator* iter, char* out_name, size_t name_len, uint64_t* out_ino, unsigned char* out_type);
+
+// Inchide iteratorul.
+void rencfs_closedir(RencfsDirIterator* iter);
+
 // Scrie in fisier.
 int rencfs_write(RencfsContext* ctx, uint64_t ino, uint64_t handle, const unsigned char* buf, size_t len, uint64_t offset);
 
