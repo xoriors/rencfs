@@ -154,6 +154,14 @@ fn get_cli_args() -> ArgMatches {
                         .help("If we should try to umount the mountpoint before starting the FUSE server. This can be useful when the previous run crashed or was forced kll and the mountpoint is still mounted."),
                 )
                 .arg(
+                    Arg::new("init-2fa")
+                        .long("init-2fa")
+                        .action(ArgAction::SetTrue)
+                        .requires("mount-point")
+                        .requires("data-dir")
+                        .help("Initialize Google 2FA for this filesystem. Required only for the first run to bind the user."),
+                )
+                .arg(
                     Arg::new("allow-root")
                         .long("allow-root")
                         .short('s')
@@ -269,39 +277,47 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
 
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
 
-    // retrieve credentials
-    let raw_client_id = env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
-    let raw_client_secret = env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default();
+    // 1. Check Keyring for existing 2FA registration
+    // We attempt to fetch the ID first. If it exists, we MUST enforce 2FA.
+    let stored_sub = match keyring::get("google_owner_sub") {
+        Ok(s) => Some(s.expose_secret().to_string()),
+        Err(_) => None, // Entry not found or keyring unavailable
+    };
 
-    let google_client_id = raw_client_id.trim().trim_matches('"').trim_matches('\'').to_string();
-    let google_client_secret = raw_client_secret.trim().trim_matches('"').trim_matches('\'').to_string();
+    let init_2fa = matches.get_flag("init-2fa");
 
-    if !google_client_id.is_empty() {
-        // Try to load the known Owner ID (sub) from keyring
-        let stored_sub = keyring::get("google_owner_sub")
-            .ok()
-            .map(|s| s.expose_secret().to_string());
-        
-        // Authenticate with Google (Passkey + Identity Check)
-        let (valid_refresh_token, subject) = crate::auth::authenticate_google(
-            google_client_id.clone(), 
-            google_client_secret.clone(),
-            stored_sub.clone() // Pass the expected sub (or None if first run)
-        ).await?;
-        
-        // If this was the first run (no stored sub), save the verified sub as the owner
-        if stored_sub.is_none() {
-            let secret_sub = SecretString::new(Box::new(subject));
-            let _ = keyring::save(&secret_sub, "google_owner_sub").map_err(|e| {
-                warn!("Failed to save Google Owner ID to keyring: {}", e);
-            });
+    // 2. Decide if we need to Authenticate
+    if stored_sub.is_some() || init_2fa {
+        // Retrieve credentials
+        let raw_client_id = env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
+        let raw_client_secret = env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default();
+        let google_client_id = raw_client_id.trim().trim_matches('"').trim_matches('\'').to_string();
+        let google_client_secret = raw_client_secret.trim().trim_matches('"').trim_matches('\'').to_string();
+
+        // 3. Fail if credentials are missing but 2FA is required
+        if google_client_id.is_empty() || google_client_secret.is_empty() {
+             return Err(anyhow::anyhow!(
+                 "CRITICAL: This filesystem (or your user profile) is bound to Google 2FA, but GOOGLE_CLIENT_ID/SECRET are missing.\n\
+                 You must provide these environment variables to authenticate."
+             ));
         }
 
-        // Save the valid refresh token back to keyring
-        let secret_token = SecretString::new(Box::new(valid_refresh_token));
-        let _ = keyring::save(&secret_token, "google_refresh_token").map_err(|e| {
-            warn!("Failed to save Google token to keyring: {}", e);
-        });
+        // 4. Authenticate
+        let (_valid_refresh_token, subject) = crate::auth::authenticate_google(
+            google_client_id, 
+            google_client_secret,
+            stored_sub.clone()
+        ).await?;
+        
+        // 5. Persist the ID if this was the first run
+        if stored_sub.is_none() {
+            let secret_sub = SecretString::new(Box::new(subject));
+            if let Err(e) = keyring::save(&secret_sub, "google_owner_sub") {
+                warn!("Failed to save Google Owner ID to keyring: {}", e);
+            } else {
+                info!("2FA Identity saved. Future mounts will strictly require Google Auth.");
+            }
+        }
     }
 
     // when running from IDE we can't read from stdin with rpassword, get it from env var
