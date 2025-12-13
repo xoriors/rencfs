@@ -58,8 +58,7 @@ subtle = "2.6.1"
 bon = "3.3.0"
 shush-rs = "0.1.10"
 criterion = { version = "0.5.1", features = ["html_reports"] }
-openidconnect = { version = "3.5", features = ["reqwest"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
 url = "2.5"
 webbrowser = "1.0"
 totp-rs = { version = "5.0", features = ["qr", "gen_secret"] }
