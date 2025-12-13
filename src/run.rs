@@ -279,7 +279,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
     let data_path = Path::new(&data_dir);
 
-    // 1. Get Password FIRST
     let mut password = SecretString::from_str(
         env::var("RENCFS_PASSWORD")
             .unwrap_or_else(|_| String::new())
@@ -292,7 +291,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         io::stdout().flush().unwrap();
         password = SecretString::new(Box::new(read_password()?));
 
-        // Logic for new directory confirmation
+        // logic for new directory confirmation
         if !PathBuf::new().join(data_dir.clone()).is_dir()
             || fs::read_dir(&data_dir)
                 .await
@@ -324,12 +323,11 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         }
     }
 
-    // 2. TOTP 2FA Logic
+    // TOTP 2FA Logic
     let is_bound = EncryptedFs::is_identity_bound(data_path);
     let init_2fa = matches.get_flag("init-2fa");
 
     if init_2fa {
-        // --- SETUP MODE ---
         if is_bound {
              error!("2FA is already initialized for this vault.");
              return Err(ExitStatusError::Failure(1).into());
@@ -337,10 +335,9 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
 
         info!("Initializing TOTP 2FA...");
         
-        // Generate a new Secret
         let secret = Secret::generate_secret();
         let secret_str = secret.to_encoded().to_string();
-        
+
         let totp = TOTP::new(
             Algorithm::SHA1,
             6,
@@ -350,12 +347,11 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             Some("Rencfs".to_string()),
             "MyVault".to_string(),
         ).unwrap();
-        
-        // FIX: Map the String error to an anyhow::Error
+
         let qr_base64 = totp.get_qr_base64()
             .map_err(|e| anyhow::anyhow!("QR Code generation error: {}", e))?;
 
-        // --- NEW: Generate HTML and Open Browser ---
+        // generate HTML site with embedded QR code
         let html_content = format!(
             r#"
             <!DOCTYPE html>
@@ -387,7 +383,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
 
         let setup_file_path = std::env::current_dir()?.join("rencfs_2fa_setup.html");
 
-        // FIX 3: Use a scope block to force the file to close/flush immediately
+        // scope block to force the file to close/flush immediately
         {
             let mut file = std::fs::File::create(&setup_file_path)?;
             file.write_all(html_content.as_bytes())?;
@@ -396,7 +392,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
 
         info!("Opening QR code in default browser...");
         
-        // Pass the absolute path to the browser
         if webbrowser::open(setup_file_path.to_str().unwrap_or("")).is_err() {
             warn!("Could not open browser automatically.");
             println!("Please open this file manually: {}", setup_file_path.display());
@@ -422,7 +417,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         }
 
     } else if is_bound {
-        // --- VERIFICATION MODE ---
         info!("Locked by 2FA.");
         
         let secret_str = EncryptedFs::get_totp_secret(data_path, &password, cipher)
