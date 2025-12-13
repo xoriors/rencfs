@@ -19,6 +19,8 @@ pub struct RsEncoder {
 
 impl RsEncoder {
     pub fn new(data_shards: usize, parity_shards: usize) -> Self {
+        assert!(data_shards > 0, "data_shards must be > 0");
+        assert!(parity_shards > 0, "parity_shards must be > 0");
         Self {
             data_shards,
             parity_shards,

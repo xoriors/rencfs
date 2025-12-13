@@ -3,6 +3,7 @@ use std::string::ToString;
 use std::time::SystemTime;
 
 use shush_rs::{ExposeSecret, SecretString};
+use tempfile;
 use tracing_test::traced_test;
 
 use crate::crypto::Cipher;
@@ -2485,78 +2486,72 @@ async fn test_read_only_write() {
 #[tokio::test]
 #[traced_test]
 async fn test_reed_solomon_error_correction() {
-    run_test(
-        TestSetup {
-            key: "test_rs_error_correction",
-            read_only: false,
-        },
-        async {
-            // Create filesystem with Reed-Solomon enabled (3 data shards, 2 parity shards)
-            let rs_config = Some(crate::crypto::rs::RsConfig {
-                data_shards: 3,
-                parity_shards: 2,
-            });
-            
-            let temp_dir = tempfile::tempdir().unwrap();
-            let data_dir = temp_dir.path().to_path_buf();
-            
-            let fs = EncryptedFs::new(
-                data_dir.clone(),
-                Box::new(PasswordProviderImpl {}),
-                Cipher::ChaCha20Poly1305,
-                rs_config,
-                false,
-            )
-            .await
-            .unwrap();
-
-            // Create and write a test file
-            let test_file = SecretString::from_str("test-rs-file").unwrap();
-            let (fh, attr) = fs
-                .create(
-                    ROOT_INODE,
-                    &test_file,
-                    create_attr(FileType::RegularFile),
-                    false,
-                    true,
-                )
-                .await
-                .unwrap();
-            
-            let original_data = b"Hello, Reed-Solomon! This is test data for error correction.";
-            write_all_bytes_to_fs(&fs, attr.ino, 0, original_data, fh).await.unwrap();
-            
-            // Release the file handle (this should trigger RS encoding and create parity shards)
-            fs.release(fh).await.unwrap();
-            
-            // Verify the main content file exists
-            let content_path = fs.contents_path(attr.ino);
-            assert!(content_path.exists(), "Main content file should exist");
-            
-            // Verify parity shard files were created
-            for i in 0..2 {
-                let parity_path = content_path.parent().unwrap().join(format!("{}.parity.{}", attr.ino, i));
-                assert!(parity_path.exists(), "Parity shard {} should exist", i);
-            }
-            
-            // Simulate file corruption by deleting the main content file
-            std::fs::remove_file(&content_path).unwrap();
-            assert!(!content_path.exists(), "Main content file should be deleted");
-            
-            // Try to read the file - this should trigger reconstruction from parity shards
-            let read_fh = fs.open(attr.ino, true, false).await.unwrap();
-            
-            // Read the reconstructed content
-            let mut buffer = vec![0u8; original_data.len()];
-            let bytes_read = fs.read(attr.ino, 0, &mut buffer, read_fh).await.unwrap();
-            assert_eq!(bytes_read, original_data.len(), "Should read all original bytes");
-            assert_eq!(&buffer[..bytes_read], original_data, "Reconstructed data should match original");
-            
-            // Verify the main file was restored
-            assert!(content_path.exists(), "Main content file should be restored after reconstruction");
-            
-            fs.release(read_fh).await.unwrap();
-        },
+    // Create filesystem with Reed-Solomon enabled (3 data shards, 2 parity shards)
+    // Currently only `data_shards = 1` is supported.
+    // The original encrypted file acts as the single data shard.
+    // Parity shards are used only for recovery.
+    let rs_config = Some(crate::crypto::rs::RsConfig {
+        data_shards: 1,
+        parity_shards: 2,
+    });
+    
+    let temp_dir = tempfile::tempdir().unwrap();
+    let data_dir = temp_dir.path().to_path_buf();
+    
+    let fs = EncryptedFs::new(
+        data_dir.clone(),
+        Box::new(PasswordProviderImpl {}),
+        Cipher::ChaCha20Poly1305,
+        rs_config,
+        false,
     )
-    .await;
+    .await
+    .unwrap();
+
+    // Create and write a test file
+    let test_file = SecretString::from_str("test-rs-file").unwrap();
+    let (fh, attr) = fs
+        .create(
+            ROOT_INODE,
+            &test_file,
+            create_attr(FileType::RegularFile),
+            false,
+            true,
+        )
+        .await
+        .unwrap();
+    
+    let original_data = b"Hello, Reed-Solomon! This is test data for error correction.";
+    write_all_bytes_to_fs(&fs, attr.ino, 0, original_data, fh).await.unwrap();
+    
+    // Release the file handle (this should trigger RS encoding and create parity shards)
+    fs.release(fh).await.unwrap();
+    
+    // Verify the main content file exists
+    let content_path = fs.contents_path(attr.ino);
+    assert!(content_path.exists(), "Main content file should exist");
+    
+    // Verify parity shard files were created
+    for i in 0..2 {
+        let parity_path = content_path.parent().unwrap().join(format!("{}.parity.{}", attr.ino, i));
+        assert!(parity_path.exists(), "Parity shard {} should exist", i);
+    }
+    
+    // Simulate file corruption by deleting the main content file
+    std::fs::remove_file(&content_path).unwrap();
+    assert!(!content_path.exists(), "Main content file should be deleted");
+    
+    // Try to read the file - this should trigger reconstruction from parity shards
+    let read_fh = fs.open(attr.ino, true, false).await.unwrap();
+    
+    // Read the reconstructed content
+    let mut buffer = vec![0u8; original_data.len()];
+    let bytes_read = fs.read(attr.ino, 0, &mut buffer, read_fh).await.unwrap();
+    assert_eq!(bytes_read, original_data.len(), "Should read all original bytes");
+    assert_eq!(&buffer[..bytes_read], original_data, "Reconstructed data should match original");
+    
+    // Verify the main file was restored
+    assert!(content_path.exists(), "Main content file should be restored after reconstruction");
+    
+    fs.release(read_fh).await.unwrap();
 }

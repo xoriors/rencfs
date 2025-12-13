@@ -305,6 +305,8 @@ pub enum FsError {
     MaxFilesizeExceeded(usize),
     #[error("Read only mode is active.")]
     ReadOnly,
+    #[error("Reed-Solomon error: {0}")]
+    ReedSolomonError(String),
 }
 
 #[derive(Debug, Clone)]
@@ -1004,6 +1006,19 @@ impl EncryptedFs {
 
                 // remove from contents directory
                 fs::remove_file(self_clone.contents_path(attr.ino))?;
+                
+                // remove parity shards if RS is enabled
+                if let Some(ref rs_config) = self_clone.rs_config {
+                    for i in 0..rs_config.parity_shards {
+                        let parity_path = self_clone.contents_path(attr.ino)
+                            .parent()
+                            .unwrap()
+                            .join(format!("{}.parity.{}", attr.ino, i));
+                        // Ignore errors - parity shards might not exist
+                        let _ = fs::remove_file(parity_path);
+                    }
+                }
+                
                 // remove from parent directory
                 self_clone
                     .remove_directory_entry(parent, &name_clone)
@@ -1478,6 +1493,7 @@ impl EncryptedFs {
     #[allow(clippy::missing_panics_doc)]
     #[allow(clippy::too_many_lines)]
     pub async fn release(&self, handle: u64) -> FsResult<()> {
+        debug!("RS: release() called with handle {}", handle);
         if handle == 0 {
             // in the case of directory or if the file was crated
             // without being opened we don't use a handle
@@ -1488,6 +1504,7 @@ impl EncryptedFs {
         // read
         let ctx = { self.read_handles.write().await.remove(&handle) };
         if let Some(ctx) = ctx {
+            debug!("RS: release() - found read handle {}", handle);
             let ctx = ctx.lock().await;
 
             {
@@ -1517,6 +1534,7 @@ impl EncryptedFs {
 
         // write
         let ctx = { self.write_handles.write().await.remove(&handle) };
+        debug!("RS: release() - checking write handle {}, found: {}", handle, ctx.is_some());
         if let Some(ctx) = ctx {
             if self.read_only {
                 return Err(FsError::ReadOnly);
@@ -1532,35 +1550,48 @@ impl EncryptedFs {
             file.sync_all()?;
             File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
             
+            debug!("RS: release() - checking if RS is enabled, rs_config = {:?}", self.rs_config.is_some());
+            
             // Reed-Solomon: Encode and write parity shards if configured
+            // This is done after file sync to ensure content is persisted
             if let Some(ref rs_config) = self.rs_config {
-                let ino = ctx.ino;
-                let content_path = self.contents_path(ino);
+                let content_path = self.contents_path(ctx.ino);
+                debug!("RS: Attempting to encode file for inode {} at {:?}", ctx.ino, content_path);
                 
-                // Read the encrypted file content
-                if let Ok(content) = std::fs::read(&content_path) {
-                    let encoder = crate::crypto::rs::RsEncoder::new(
-                        rs_config.data_shards,
-                        rs_config.parity_shards,
-                    );
-                    
-                    // Encode to produce data + parity shards
-                    match encoder.encode(&content) {
-                        Ok(shards) => {
-                            // Write parity shards (skip data shards which are the original file split)
-                            for (i, shard) in shards.iter().enumerate().skip(rs_config.data_shards) {
-                                let shard_path = content_path.parent()
-                                    .unwrap()
-                                    .join(format!("{}.parity.{}", ino, i - rs_config.data_shards));
-                                if let Err(e) = std::fs::write(&shard_path, shard) {
-                                    warn!("Failed to write parity shard {:?}: {}", shard_path, e);
+                match tokio::fs::read(&content_path).await {
+                    Ok(content) => {
+                        debug!("RS: Read {} bytes from {:?}", content.len(), content_path);
+                        let encoder = crate::crypto::rs::RsEncoder::new(
+                            rs_config.data_shards,
+                            rs_config.parity_shards,
+                        );
+                        
+                        let shards = encoder.encode(&content)
+                            .map_err(|e| format!("RS encoding failed for inode {}: {}", ctx.ino, e));
+                        
+                        match shards {
+                            Ok(shards) => {
+                                // Write parity shards (skip data shards which are the original file)
+                                for (i, shard) in shards.iter().enumerate().skip(rs_config.data_shards) {
+                                    let shard_path = content_path.parent()
+                                        .unwrap()
+                                        .join(format!("{}.parity.{}", ctx.ino, i - rs_config.data_shards));
+                                    if let Err(e) = tokio::fs::write(&shard_path, shard).await {
+                                        warn!("RS: Failed to write parity shard {:?}: {}", shard_path, e);
+                                    } else {
+                                        debug!("RS: Wrote parity shard {} for inode {} at {:?}", 
+                                            i - rs_config.data_shards, ctx.ino, shard_path);
+                                    }
                                 }
+                                debug!("RS: Wrote {} parity shards for inode {}", rs_config.parity_shards, ctx.ino);
                             }
-                            debug!("RS: Wrote {} parity shards for inode {}", rs_config.parity_shards, ino);
+                            Err(e) => {
+                                warn!("{}", e);
+                            }
                         }
-                        Err(e) => {
-                            warn!("RS encoding failed for inode {}: {}", ino, e);
-                        }
+                    }
+                    Err(e) => {
+                        debug!("RS: Failed to read content file {:?}: {}", content_path, e);
                     }
                 }
             }
@@ -1842,12 +1873,18 @@ impl EncryptedFs {
         if let Some(ref rs_config) = self.rs_config {
             let content_path = self.contents_path(ino);
             
-            // Check if main file is missing or empty (potential corruption)
-            let needs_reconstruction = !content_path.exists() 
-                || std::fs::metadata(&content_path).map(|m| m.len() == 0).unwrap_or(false);
+            // Check if main file is missing (not just empty - empty files are valid!)
+            let file_missing = !content_path.exists();
             
-            if needs_reconstruction {
-                debug!("RS: Attempting reconstruction for inode {} (file missing or empty)", ino);
+            if file_missing {
+                debug!("RS: Attempting reconstruction for inode {} (file missing)", ino);
+                
+                // RS reconstruction currently supports only data_shards = 1
+                // The main encrypted file serves as the single data shard
+                debug_assert!(
+                    rs_config.data_shards == 1,
+                    "RS reconstruction currently supports only data_shards = 1"
+                );
                 
                 // Build shard array: data shard (main file) + parity shards
                 let total_shards = rs_config.data_shards + rs_config.parity_shards;
@@ -1855,7 +1892,7 @@ impl EncryptedFs {
                 
                 // Try to load the main file as first data shard (might fail if missing)
                 if content_path.exists() {
-                    if let Ok(data) = std::fs::read(&content_path) {
+                    if let Ok(data) = tokio::fs::read(&content_path).await {
                         if !data.is_empty() {
                             shards_opt[0] = Some(data);
                         }
@@ -1868,11 +1905,23 @@ impl EncryptedFs {
                     let shard_path = content_path.parent()
                         .unwrap()
                         .join(format!("{}.parity.{}", ino, i));
+                    debug!("RS: Looking for parity shard at {:?}", shard_path);
                     if shard_path.exists() {
-                        if let Ok(shard) = std::fs::read(&shard_path) {
-                            shards_opt[rs_config.data_shards + i] = Some(shard);
-                            available_shards += 1;
+                        match tokio::fs::read(&shard_path).await {
+                            Ok(shard) => {
+                                shards_opt[rs_config.data_shards + i] = Some(shard);
+                                available_shards += 1;
+                                debug!("RS: Found parity shard {} for inode {}", i, ino);
+                            }
+                            Err(e) => {
+                                error!("RS: Failed to read parity shard {:?}: {}", shard_path, e);
+                                return Err(FsError::ReedSolomonError(format!(
+                                    "Failed to read parity shard: {}", e
+                                )));
+                            }
                         }
+                    } else {
+                        debug!("RS: Parity shard {} not found at {:?}", i, shard_path);
                     }
                 }
                 
@@ -1883,27 +1932,34 @@ impl EncryptedFs {
                         rs_config.parity_shards,
                     );
                     
-                    match encoder.reconstruct(&mut shards_opt) {
-                        Ok(recovered) => {
-                            // Write recovered content back to main file
-                            if let Err(e) = std::fs::write(&content_path, &recovered) {
-                                error!("RS: Failed to write reconstructed file for inode {}: {}", ino, e);
-                                return Err(FsError::Other(Box::leak(format!("Failed to reconstruct file: {}", e).into_boxed_str())));
-                            }
-                            info!("RS: Successfully reconstructed inode {} from {} available shards", ino, available_shards);
-                        }
-                        Err(e) => {
-                            error!("RS: Reconstruction failed for inode {}: {}", ino, e);
-                            return Err(FsError::Other(Box::leak(format!("File reconstruction failed: {}", e).into_boxed_str())));
-                        }
+                    let recovered = encoder.reconstruct(&mut shards_opt)
+                        .map_err(|e| FsError::ReedSolomonError(format!(
+                            "File reconstruction failed: {}", e
+                        )))?;
+                    
+                    // Write recovered content back to main file using async I/O
+                    // Check read-only mode before writing
+                    if self.read_only {
+                        return Err(FsError::ReadOnly);
                     }
+                    
+                    tokio::fs::write(&content_path, &recovered).await
+                        .map_err(|e| {
+                            error!("RS: Failed to write reconstructed file for inode {}: {}", ino, e);
+                            FsError::ReedSolomonError(format!(
+                                "Failed to write reconstructed file: {}", e
+                            ))
+                        })?;
+                    
+                    info!(
+                        "RS: Successfully reconstructed inode {} from {} shards",
+                        ino, available_shards
+                    );
                 } else {
-                    error!("RS: Not enough shards to reconstruct inode {} (need {}, have {})", 
-                           ino, rs_config.data_shards, available_shards);
-                    return Err(FsError::Other(Box::leak(format!(
-                        "Cannot reconstruct file: need {} shards, only {} available",
+                    return Err(FsError::ReedSolomonError(format!(
+                        "Cannot reconstruct file: need {} shard(s), only {} available",
                         rs_config.data_shards, available_shards
-                    ).into_boxed_str())));
+                    )));
                 }
             }
         }
@@ -2306,34 +2362,41 @@ impl EncryptedFs {
         // write
         let lock = self.opened_files_for_write.read().await;
         if let Some(fh) = lock.get(&ino) {
-            if let Some(handle) = skip_write_fh {
-                if *fh == handle {
-                    return Ok(());
-                }
-            }
             let lock = self.write_handles.read().await;
             if let Some(lock) = lock.get(fh) {
                 let mut ctx = lock.lock().await;
-                let writer = ctx.writer.as_mut().unwrap();
-                let file = writer.finish()?;
-                file.sync_all()?;
-                File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
-                let set_attr: Option<SetFileAttr> = if save_attr {
-                    Some(ctx.attr.clone().into())
-                } else {
-                    None
-                };
-                drop(ctx);
-                if let Some(set_attr) = set_attr {
-                    self.set_attr(ino, set_attr).await?;
+                
+                // Only finish and recreate writer if it exists
+                if ctx.writer.is_some() {
+                    let writer = ctx.writer.as_mut().unwrap();
+                    let file = writer.finish()?;
+                    file.sync_all()?;
+                    File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+                    
+                    let set_attr: Option<SetFileAttr> = if save_attr {
+                        Some(ctx.attr.clone().into())
+                    } else {
+                        None
+                    };
+                    drop(ctx);
+                    if let Some(set_attr) = set_attr {
+                        self.set_attr(ino, set_attr).await?;
+                    }
+                    let writer = self
+                        .create_write_seek(OpenOptions::new().read(true).write(true).open(&path)?)
+                        .await?;
+                    let mut ctx = lock.lock().await;
+                    ctx.writer = Some(Box::new(writer));
+                    let attr = self.get_inode_from_storage(ino).await?;
+                    ctx.attr = attr.into();
+                    
+                    // Check if we should skip any further operations on this write handle
+                    if let Some(handle) = skip_write_fh {
+                        if *fh == handle {
+                            return Ok(());
+                        }
+                    }
                 }
-                let writer = self
-                    .create_write_seek(OpenOptions::new().read(true).write(true).open(&path)?)
-                    .await?;
-                let mut ctx = lock.lock().await;
-                ctx.writer = Some(Box::new(writer));
-                let attr = self.get_inode_from_storage(ino).await?;
-                ctx.attr = attr.into();
             }
         }
 
