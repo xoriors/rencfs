@@ -2,6 +2,16 @@ use reed_solomon_erasure::galois_8::Field as Gf8;
 use reed_solomon_erasure::ReedSolomon;
 use std::error::Error;
 
+/// Configuration for Reed-Solomon error correction (opt-in feature).
+/// Users can disable by passing `None` to avoid the additional storage overhead.
+#[derive(Clone, Debug)]
+pub struct RsConfig {
+    /// Number of data shards (original file is split across these).
+    pub data_shards: usize,
+    /// Number of parity shards to create (for recovery).
+    pub parity_shards: usize,
+}
+
 pub struct RsEncoder {
     data_shards: usize,
     parity_shards: usize,
