@@ -574,6 +574,7 @@ pub struct EncryptedFs {
     sizes_read: Mutex<HashMap<u64, AtomicU64>>,
     requested_read: Mutex<HashMap<u64, AtomicU64>>,
     read_only: bool,
+    rs_config: Option<crate::crypto::rs::RsConfig>,
 }
 
 impl EncryptedFs {
@@ -583,6 +584,7 @@ impl EncryptedFs {
         data_dir: PathBuf,
         password_provider: Box<dyn PasswordProvider>,
         cipher: Cipher,
+        rs_config: Option<crate::crypto::rs::RsConfig>,
         read_only: bool,
     ) -> FsResult<Arc<Self>> {
         let key_provider = KeyProvider {
@@ -627,6 +629,7 @@ impl EncryptedFs {
             sizes_read: Mutex::default(),
             requested_read: Mutex::default(),
             read_only,
+            rs_config,
         };
 
         let arc = Arc::new(fs);
@@ -1528,6 +1531,40 @@ impl EncryptedFs {
             let file = writer.finish()?;
             file.sync_all()?;
             File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+            
+            // Reed-Solomon: Encode and write parity shards if configured
+            if let Some(ref rs_config) = self.rs_config {
+                let ino = ctx.ino;
+                let content_path = self.contents_path(ino);
+                
+                // Read the encrypted file content
+                if let Ok(content) = std::fs::read(&content_path) {
+                    let encoder = crate::crypto::rs::RsEncoder::new(
+                        rs_config.data_shards,
+                        rs_config.parity_shards,
+                    );
+                    
+                    // Encode to produce data + parity shards
+                    match encoder.encode(&content) {
+                        Ok(shards) => {
+                            // Write parity shards (skip data shards which are the original file split)
+                            for (i, shard) in shards.iter().enumerate().skip(rs_config.data_shards) {
+                                let shard_path = content_path.parent()
+                                    .unwrap()
+                                    .join(format!("{}.parity.{}", ino, i - rs_config.data_shards));
+                                if let Err(e) = std::fs::write(&shard_path, shard) {
+                                    warn!("Failed to write parity shard {:?}: {}", shard_path, e);
+                                }
+                            }
+                            debug!("RS: Wrote {} parity shards for inode {}", rs_config.parity_shards, ino);
+                        }
+                        Err(e) => {
+                            warn!("RS encoding failed for inode {}: {}", ino, e);
+                        }
+                    }
+                }
+            }
+            
             // write attr only here to avoid serializing it multiple times while writing
             // it will merge time fields with existing data because it might got change while we kept the handle
             let ino = ctx.ino;
@@ -1799,6 +1836,76 @@ impl EncryptedFs {
         }
         if self.is_dir(ino) {
             return Err(FsError::InvalidInodeType);
+        }
+
+        // Reed-Solomon: Try to reconstruct file from parity shards if main file is missing/corrupt
+        if let Some(ref rs_config) = self.rs_config {
+            let content_path = self.contents_path(ino);
+            
+            // Check if main file is missing or empty (potential corruption)
+            let needs_reconstruction = !content_path.exists() 
+                || std::fs::metadata(&content_path).map(|m| m.len() == 0).unwrap_or(false);
+            
+            if needs_reconstruction {
+                debug!("RS: Attempting reconstruction for inode {} (file missing or empty)", ino);
+                
+                // Build shard array: data shard (main file) + parity shards
+                let total_shards = rs_config.data_shards + rs_config.parity_shards;
+                let mut shards_opt: Vec<Option<Vec<u8>>> = vec![None; total_shards];
+                
+                // Try to load the main file as first data shard (might fail if missing)
+                if content_path.exists() {
+                    if let Ok(data) = std::fs::read(&content_path) {
+                        if !data.is_empty() {
+                            shards_opt[0] = Some(data);
+                        }
+                    }
+                }
+                
+                // Load all available parity shards
+                let mut available_shards = if shards_opt[0].is_some() { 1 } else { 0 };
+                for i in 0..rs_config.parity_shards {
+                    let shard_path = content_path.parent()
+                        .unwrap()
+                        .join(format!("{}.parity.{}", ino, i));
+                    if shard_path.exists() {
+                        if let Ok(shard) = std::fs::read(&shard_path) {
+                            shards_opt[rs_config.data_shards + i] = Some(shard);
+                            available_shards += 1;
+                        }
+                    }
+                }
+                
+                // Check if we have enough shards to reconstruct
+                if available_shards >= rs_config.data_shards {
+                    let encoder = crate::crypto::rs::RsEncoder::new(
+                        rs_config.data_shards,
+                        rs_config.parity_shards,
+                    );
+                    
+                    match encoder.reconstruct(&mut shards_opt) {
+                        Ok(recovered) => {
+                            // Write recovered content back to main file
+                            if let Err(e) = std::fs::write(&content_path, &recovered) {
+                                error!("RS: Failed to write reconstructed file for inode {}: {}", ino, e);
+                                return Err(FsError::Other(Box::leak(format!("Failed to reconstruct file: {}", e).into_boxed_str())));
+                            }
+                            info!("RS: Successfully reconstructed inode {} from {} available shards", ino, available_shards);
+                        }
+                        Err(e) => {
+                            error!("RS: Reconstruction failed for inode {}: {}", ino, e);
+                            return Err(FsError::Other(Box::leak(format!("File reconstruction failed: {}", e).into_boxed_str())));
+                        }
+                    }
+                } else {
+                    error!("RS: Not enough shards to reconstruct inode {} (need {}, have {})", 
+                           ino, rs_config.data_shards, available_shards);
+                    return Err(FsError::Other(Box::leak(format!(
+                        "Cannot reconstruct file: need {} shards, only {} available",
+                        rs_config.data_shards, available_shards
+                    ).into_boxed_str())));
+                }
+            }
         }
 
         let mut handle: Option<u64> = None;
