@@ -351,6 +351,11 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         let qr_base64 = totp.get_qr_base64()
             .map_err(|e| anyhow::anyhow!("QR Code generation error: {}", e))?;
 
+
+        let setup_file_path = std::env::current_dir()?.join("rencfs_2fa_setup.html");
+
+        let _file_guard = TempFileGuard(setup_file_path.clone());
+
         // generate HTML site with embedded QR code
         let html_content = format!(
             r#"
@@ -380,8 +385,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             "#,
             qr_base64, secret_str
         );
-
-        let setup_file_path = std::env::current_dir()?.join("rencfs_2fa_setup.html");
 
         // scope block to force the file to close/flush immediately
         {
@@ -553,6 +556,21 @@ fn remove_pass() {
         } else {
             info!("Remove password from memory");
             PASS = None;
+        }
+    }
+}
+
+struct TempFileGuard(PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        if self.0.exists() {
+            // try to remove the file
+            if let Err(e) = std::fs::remove_file(&self.0) {
+                warn!("Failed to delete temporary setup file: {}", e);
+            } else {
+                info!("Temporary setup file deleted.");
+            }
         }
     }
 }
