@@ -719,19 +719,25 @@ impl MountPoint for MountPointImpl {
 
         let winfsp_fs = EncryptedFsWinFsp::new(Arc::new(fs), self.read_only);
 
-        let mut host = FileSystemHost::new(winfsp_fs)
-            .map_err(|_| FsError::Other("Failed to create FileSystemHost"))?;
+        let mut host = FileSystemHost::new(winfsp_fs).map_err(|e| {
+            error!("Failed to create FileSystemHost: {:?}", e);
+            FsError::Other("Failed to create FileSystemHost")
+        })?;
 
         let mount_point_str = self
             .mountpoint
             .to_str()
             .ok_or_else(|| FsError::Other("Invalid mount point path"))?;
 
-        host.mount(mount_point_str)
-            .map_err(|_| FsError::Other("Failed to mount filesystem"))?;
+        host.mount(mount_point_str).map_err(|e| {
+            error!("Failed to mount filesystem at {}: {:?}", mount_point_str, e);
+            FsError::Other("Failed to mount filesystem")
+        })?;
 
-        host.start()
-            .map_err(|_| FsError::Other("Failed to start filesystem service"))?;
+        host.start().map_err(|e| {
+            error!("Failed to start filesystem service: {:?}", e);
+            FsError::Other("Failed to start filesystem service")
+        })?;
 
         info!(
             "rencfs mounted successfully on Windows at {}",
