@@ -65,7 +65,7 @@ fuse3 = { version = "0.8.1", features = ["tokio-runtime", "unprivileged"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 winfsp = "0.12"
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO"] }
-widestring = "1.1"
+widestring = "1.2.1"
 
 [[bench]]
 name = "crypto_read"

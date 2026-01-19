@@ -19,8 +19,7 @@ use winfsp::filesystem::{
 use winfsp::host::FileSystemHost;
 use windows::Win32::Foundation::{
     STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_END_OF_FILE,
-    STATUS_FILE_IS_A_DIRECTORY, STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION,
-    STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
 };
 use windows::Win32::Storage::FileSystem::{
     FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
@@ -33,7 +32,6 @@ use crate::encryptedfs::{
 use crate::mount;
 use crate::mount::{MountHandleInner, MountPoint};
 
-const TTL: Duration = Duration::from_secs(1);
 const WINDOWS_TICK: u64 = 10_000_000;
 const SEC_TO_UNIX_EPOCH: u64 = 11_644_473_600;
 
@@ -62,10 +60,6 @@ impl EncryptedFsWinFsp {
             runtime,
             read_only,
         }
-    }
-
-    fn get_fs(&self) -> Arc<EncryptedFs> {
-        self.fs.clone()
     }
 
     fn path_to_inode(&self, path: &U16CStr) -> winfsp::Result<u64> {
@@ -191,6 +185,9 @@ impl FileSystemContext for EncryptedFsWinFsp {
         trace!("get_volume_info");
 
         let mut volume_info = VolumeInfo::default();
+        // Report virtual volume size. These are placeholder values since encrypted
+        // filesystem size depends on underlying storage, not a fixed allocation.
+        // 100GB total / 50GB free provides reasonable defaults for Windows Explorer display.
         volume_info.total_size = 1024 * 1024 * 1024 * 100;
         volume_info.free_size = 1024 * 1024 * 1024 * 50;
 
@@ -357,6 +354,7 @@ impl FileSystemContext for EncryptedFsWinFsp {
         if let Some(fh) = context.fh {
             if let Err(e) = self.runtime.block_on(async { self.fs.flush(fh).await }) {
                 error!("Flush error: {}", e);
+                return Err(STATUS_ACCESS_DENIED.into());
             }
         }
 
@@ -410,6 +408,7 @@ impl FileSystemContext for EncryptedFsWinFsp {
             .block_on(async { self.fs.set_attr(context.ino, set_attr).await })
         {
             error!("set_basic_info error: {}", e);
+            return Err(STATUS_ACCESS_DENIED.into());
         }
 
         self.refresh_file_info(context.ino, file_info);
@@ -468,29 +467,36 @@ impl FileSystemContext for EncryptedFsWinFsp {
                 }
             };
 
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let name = entry.name.expose_secret();
-                    if let Ok(name_u16) = U16CString::from_str(name) {
-                        let mut dir_info = DirInfo::new();
-                        dir_info.set_file_name(&name_u16);
+            context.dir_buffer.fill(|buffer| {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        let name = entry.name.expose_secret();
+                        if let Ok(name_u16) = U16CString::from_str(name) {
+                            let mut dir_info = DirInfo::new();
+                            dir_info.set_file_name(&name_u16);
 
-                        let fi = dir_info.file_info_mut();
-                        fi.file_attributes = if entry.kind == FileType::Directory {
-                            FILE_ATTRIBUTE_DIRECTORY.0
-                        } else {
-                            FILE_ATTRIBUTE_NORMAL.0
-                        };
-                        fi.file_size = entry.attr.size;
-                        fi.allocation_size = entry.attr.blocks * entry.attr.blksize as u64;
-                        fi.creation_time = system_time_to_filetime(entry.attr.crtime);
-                        fi.last_access_time = system_time_to_filetime(entry.attr.atime);
-                        fi.last_write_time = system_time_to_filetime(entry.attr.mtime);
-                        fi.change_time = system_time_to_filetime(entry.attr.ctime);
-                        fi.index_number = entry.ino;
+                            let fi = dir_info.file_info_mut();
+                            fi.file_attributes = if entry.kind == FileType::Directory {
+                                FILE_ATTRIBUTE_DIRECTORY.0
+                            } else {
+                                FILE_ATTRIBUTE_NORMAL.0
+                            };
+                            fi.file_size = entry.attr.size;
+                            fi.allocation_size = entry.attr.blocks * entry.attr.blksize as u64;
+                            fi.creation_time = system_time_to_filetime(entry.attr.crtime);
+                            fi.last_access_time = system_time_to_filetime(entry.attr.atime);
+                            fi.last_write_time = system_time_to_filetime(entry.attr.mtime);
+                            fi.change_time = system_time_to_filetime(entry.attr.ctime);
+                            fi.index_number = entry.ino;
+
+                            if !buffer.write(&dir_info) {
+                                return false;
+                            }
+                        }
                     }
                 }
-            }
+                true
+            });
         }
 
         Ok(context.dir_buffer.read(marker, buffer))
@@ -525,6 +531,8 @@ impl FileSystemContext for EncryptedFsWinFsp {
         let is_directory = (file_attributes & FILE_ATTRIBUTE_DIRECTORY.0) != 0;
 
         let attr = if is_directory {
+            // uid/gid = 0: Windows doesn't use Unix ownership semantics.
+            // These values are ignored by WinFSP but required by EncryptedFs.
             CreateFileAttr {
                 kind: FileType::Directory,
                 perm: 0o755,
@@ -554,9 +562,18 @@ impl FileSystemContext for EncryptedFsWinFsp {
             Ok((fh, created_attr)) => {
                 *file_info.as_mut() = Self::attr_to_file_info(&created_attr);
 
+                let file_handle = if is_directory {
+                    // Directories don't need an open file handle in WinFSP.
+                    // Release the handle returned by create() to prevent resource leak.
+                    let _ = self.runtime.block_on(async { self.fs.release(fh).await });
+                    None
+                } else {
+                    Some(fh)
+                };
+
                 Ok(EncryptedFsFileContext {
                     ino: created_attr.ino,
-                    fh: if is_directory { None } else { Some(fh) },
+                    fh: file_handle,
                     is_directory,
                     dir_buffer: DirBuffer::new(),
                 })
@@ -758,5 +775,10 @@ impl MountHandleInner for MountHandleInnerImpl {
 
 pub fn umount(mountpoint: &str) -> io::Result<()> {
     info!("Windows unmount requested for {}", mountpoint);
-    Ok(())
+    // WinFSP does not support external unmount requests.
+    // Unmounting is handled by dropping the FileSystemHost in MountHandleInnerImpl::unmount().
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "External unmount not supported on Windows. Use the mount handle to unmount.",
+    ))
 }
