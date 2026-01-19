@@ -15,11 +15,18 @@ use linux::MountHandleInnerImpl;
 #[cfg(target_os = "linux")]
 use linux::MountPointImpl;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows::MountHandleInnerImpl;
+#[cfg(target_os = "windows")]
+use windows::MountPointImpl;
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 mod dummy;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use dummy::MountHandleInnerImpl;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use dummy::MountPointImpl;
 
 #[async_trait]
