@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>rencfs | Encrypted Filesystem in Rust</title>
+    <meta name="description" content="An encrypted file system written in Rust that is mounted with FUSE on Linux. Secure, performant, and open source.">
+    <meta name="author" content="xoriors">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                        display: ['Space Grotesk', 'sans-serif'],
+                    },
+                    colors: {
+                        rust: '#DEA584',
+                        neon: '#10B981',
+                        obsidian: '#020617',
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(16, 185, 129, 0.1);
+        }
+        .code-glow {
+            text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+        }
+    </style>
+</head>
+<body class="bg-obsidian text-slate-300 antialiased overflow-x-hidden selection:bg-emerald-500/30 selection:text-emerald-200">
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 top-0 left-0 border-b border-slate-800 bg-obsidian/80 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <!-- Logo -->
+                <div class="flex-shrink-0 flex items-center gap-2">
+                    <i class="fa-solid fa-shield-halved text-emerald-500 text-xl"></i>
+                    <span class="font-display font-bold text-xl text-white tracking-tight">rencfs</span>
+                </div>
+                
+                <!-- Desktop Menu -->
+                <div class="hidden md:block">
+                    <div class="ml-10 flex items-baseline space-x-8">
+                        <a href="#features" class="hover:text-emerald-400 transition-colors px-3 py-2 rounded-md text-sm font-medium">Features</a>
+                        <a href="#architecture" class="hover:text-emerald-400 transition-colors px-3 py-2 rounded-md text-sm font-medium">Architecture</a>
+                        <a href="#roadmap" class="hover:text-emerald-400 transition-colors px-3 py-2 rounded-md text-sm font-medium">Roadmap</a>
+                        <a href="https://docs.rs/rencfs/" target="_blank" class="text-emerald-400 hover:text-emerald-300 transition-colors px-3 py-2 rounded-md text-sm font-medium border border-emerald-500/20 hover:border-emerald-500/50 hover:bg-emerald-500/10">
+                            Docs <i class="fa-solid fa-arrow-up-right-from-square text-xs ml-1"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden">
+        <!-- Background Elements -->
+        <div class="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 z-0"></div>
+        <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-emerald-600/10 rounded-full blur-[100px] -z-10"></div>
+        <div class="absolute bottom-1/4 right-1/4 w-96 h-96 bg-cyan-600/10 rounded-full blur-[100px] -z-10"></div>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
+            <div class="inline-flex items-center px-3 py-1 rounded-full border border-emerald-500/30 bg-emerald-500/5 text-emerald-400 text-xs font-mono mb-8 animate-fade-in-up">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 mr-2 animate-pulse"></span>
+                v0.1.0 • Now Open Source
+            </div>
+            
+            <h1 class="text-5xl md:text-7xl font-display font-bold text-white mb-6 tracking-tight leading-tight">
+                Secure your data with <br>
+                <span class="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-400">Rust & Encryption</span>
+            </h1>
+            
+            <p class="mt-4 max-w-2xl mx-auto text-xl text-slate-400 mb-10">
+                rencfs is an encrypted file system mounted with FUSE on Linux. 
+                Create encrypted directories and backup safely to untrusted servers.
+            </p>
+            
+            <div class="flex flex-col sm:flex-row justify-center gap-4">
+                <a href="https://github.com/xoriors/rencfs" target="_blank" class="inline-flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-lg text-black bg-emerald-400 hover:bg-emerald-500 transition-all shadow-[0_0_20px_rgba(52,211,153,0.3)] hover:shadow-[0_0_30px_rgba(52,211,153,0.5)]">
+                    <i class="fa-brands fa-github mr-2"></i> View on GitHub
+                </a>
+                <a href="#how-it-works" class="inline-flex items-center justify-center px-8 py-3 border border-slate-700 text-base font-medium rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-all">
+                    How it works
+                </a>
+            </div>
+
+            <!-- Terminal Demo -->
+            <div class="mt-16 sm:mt-24 max-w-4xl mx-auto text-left">
+                <div class="bg-slate-900 rounded-xl overflow-hidden border border-slate-800 shadow-2xl shadow-emerald-900/20">
+                    <div class="bg-slate-950 px-4 py-2 border-b border-slate-800 flex items-center gap-2">
+                        <div class="w-3 h-3 rounded-full bg-slate-700"></div>
+                        <div class="w-3 h-3 rounded-full bg-slate-700"></div>
+                        <div class="w-3 h-3 rounded-full bg-slate-700"></div>
+                    </div>
+                    <div class="p-6 font-mono text-sm leading-relaxed">
+                        <div class="flex items-center gap-2 text-slate-400">
+                            <span class="text-emerald-500">➜</span>
+                            <span>~</span>
+                            <span class="text-white">cargo install rencfs</span>
+                        </div>
+                        <div class="text-slate-500 mb-4">Installing rencfs v0.1.0...</div>
+                        
+                        <div class="flex items-center gap-2 text-slate-400">
+                            <span class="text-emerald-500">➜</span>
+                            <span>~</span>
+                            <span class="text-white">rencfs mount --source ./encrypted --target ./mountpoint</span>
+                        </div>
+                        <div class="text-slate-500 mb-4">Password: ************</div>
+                        
+                        <div class="text-emerald-400">✓ Filesystem mounted successfully.</div>
+                        <div class="text-slate-400">All files written to ./mountpoint are now encrypted in ./encrypted</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tech Stack / Trust -->
+    <section class="border-y border-slate-800 bg-black/20">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+            <p class="text-center text-sm font-mono text-slate-500 uppercase tracking-widest mb-8">Built with Modern Standards</p>
+            <div class="flex flex-wrap justify-center gap-12 text-slate-400 opacity-60 grayscale hover:grayscale-0 transition-all duration-500">
+                <div class="flex items-center gap-2 text-xl font-bold hover:text-[#DEA584]"><i class="fa-brands fa-rust fa-lg"></i> Rust</div>
+                <div class="flex items-center gap-2 text-xl font-bold hover:text-white"><i class="fa-brands fa-linux fa-lg"></i> Linux</div>
+                <div class="flex items-center gap-2 text-xl font-bold hover:text-cyan-400"><i class="fa-solid fa-microchip fa-lg"></i> FUSE</div>
+                <div class="flex items-center gap-2 text-xl font-bold hover:text-emerald-400"><i class="fa-solid fa-lock fa-lg"></i> AEAD</div>
+                <div class="flex items-center gap-2 text-xl font-bold hover:text-white"><i class="fa-solid fa-shield-cat fa-lg"></i> Security</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Key Features -->
+    <section id="features" class="py-24 bg-obsidian relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl md:text-4xl font-display font-bold text-white mb-4">Engineered for Privacy</h2>
+                <p class="text-slate-400 max-w-2xl mx-auto">
+                    Built on the principle that privacy should be performant and accessible. Rencfs leverages proven cryptographic primitives.
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Feature 1 -->
+                <div class="glass-panel p-8 rounded-2xl hover:bg-slate-800/50 transition-colors group">
+                    <div class="w-12 h-12 bg-emerald-500/10 rounded-lg flex items-center justify-center mb-6 group-hover:bg-emerald-500/20 transition-colors">
+                        <i class="fa-solid fa-lock text-emerald-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-3">Audited Cryptography</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        Uses well-known, audited AEAD cryptography primitives. We rely on the `ring` crate for established security foundations.
+                    </p>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="glass-panel p-8 rounded-2xl hover:bg-slate-800/50 transition-colors group">
+                    <div class="w-12 h-12 bg-cyan-500/10 rounded-lg flex items-center justify-center mb-6 group-hover:bg-cyan-500/20 transition-colors">
+                        <i class="fa-solid fa-eye-slash text-cyan-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-3">Metadata Privacy</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        It's not just the content. We encrypt filenames, sizes, and directory structures to hide all actionable intelligence.
+                    </p>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="glass-panel p-8 rounded-2xl hover:bg-slate-800/50 transition-colors group">
+                    <div class="w-12 h-12 bg-purple-500/10 rounded-lg flex items-center justify-center mb-6 group-hover:bg-purple-500/20 transition-colors">
+                        <i class="fa-solid fa-memory text-purple-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-3">Memory Safety</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        Written in Rust to guarantee memory safety. Credentials are managed with `mlock` and `zeroize` to mitigate cold boot attacks.
+                    </p>
+                </div>
+                
+                <!-- Feature 4 -->
+                <div class="glass-panel p-8 rounded-2xl hover:bg-slate-800/50 transition-colors group">
+                    <div class="w-12 h-12 bg-amber-500/10 rounded-lg flex items-center justify-center mb-6 group-hover:bg-amber-500/20 transition-colors">
+                        <i class="fa-solid fa-bolt text-amber-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-3">High Performance</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                         Optimized for concurrency with parallel writes and fast seeking. AES hardware acceleration is used where available.
+                    </p>
+                </div>
+
+                <!-- Feature 5 -->
+                <div class="glass-panel p-8 rounded-2xl hover:bg-slate-800/50 transition-colors group">
+                    <div class="w-12 h-12 bg-red-500/10 rounded-lg flex items-center justify-center mb-6 group-hover:bg-red-500/20 transition-colors">
+                        <i class="fa-solid fa-database text-red-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-3">Data Integrity</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        Write-Ahead Logging (WAL) ensures your data remains consistent even in the event of a crash or power loss.
+                    </p>
+                </div>
+
+                <!-- Feature 6 -->
+                <div class="glass-panel p-8 rounded-2xl hover:bg-slate-800/50 transition-colors group">
+                    <div class="w-12 h-12 bg-blue-500/10 rounded-lg flex items-center justify-center mb-6 group-hover:bg-blue-500/20 transition-colors">
+                        <i class="fa-solid fa-cloud text-blue-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-3">Cloud Ready</h3>
+                    <p class="text-slate-400 text-sm leading-relaxed">
+                        Designed to be backed up to untrusted servers like Google Drive or Dropbox without leaking information.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Architecture Visualization -->
+    <section id="architecture" class="py-24 border-y border-slate-900 bg-slate-950">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex flex-col lg:flex-row items-center gap-16">
+                <div class="lg:w-1/2">
+                    <h2 class="text-3xl md:text-4xl font-display font-bold text-white mb-6">How it Works</h2>
+                    <ul class="space-y-6">
+                        <li class="flex gap-4">
+                            <span class="flex-shrink-0 w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">1</span>
+                            <div>
+                                <h4 class="text-white font-bold mb-1">FUSE Interface</h4>
+                                <p class="text-slate-400 text-sm">Intercepts file system calls from the OS.</p>
+                            </div>
+                        </li>
+                        <li class="flex gap-4">
+                            <span class="flex-shrink-0 w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">2</span>
+                            <div>
+                                <h4 class="text-white font-bold mb-1">Encryption Layer</h4>
+                                <p class="text-slate-400 text-sm">Chunks data and encrypts using AES-256-GCM or ChaCha20Poly1305.</p>
+                            </div>
+                        </li>
+                        <li class="flex gap-4">
+                            <span class="flex-shrink-0 w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">3</span>
+                            <div>
+                                <h4 class="text-white font-bold mb-1">Structure Obfuscation</h4>
+                                <p class="text-slate-400 text-sm">Encrypts directory hierarchy and file metadata.</p>
+                            </div>
+                        </li>
+                         <li class="flex gap-4">
+                            <span class="flex-shrink-0 w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold">4</span>
+                            <div>
+                                <h4 class="text-white font-bold mb-1">Storage</h4>
+                                <p class="text-slate-400 text-sm">Writes encrypted blobs to the underlying storage.</p>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+                
+                <!-- Abstract Diagram -->
+                <div class="lg:w-1/2 w-full p-8 bg-slate-900 rounded-2xl border border-slate-800 relative overflow-hidden group">
+                    <div class="absolute inset-0 bg-grid-slate-800/50 [mask-image:linear-gradient(0deg,white,rgba(255,255,255,0.6))] -z-10"></div>
+                    
+                    <div class="flex flex-col items-center space-y-4">
+                        <!-- Application Layer -->
+                        <div class="w-2/3 bg-slate-800 border-2 border-slate-700 p-4 rounded text-center text-slate-300 font-mono text-sm shadow-lg">
+                            User Applications
+                        </div>
+                        
+                        <!-- Arrow -->
+                        <div class="text-slate-600"><i class="fa-solid fa-arrow-down"></i></div>
+                        
+                        <!-- Kernel / FUSE -->
+                        <div class="w-full bg-emerald-900/20 border-2 border-emerald-500/50 p-6 rounded-lg text-center backdrop-blur-sm relative">
+                            <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-black text-xs font-bold px-2 py-0.5 rounded">rencfs</div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="bg-slate-950 p-3 rounded border border-emerald-500/30 text-emerald-400 text-xs font-mono">
+                                    <i class="fa-solid fa-key mb-1 block"></i> Key Mgmt
+                                </div>
+                                <div class="bg-slate-950 p-3 rounded border border-emerald-500/30 text-emerald-400 text-xs font-mono">
+                                    <i class="fa-solid fa-file-code mb-1 block"></i> Chunking
+                                </div>
+                                <div class="col-span-2 bg-slate-950 p-3 rounded border border-emerald-500/30 text-emerald-400 text-xs font-mono">
+                                    <i class="fa-solid fa-shield-halved mb-1"></i> AEAD Encryption
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Arrow -->
+                        <div class="text-slate-600"><i class="fa-solid fa-arrow-down"></i></div>
+
+                        <!-- Storage -->
+                        <div class="w-2/3 bg-slate-800 border-2 border-slate-700 p-4 rounded text-center text-slate-400 font-mono text-sm flex justify-center gap-4">
+                            <span><i class="fa-solid fa-hard-drive mr-2"></i>Encrypted Storage on Disk</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Roadmap / Status -->
+    <section id="roadmap" class="py-24">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 class="text-3xl font-display font-bold text-white mb-12">Roadmap</h2>
+            
+            <div class="space-y-4 text-left">
+                <!-- Item -->
+                <div class="flex items-center p-4 bg-slate-900 rounded-lg border border-slate-800">
+                    <div class="text-emerald-400 mr-4"><i class="fa-solid fa-check-circle"></i></div>
+                    <div class="flex-grow text-slate-300">Basic Read/Write Operations</div>
+                    <div class="text-xs text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded">Done</div>
+                </div>
+                
+                 <!-- Item -->
+                 <div class="flex items-center p-4 bg-slate-900 rounded-lg border border-slate-800">
+                    <div class="text-emerald-400 mr-4"><i class="fa-solid fa-check-circle"></i></div>
+                    <div class="flex-grow text-slate-300">Password Encryption Key Generation</div>
+                    <div class="text-xs text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded">Done</div>
+                </div>
+
+                <!-- Item -->
+                <div class="flex items-center p-4 bg-slate-900 rounded-lg border border-slate-800">
+                    <div class="text-amber-400 mr-4"><i class="fa-solid fa-spinner fa-spin"></i></div>
+                    <div class="flex-grow text-slate-300">macOS & Windows Support</div>
+                    <div class="text-xs text-amber-500 bg-amber-500/10 px-2 py-1 rounded">In Progress</div>
+                </div>
+
+                <!-- Item -->
+                <div class="flex items-center p-4 bg-slate-900 rounded-lg border border-slate-800">
+                    <div class="text-amber-400 mr-4"><i class="fa-solid fa-spinner fa-spin"></i></div>
+                    <div class="flex-grow text-slate-300">GUI Desktop Application</div>
+                    <div class="text-xs text-amber-500 bg-amber-500/10 px-2 py-1 rounded">In Progress</div>
+                </div>
+
+                <!-- Item -->
+                <div class="flex items-center p-4 bg-slate-900 rounded-lg border border-slate-800">
+                    <div class="text-slate-600 mr-4"><i class="fa-regular fa-circle"></i></div>
+                    <div class="flex-grow text-slate-500">Mobile Apps (Android/iOS)</div>
+                    <div class="text-xs text-slate-500 bg-slate-800 px-2 py-1 rounded">Planned</div>
+                </div>
+            </div>
+            
+            <div class="mt-12 p-6 bg-slate-900/50 border border-slate-800 rounded-xl text-sm text-slate-400">
+                <p><i class="fa-solid fa-triangle-exclamation text-amber-500 mr-2"></i> <strong>Disclaimer:</strong> This project hasn't been audited yet. Avoid using with highly sensitive data for now.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="py-12 border-t border-slate-900 bg-black">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-shield-halved text-emerald-600 text-lg"></i>
+                <span class="font-display font-bold text-lg text-slate-300">rencfs</span>
+            </div>
+            
+            <div class="flex gap-8 text-sm text-slate-500">
+                <a href="#" class="hover:text-emerald-400 transition-colors">Documentation</a>
+                <a href="#" class="hover:text-emerald-400 transition-colors">GitHub</a>
+                <a href="#" class="hover:text-emerald-400 transition-colors">Slack</a>
+                <a href="#" class="hover:text-emerald-400 transition-colors">Contact</a>
+            </div>
+            
+            <div class="text-slate-600 text-sm">
+                &copy; 2026 Xoriors. Open Source.
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Simple Intersection Observer for fade-in animations
+        document.addEventListener('DOMContentLoaded', () => {
+            const observerOptions = {
+                root: null,
+                rootMargin: '0px',
+                threshold: 0.1
+            };
+
+            const observer = new IntersectionObserver((entries, observer) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add('opacity-100', 'translate-y-0');
+                        entry.target.classList.remove('opacity-0', 'translate-y-4');
+                        observer.unobserve(entry.target);
+                    }
+                });
+            }, observerOptions);
+
+            document.querySelectorAll('.glass-panel').forEach((el, index) => {
+                el.classList.add('opacity-0', 'translate-y-4', 'transition-all', 'duration-700', 'ease-out');
+                el.style.transitionDelay = `${index * 100}ms`;
+                observer.observe(el);
+            });
+        });
+    </script>
+</body>
+</html>
