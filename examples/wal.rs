@@ -45,7 +45,7 @@ fn main() -> io::Result<()> {
 
     // We can use the previously returned DataRecord to read the original data.
     let mut reader = log.read_at(record.position)?;
-    let mut buffer = vec![0; usize::try_from(record.length).unwrap()];
+    let mut buffer = vec![0; usize::try_from(record.length)?];
     reader.read_exact(&mut buffer)?;
     println!(
         "Data read from log: {}",
