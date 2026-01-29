@@ -10,6 +10,7 @@ use base64::alphabet::STANDARD;
 use base64::engine::general_purpose::NO_PAD;
 use base64::engine::GeneralPurpose;
 use base64::{DecodeError, Engine};
+use bip39::{Language, Mnemonic, MnemonicType, Seed};
 use hex::FromHexError;
 use num_format::{Locale, ToFormattedString};
 use rand_chacha::rand_core::{CryptoRng, RngCore, SeedableRng};
@@ -380,6 +381,20 @@ where
     Ok(())
 }
 
+pub fn generate_recovery_phrase(language: Language) -> Mnemonic {
+    Mnemonic::new(MnemonicType::Words24, language)
+}
+
+pub fn derive_key_from_recovery_phrase(
+    recovery_phrase: &str,
+    language: Language,
+) -> Result<SecretVec<u8>> {
+    let mnemonic = Mnemonic::from_phrase(recovery_phrase, language)
+        .map_err(|err| Error::GenericString(err.to_string()))?;
+    let seed = mnemonic.to_seed("");
+    Ok(SecretVec::new(Box::new(seed.as_bytes().to_vec())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,5 +664,20 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_generate_recovery_phrase() {
+        let mnemonic = generate_recovery_phrase(Language::English);
+        let phrase = mnemonic.phrase();
+        assert_eq!(phrase.split_whitespace().count(), 24);
+    }
+
+    #[test]
+    fn test_derive_key_from_recovery_phrase() {
+        let mnemonic = generate_recovery_phrase(Language::English);
+        let phrase = mnemonic.phrase();
+        let derived_key = derive_key_from_recovery_phrase(phrase, Language::English).unwrap();
+        assert_eq!(derived_key.expose_secret().len(), 64);
     }
 }

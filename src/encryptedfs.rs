@@ -41,6 +41,7 @@ pub(crate) const CONTENTS_DIR: &str = "contents";
 pub(crate) const SECURITY_DIR: &str = "security";
 pub(crate) const KEY_ENC_FILENAME: &str = "key.enc";
 pub(crate) const KEY_SALT_FILENAME: &str = "key.salt";
+pub(crate) const RECOVERY_PHRASE_KEY_ENC_FILENAME: &str = "recovery_phrase_key.enc";
 
 pub(crate) const LS_DIR: &str = "ls";
 pub(crate) const HASH_DIR: &str = "hash";
@@ -2151,6 +2152,65 @@ impl EncryptedFs {
         let new_key = crypto::derive_key(&new_password, cipher, &salt)?;
         crypto::atomic_serialize_encrypt_into(
             &data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
+            &*key.expose_secret(),
+            cipher,
+            &new_key,
+        )?;
+        Ok(())
+    }
+
+    /// Change the password of the filesystem using the recovery phrase.
+    pub async fn passwd_with_recovery_phrase(
+        data_dir: &Path,
+        recovery_phrase: &str,
+        new_password: SecretString,
+        cipher: Cipher,
+    ) -> FsResult<()> {
+        check_structure(data_dir, false).await?;
+        // decrypt key using recovery phrase
+        let salt: Vec<u8> = bincode::deserialize_from(File::open(
+            data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME),
+        )?)?;
+        let initial_key = crypto::derive_key_from_recovery_phrase(recovery_phrase, cipher, &salt)?;
+        let enc_file = data_dir.join(SECURITY_DIR).join(RECOVERY_PHRASE_KEY_ENC_FILENAME);
+        let reader = crypto::create_read(File::open(enc_file)?, cipher, &initial_key);
+        let key: Vec<u8> =
+            bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
+        let key = SecretBox::new(Box::new(key));
+        // encrypt it with a new key derived from new password
+        let new_key = crypto::derive_key(&new_password, cipher, &salt)?;
+        crypto::atomic_serialize_encrypt_into(
+            &data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME),
+            &*key.expose_secret(),
+            cipher,
+            &new_key,
+        )?;
+        Ok(())
+    }
+
+    /// Regenerate the recovery phrase for the filesystem.
+    pub async fn regenerate_recovery_phrase(
+        data_dir: &Path,
+        password: SecretString,
+        old_recovery_phrase: &str,
+        new_recovery_phrase: &str,
+        cipher: Cipher,
+    ) -> FsResult<()> {
+        check_structure(data_dir, false).await?;
+        // decrypt key using old recovery phrase
+        let salt: Vec<u8> = bincode::deserialize_from(File::open(
+            data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME),
+        )?)?;
+        let initial_key = crypto::derive_key_from_recovery_phrase(old_recovery_phrase, cipher, &salt)?;
+        let enc_file = data_dir.join(SECURITY_DIR).join(RECOVERY_PHRASE_KEY_ENC_FILENAME);
+        let reader = crypto::create_read(File::open(enc_file)?, cipher, &initial_key);
+        let key: Vec<u8> =
+            bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
+        let key = SecretBox::new(Box::new(key));
+        // encrypt it with a new key derived from new recovery phrase
+        let new_key = crypto::derive_key_from_recovery_phrase(new_recovery_phrase, cipher, &salt)?;
+        crypto::atomic_serialize_encrypt_into(
+            &data_dir.join(SECURITY_DIR).join(RECOVERY_PHRASE_KEY_ENC_FILENAME),
             &*key.expose_secret(),
             cipher,
             &new_key,
