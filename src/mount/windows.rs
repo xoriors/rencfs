@@ -7,23 +7,25 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+
 use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace};
-use widestring::{U16CStr, U16CString};
+use widestring::U16CStr;
 use winfsp::filesystem::{
     DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo,
-    VolumeInfo,
+    VolumeInfo, WideNameInfo,
 };
-use winfsp::host::FileSystemHost;
+use winfsp::host::{FileSystemHost, VolumeParams};
 use windows::Win32::Foundation::{
-    STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_END_OF_FILE,
-    STATUS_NOT_A_DIRECTORY, STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_DISK_CORRUPT_ERROR,
+    STATUS_FILE_IS_A_DIRECTORY, STATUS_INVALID_HANDLE, STATUS_INVALID_PARAMETER,
+    STATUS_IO_DEVICE_ERROR, STATUS_MEDIA_WRITE_PROTECTED, STATUS_NOT_A_DIRECTORY,
+    STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
 };
-use windows::Win32::Storage::FileSystem::{
-    FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
-};
+use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
+use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
 use crate::crypto::Cipher;
 use crate::encryptedfs::{
@@ -34,6 +36,7 @@ use crate::mount::{MountHandleInner, MountPoint};
 
 const WINDOWS_TICK: u64 = 10_000_000;
 const SEC_TO_UNIX_EPOCH: u64 = 11_644_473_600;
+const FSP_CLEANUP_DELETE: u32 = 0x01;
 
 pub struct EncryptedFsFileContext {
     ino: u64,
@@ -85,7 +88,11 @@ impl EncryptedFsWinFsp {
 
             match result {
                 Ok(Some(attr)) => current_ino = attr.ino,
-                Ok(None) | Err(_) => return Err(STATUS_OBJECT_NAME_NOT_FOUND.into()),
+                Ok(None) => return Err(STATUS_OBJECT_NAME_NOT_FOUND.into()),
+                Err(e) => {
+                    debug!("path_to_inode failed: {}", e);
+                    return Err(STATUS_OBJECT_NAME_NOT_FOUND.into());
+                }
             }
         }
 
@@ -118,7 +125,11 @@ impl EncryptedFsWinFsp {
 
             match result {
                 Ok(Some(attr)) => parent_ino = attr.ino,
-                Ok(None) | Err(_) => return Err(STATUS_OBJECT_NAME_NOT_FOUND.into()),
+                Ok(None) => return Err(STATUS_OBJECT_NAME_NOT_FOUND.into()),
+                Err(e) => {
+                    debug!("path_to_parent_and_name failed: {}", e);
+                    return Err(STATUS_OBJECT_NAME_NOT_FOUND.into());
+                }
             }
         }
 
@@ -181,23 +192,17 @@ fn filetime_to_system_time(filetime: u64) -> SystemTime {
 impl FileSystemContext for EncryptedFsWinFsp {
     type FileContext = EncryptedFsFileContext;
 
-    fn get_volume_info(&self) -> winfsp::Result<VolumeInfo> {
+    fn get_volume_info(&self, out_volume_info: &mut VolumeInfo) -> winfsp::Result<()> {
         trace!("get_volume_info");
 
-        let mut volume_info = VolumeInfo::default();
         // Report virtual volume size. These are placeholder values since encrypted
         // filesystem size depends on underlying storage, not a fixed allocation.
         // 100GB total / 50GB free provides reasonable defaults for Windows Explorer display.
-        volume_info.total_size = 1024 * 1024 * 1024 * 100;
-        volume_info.free_size = 1024 * 1024 * 1024 * 50;
+        out_volume_info.total_size = 1024 * 1024 * 1024 * 100;
+        out_volume_info.free_size = 1024 * 1024 * 1024 * 50;
+        out_volume_info.set_volume_label("rencfs");
 
-        let label = U16CString::from_str("rencfs").unwrap();
-        let label_slice = label.as_slice_with_nul();
-        let copy_len = label_slice.len().min(volume_info.volume_label.len());
-        volume_info.volume_label[..copy_len].copy_from_slice(&label_slice[..copy_len]);
-        volume_info.volume_label_length = ((copy_len - 1) * 2) as u16;
-
-        Ok(volume_info)
+        Ok(())
     }
 
     fn get_security_by_name(
@@ -227,7 +232,10 @@ impl FileSystemContext for EncryptedFsWinFsp {
                     sz_security_descriptor: 0,
                 })
             }
-            Err(_) => Err(STATUS_OBJECT_NAME_NOT_FOUND.into()),
+            Err(e) => {
+                debug!("get_security_by_name failed: {}", e);
+                Err(STATUS_OBJECT_NAME_NOT_FOUND.into())
+            }
         }
     }
 
@@ -245,7 +253,10 @@ impl FileSystemContext for EncryptedFsWinFsp {
             .runtime
             .block_on(async { self.fs.get_attr(ino).await });
 
-        let attr = result.map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
+        let attr = result.map_err(|e| {
+            debug!("open: get_attr failed: {}", e);
+            STATUS_OBJECT_NAME_NOT_FOUND
+        })?;
         let is_directory = attr.kind == FileType::Directory;
 
         let fh = if !is_directory {
@@ -278,7 +289,9 @@ impl FileSystemContext for EncryptedFsWinFsp {
         debug!("close: ino={}", context.ino);
 
         if let Some(fh) = context.fh {
-            let _ = self.runtime.block_on(async { self.fs.release(fh).await });
+            if let Err(e) = self.runtime.block_on(async { self.fs.release(fh).await }) {
+                error!("Failed to release handle {}: {}", fh, e);
+            }
         }
     }
 
@@ -305,7 +318,21 @@ impl FileSystemContext for EncryptedFsWinFsp {
             Ok(bytes_read) => Ok(bytes_read as u32),
             Err(e) => {
                 error!("Read error: {}", e);
-                Err(STATUS_END_OF_FILE.into())
+                let status = match &e {
+                    FsError::InodeNotFound | FsError::NotFound(_) => STATUS_OBJECT_NAME_NOT_FOUND,
+                    FsError::InvalidFileHandle => STATUS_INVALID_HANDLE,
+                    FsError::InvalidInodeType => STATUS_FILE_IS_A_DIRECTORY,
+                    FsError::InvalidInput(_) => STATUS_INVALID_PARAMETER,
+                    FsError::ReadOnly => STATUS_MEDIA_WRITE_PROTECTED,
+                    FsError::Crypto { .. } => STATUS_DISK_CORRUPT_ERROR,
+                    FsError::Io { source, .. } => match source.kind() {
+                        io::ErrorKind::PermissionDenied => STATUS_ACCESS_DENIED,
+                        io::ErrorKind::NotFound => STATUS_OBJECT_NAME_NOT_FOUND,
+                        _ => STATUS_IO_DEVICE_ERROR,
+                    },
+                    _ => STATUS_IO_DEVICE_ERROR,
+                };
+                Err(status.into())
             }
         }
     }
@@ -348,7 +375,17 @@ impl FileSystemContext for EncryptedFsWinFsp {
         }
     }
 
-    fn flush(&self, context: &Self::FileContext, file_info: &mut FileInfo) -> winfsp::Result<()> {
+    fn flush(
+        &self,
+        context: Option<&Self::FileContext>,
+        file_info: &mut FileInfo,
+    ) -> winfsp::Result<()> {
+        // None means volume flush - no-op for encrypted fs
+        let Some(context) = context else {
+            trace!("flush: volume flush (no-op)");
+            return Ok(());
+        };
+
         trace!("flush: ino={}", context.ino);
 
         if let Some(fh) = context.fh {
@@ -362,7 +399,11 @@ impl FileSystemContext for EncryptedFsWinFsp {
         Ok(())
     }
 
-    fn get_file_info(&self, context: &Self::FileContext) -> winfsp::Result<FileInfo> {
+    fn get_file_info(
+        &self,
+        context: &Self::FileContext,
+        file_info: &mut FileInfo,
+    ) -> winfsp::Result<()> {
         trace!("get_file_info: ino={}", context.ino);
 
         let result = self
@@ -370,8 +411,14 @@ impl FileSystemContext for EncryptedFsWinFsp {
             .block_on(async { self.fs.get_attr(context.ino).await });
 
         match result {
-            Ok(attr) => Ok(Self::attr_to_file_info(&attr)),
-            Err(_) => Err(STATUS_OBJECT_NAME_NOT_FOUND.into()),
+            Ok(attr) => {
+                *file_info = Self::attr_to_file_info(&attr);
+                Ok(())
+            }
+            Err(e) => {
+                debug!("get_file_info failed: {}", e);
+                Err(STATUS_OBJECT_NAME_NOT_FOUND.into())
+            }
         }
     }
 
@@ -454,7 +501,10 @@ impl FileSystemContext for EncryptedFsWinFsp {
             return Err(STATUS_NOT_A_DIRECTORY.into());
         }
 
-        if context.dir_buffer.is_empty() {
+        let reset = marker.is_none();
+        let lock = context.dir_buffer.acquire(reset, None)?;
+
+        if reset {
             let result = self
                 .runtime
                 .block_on(async { self.fs.read_dir_plus(context.ino).await });
@@ -467,38 +517,32 @@ impl FileSystemContext for EncryptedFsWinFsp {
                 }
             };
 
-            context.dir_buffer.fill(|buffer| {
-                for entry in entries {
-                    if let Ok(entry) = entry {
-                        let name = entry.name.expose_secret();
-                        if let Ok(name_u16) = U16CString::from_str(name) {
-                            let mut dir_info = DirInfo::new();
-                            dir_info.set_file_name(&name_u16);
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let name = entry.name.expose_secret();
+                    let mut dir_info: DirInfo<255> = DirInfo::new();
+                    dir_info.set_name(name.as_str())?;
 
-                            let fi = dir_info.file_info_mut();
-                            fi.file_attributes = if entry.kind == FileType::Directory {
-                                FILE_ATTRIBUTE_DIRECTORY.0
-                            } else {
-                                FILE_ATTRIBUTE_NORMAL.0
-                            };
-                            fi.file_size = entry.attr.size;
-                            fi.allocation_size = entry.attr.blocks * entry.attr.blksize as u64;
-                            fi.creation_time = system_time_to_filetime(entry.attr.crtime);
-                            fi.last_access_time = system_time_to_filetime(entry.attr.atime);
-                            fi.last_write_time = system_time_to_filetime(entry.attr.mtime);
-                            fi.change_time = system_time_to_filetime(entry.attr.ctime);
-                            fi.index_number = entry.ino;
+                    let fi = dir_info.file_info_mut();
+                    fi.file_attributes = if entry.kind == FileType::Directory {
+                        FILE_ATTRIBUTE_DIRECTORY.0
+                    } else {
+                        FILE_ATTRIBUTE_NORMAL.0
+                    };
+                    fi.file_size = entry.attr.size;
+                    fi.allocation_size = entry.attr.blocks * entry.attr.blksize as u64;
+                    fi.creation_time = system_time_to_filetime(entry.attr.crtime);
+                    fi.last_access_time = system_time_to_filetime(entry.attr.atime);
+                    fi.last_write_time = system_time_to_filetime(entry.attr.mtime);
+                    fi.change_time = system_time_to_filetime(entry.attr.ctime);
+                    fi.index_number = entry.ino;
 
-                            if !buffer.write(&dir_info) {
-                                return false;
-                            }
-                        }
-                    }
+                    lock.write(&mut dir_info)?;
                 }
-                true
-            });
+            }
         }
 
+        drop(lock);
         Ok(context.dir_buffer.read(marker, buffer))
     }
 
@@ -507,7 +551,7 @@ impl FileSystemContext for EncryptedFsWinFsp {
         file_name: &U16CStr,
         _create_options: u32,
         _granted_access: FILE_ACCESS_RIGHTS,
-        file_attributes: u32,
+        file_attributes: FILE_FLAGS_AND_ATTRIBUTES,
         _security_descriptor: Option<&[c_void]>,
         _allocation_size: u64,
         _extra_buffer: Option<&[u8]>,
@@ -515,7 +559,7 @@ impl FileSystemContext for EncryptedFsWinFsp {
         file_info: &mut OpenFileInfo,
     ) -> winfsp::Result<Self::FileContext> {
         debug!(
-            "create: {:?}, attributes={}",
+            "create: {:?}, attributes={:?}",
             file_name.to_string(),
             file_attributes
         );
@@ -565,7 +609,9 @@ impl FileSystemContext for EncryptedFsWinFsp {
                 let file_handle = if is_directory {
                     // Directories don't need an open file handle in WinFSP.
                     // Release the handle returned by create() to prevent resource leak.
-                    let _ = self.runtime.block_on(async { self.fs.release(fh).await });
+                    if let Err(e) = self.runtime.block_on(async { self.fs.release(fh).await }) {
+                        error!("Failed to release directory handle {}: {}", fh, e);
+                    }
                     None
                 } else {
                     Some(fh)
@@ -586,18 +632,90 @@ impl FileSystemContext for EncryptedFsWinFsp {
         }
     }
 
-    fn cleanup(&self, context: &mut Self::FileContext, _file_name: Option<&U16CStr>, _flags: u32) {
-        trace!("cleanup: ino={}", context.ino);
+    fn set_delete(
+        &self,
+        context: &Self::FileContext,
+        file_name: &U16CStr,
+        delete_file: bool,
+    ) -> winfsp::Result<()> {
+        trace!(
+            "set_delete: ino={}, delete_file={}, name={:?}",
+            context.ino,
+            delete_file,
+            file_name.to_string()
+        );
+
+        if !delete_file {
+            return Ok(());
+        }
+
+        if self.read_only {
+            return Err(STATUS_ACCESS_DENIED.into());
+        }
+
+        if context.is_directory {
+            let result = self.runtime.block_on(async { self.fs.len(context.ino) });
+
+            match result {
+                Ok(count) => {
+                    if count > 0 {
+                        return Err(STATUS_DIRECTORY_NOT_EMPTY.into());
+                    }
+                }
+                Err(e) => {
+                    error!("set_delete: failed to check directory length: {}", e);
+                    return Err(STATUS_ACCESS_DENIED.into());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn cleanup(&self, context: &Self::FileContext, file_name: Option<&U16CStr>, flags: u32) {
+        trace!("cleanup: ino={}, flags={}", context.ino, flags);
 
         if let Some(fh) = context.fh {
-            let _ = self.runtime.block_on(async { self.fs.flush(fh).await });
+            if let Err(e) = self.runtime.block_on(async { self.fs.flush(fh).await }) {
+                error!("cleanup: flush error: {}", e);
+            }
+        }
+
+        if (flags & FSP_CLEANUP_DELETE) != 0 {
+            if let Some(file_name) = file_name {
+                match self.path_to_parent_and_name(file_name) {
+                    Ok((parent_ino, name)) => {
+                        match SecretString::from_str(&name) {
+                            Ok(secret_name) => {
+                                let result = if context.is_directory {
+                                    self.runtime
+                                        .block_on(async { self.fs.remove_dir(parent_ino, &secret_name).await })
+                                } else {
+                                    self.runtime
+                                        .block_on(async { self.fs.remove_file(parent_ino, &secret_name).await })
+                                };
+
+                                if let Err(e) = result {
+                                    error!("cleanup: failed to delete file/dir: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                error!("cleanup: failed to convert name to SecretString: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("cleanup: failed to resolve parent and name: {}", e);
+                    }
+                }
+            }
         }
     }
 
     fn overwrite(
         &self,
         context: &Self::FileContext,
-        _file_attributes: u32,
+        _file_attributes: FILE_FLAGS_AND_ATTRIBUTES,
         _replace_file_attributes: bool,
         _allocation_size: u64,
         _ea: Option<&[u8]>,
@@ -711,15 +829,21 @@ impl MountPoint for MountPointImpl {
 
         let fs = EncryptedFs::new(
             self.data_dir.clone(),
-            self.password_provider.take().unwrap(),
+            self.password_provider.take().ok_or_else(|| FsError::Other("Mount already called"))?,
             self.cipher,
             self.read_only,
         )
         .await?;
 
-        let winfsp_fs = EncryptedFsWinFsp::new(Arc::new(fs), self.read_only);
+        let winfsp_fs = EncryptedFsWinFsp::new(fs, self.read_only);
 
-        let mut host = FileSystemHost::new(winfsp_fs).map_err(|e| {
+        let mut volume_params = VolumeParams::default();
+        volume_params.filesystem_name("rencfs");
+        if self.read_only {
+            volume_params.read_only_volume(true);
+        }
+
+        let mut host = FileSystemHost::new(volume_params, winfsp_fs).map_err(|e| {
             error!("Failed to create FileSystemHost: {:?}", e);
             FsError::Other("Failed to create FileSystemHost")
         })?;
@@ -762,7 +886,8 @@ impl Future for MountHandleInnerImpl {
     type Output = io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Poll::Pending
+        // WinFSP mount is already active after host.start(), so return Ready immediately
+        Poll::Ready(Ok(()))
     }
 }
 
