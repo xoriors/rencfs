@@ -1659,11 +1659,25 @@ impl EncryptedFs {
             } else {
                 buf
             };
-            let len = writer.write(buf).map_err(|err| {
-                error!(err = %err, "writing");
-                err
-            })?;
-            (writer.stream_position()?, len)
+            // let len = writer.write(buf).map_err(|err| {
+            //     error!(err = %err, "writing");
+            //     err
+            // })?;
+            // (writer.stream_position()?, len)
+            let mut total_written = 0;
+            while total_written < buf.len() {
+                let slice = &buf[total_written..];
+                let written = writer.write(slice).map_err(|err| {
+                    error!(err = %err, "writing");
+                    err
+                })?;
+                if written == 0 {
+                    return Err(FsError::Other("Write returned 0 before buffer fully written"));
+                }
+                total_written += written;
+            }
+            let pos = writer.stream_position()?;
+            (pos, total_written)
         };
 
         // let size = ctx.attr.size;
