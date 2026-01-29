@@ -23,7 +23,8 @@ pub(crate) fn remove(suffix: &str) -> Result<(), keyring::Error> {
 #[allow(dead_code)]
 pub(crate) fn get(suffix: &str) -> Result<SecretString, keyring::Error> {
     let entry = Entry::new(KEYRING_SERVICE, &format!("{KEYRING_USER}.{suffix}"))?;
-    Ok(SecretString::from_str(&entry.get_password()?).unwrap())
+    SecretString::from_str(&entry.get_password()?)
+        .map_err(|e| keyring::Error::Invalid(e.to_string(), "Invalid password".to_string()))
 }
 
 #[cfg(test)]

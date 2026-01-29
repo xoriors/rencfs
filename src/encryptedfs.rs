@@ -522,7 +522,9 @@ struct DirEntryNameCacheProvider {}
 #[async_trait]
 impl ValueProvider<Mutex<LruCache<String, SecretString>>, FsError> for DirEntryNameCacheProvider {
     async fn provide(&self) -> Result<Mutex<LruCache<String, SecretString>>, FsError> {
-        Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
+        Ok(Mutex::new(LruCache::new(
+            NonZeroUsize::new(2000).ok_or(FsError::InvalidInput("Invalid cache size"))?,
+        )))
     }
 }
 
@@ -530,7 +532,9 @@ struct DirEntryMetaCacheProvider {}
 #[async_trait]
 impl ValueProvider<Mutex<DirEntryMetaCache>, FsError> for DirEntryMetaCacheProvider {
     async fn provide(&self) -> Result<Mutex<DirEntryMetaCache>, FsError> {
-        Ok(Mutex::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
+        Ok(Mutex::new(LruCache::new(
+            NonZeroUsize::new(2000).ok_or(FsError::InvalidInput("Invalid cache size"))?,
+        )))
     }
 }
 
@@ -538,10 +542,11 @@ struct AttrCacheProvider {}
 #[async_trait]
 impl ValueProvider<RwLock<LruCache<u64, FileAttr>>, FsError> for AttrCacheProvider {
     async fn provide(&self) -> Result<RwLock<LruCache<u64, FileAttr>>, FsError> {
-        Ok(RwLock::new(LruCache::new(NonZeroUsize::new(2000).unwrap())))
+        Ok(RwLock::new(LruCache::new(
+            NonZeroUsize::new(2000).ok_or(FsError::InvalidInput("Invalid cache size"))?,
+        )))
     }
 }
-
 type DirEntryMetaCache = LruCache<String, (u64, FileType)>;
 
 /// Encrypted FS that stores encrypted files in a dedicated directory with a specific structure based on `inode`.
@@ -695,14 +700,7 @@ impl EncryptedFs {
         self.validate_filename(name)?;
 
         // spawn on a dedicated runtime to not interfere with other higher priority tasks
-        let self_clone = self
-            .self_weak
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .upgrade()
-            .unwrap();
+        let self_clone = self.self_clone()?;
         let name_clone = name.clone();
         NOD_RT
             .spawn(async move {
@@ -850,7 +848,7 @@ impl EncryptedFs {
         }
         let lock = self
             .serialize_dir_entries_hash_locks
-            .get_or_insert_with(hash_path.to_str().unwrap().to_owned(), || {
+            .get_or_insert_with(hash_path.to_string_lossy().to_string(), || {
                 RwLock::new(false)
             });
         let guard = lock.read().await;
@@ -906,14 +904,7 @@ impl EncryptedFs {
         if self.len(attr.ino)? > 0 {
             return Err(FsError::NotEmpty);
         }
-        let self_clone = self
-            .self_weak
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .upgrade()
-            .unwrap();
+        let self_clone = self.self_clone()?;
         let name_clone = name.clone();
         NOD_RT
             .spawn(async move {
@@ -978,15 +969,8 @@ impl EncryptedFs {
         if !matches!(attr.kind, FileType::RegularFile) {
             return Err(FsError::InvalidInodeType);
         }
-        // todo move to method
-        let self_clone = self
-            .self_weak
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .upgrade()
-            .unwrap();
+
+        let self_clone = self.self_clone()?;
         let name_clone = name.clone();
         NOD_RT
             .spawn(async move {
@@ -1057,7 +1041,8 @@ impl EncryptedFs {
         let iter = fs::read_dir(ls_dir)?;
         let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
         self.set_attr(ino, set_attr).await?;
-        Ok(self.create_directory_entry_iterator(iter).await)
+
+        self.create_directory_entry_iterator(iter).await
     }
 
     /// Like [`EncryptedFs::read_dir`] but with [`FileAttr`] so we don't need to query again for those.
@@ -1073,7 +1058,8 @@ impl EncryptedFs {
         let iter = fs::read_dir(ls_dir)?;
         let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
         self.set_attr(ino, set_attr).await?;
-        Ok(self.create_directory_entry_plus_iterator(iter).await)
+
+        self.create_directory_entry_plus_iterator(iter).await
     }
 
     async fn create_directory_entry_plus(
@@ -1096,44 +1082,41 @@ impl EncryptedFs {
     async fn create_directory_entry_plus_iterator(
         &self,
         read_dir: ReadDir,
-    ) -> DirectoryEntryPlusIterator {
+    ) -> FsResult<DirectoryEntryPlusIterator> {
         #[allow(clippy::cast_possible_truncation)]
         let futures: Vec<_> = read_dir
             .into_iter()
-            .map(|entry| {
-                let fs = {
-                    self.self_weak
-                        .lock()
-                        .unwrap()
-                        .as_ref()
-                        .unwrap()
-                        .upgrade()
-                        .unwrap()
-                };
-                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry_plus(entry).await })
+            .filter_map(|entry| match self.self_clone() {
+                Ok(fs) => Some(
+                    DIR_ENTRIES_RT
+                        .spawn(async move { fs.create_directory_entry_plus(entry).await }),
+                ),
+                Err(e) => {
+                    error!("Failed to clone self: {}", e);
+                    None
+                }
             })
             .collect();
-
         // do these futures in parallel and return them
         let mut res = VecDeque::with_capacity(futures.len());
         for f in futures {
-            res.push_back(f.await.unwrap());
+            res.push_back(f.await?);
         }
-        DirectoryEntryPlusIterator(res)
+
+        Ok(DirectoryEntryPlusIterator(res))
     }
 
     async fn create_directory_entry(
         &self,
         entry: io::Result<DirEntry>,
     ) -> FsResult<DirectoryEntry> {
-        if entry.is_err() {
-            return Err(entry.err().unwrap().into());
-        }
-        if let Err(e) = entry {
-            error!(err = %e, "reading directory entry");
-            return Err(e.into());
-        }
-        let entry = entry.unwrap();
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                error!(err = %e, "reading directory entry");
+                return Err(e.into());
+            }
+        };
         let name = entry.file_name().to_string_lossy().to_string();
         let name = {
             if name == "$." {
@@ -1165,8 +1148,12 @@ impl EncryptedFs {
         };
 
         self.validate_filename(&name)?;
+        let file_path = entry
+            .path()
+            .to_str()
+            .ok_or_else(|| FsError::InvalidInput("Invalid file path"))?
+            .to_owned();
 
-        let file_path = entry.path().to_str().unwrap().to_owned();
         // try from cache
         let lock = self.dir_entries_meta_cache.get().await?;
         let mut cache = lock.lock().await;
@@ -1183,17 +1170,13 @@ impl EncryptedFs {
             .get_or_insert_with(file_path.clone(), || RwLock::new(false));
         let guard = lock.read().await;
         let file = File::open(entry.path())?;
-        let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto::create_read(
+        let (ino, kind) = bincode::deserialize_from(crypto::create_read(
             file,
             self.cipher,
             &*self.key.get().await?,
-        ));
+        ))?;
         drop(guard);
-        if let Err(e) = res {
-            error!(err = %e, "deserializing directory entry");
-            return Err(e.into());
-        }
-        let (ino, kind): (u64, FileType) = res.unwrap();
+
         // add to cache
         self.dir_entries_meta_cache
             .get()
@@ -1210,30 +1193,31 @@ impl EncryptedFs {
         self.dir_entries_name_cache.get().await
     }
 
-    async fn create_directory_entry_iterator(&self, read_dir: ReadDir) -> DirectoryEntryIterator {
+    async fn create_directory_entry_iterator(
+        &self,
+        read_dir: ReadDir,
+    ) -> FsResult<DirectoryEntryIterator> {
         #[allow(clippy::cast_possible_truncation)]
         let futures: Vec<_> = read_dir
             .into_iter()
-            .map(|entry| {
-                let fs = {
-                    self.self_weak
-                        .lock()
-                        .unwrap()
-                        .as_ref()
-                        .unwrap()
-                        .upgrade()
-                        .unwrap()
-                };
-                DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await })
+            .filter_map(|entry| match self.self_clone() {
+                Ok(fs) => Some(
+                    DIR_ENTRIES_RT.spawn(async move { fs.create_directory_entry(entry).await }),
+                ),
+                Err(e) => {
+                    error!("Failed to clone self: {}", e);
+                    None
+                }
             })
             .collect();
 
         // do these futures in parallel and return them
         let mut res = VecDeque::with_capacity(futures.len());
         for f in futures {
-            res.push_back(f.await.unwrap());
+            res.push_back(f.await?);
         }
-        DirectoryEntryIterator(res)
+
+        Ok(DirectoryEntryIterator(res))
     }
 
     #[allow(clippy::missing_errors_doc)]
@@ -1392,7 +1376,11 @@ impl EncryptedFs {
         let _read_guard = lock.read().await;
 
         let guard = self.read_handles.read().await;
-        let mut ctx = guard.get(&handle).unwrap().lock().await;
+        let mut ctx = guard
+            .get(&handle)
+            .ok_or(FsError::InvalidFileHandle)?
+            .lock()
+            .await;
 
         if ctx.ino != ino {
             return Err(FsError::InvalidFileHandle);
@@ -1407,7 +1395,7 @@ impl EncryptedFs {
 
         // read data
         let (_buf, len) = {
-            let reader = ctx.reader.as_mut().unwrap();
+            let reader = ctx.reader.as_mut().ok_or(FsError::InvalidFileHandle)?;
 
             reader.seek(SeekFrom::Start(offset)).map_err(|err| {
                 error!(err = %err, "seeking");
@@ -1520,14 +1508,19 @@ impl EncryptedFs {
             }
             let mut ctx = ctx.lock().await;
 
-            let mut writer = ctx.writer.take().unwrap();
+            let mut writer = ctx.writer.take().ok_or(FsError::InvalidFileHandle)?;
             let lock = self
                 .read_write_locks
                 .get_or_insert_with(ctx.ino, || RwLock::new(false));
             let write_guard = lock.write().await;
             let file = writer.finish()?;
             file.sync_all()?;
-            File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+            File::open(
+                self.contents_path(ctx.ino)
+                    .parent()
+                    .ok_or(FsError::InvalidInput("File path has no parent"))?,
+            )?
+            .sync_all()?;
             // write attr only here to avoid serializing it multiple times while writing
             // it will merge time fields with existing data because it might got change while we kept the handle
             let ino = ctx.ino;
@@ -1541,7 +1534,7 @@ impl EncryptedFs {
                     .lock()
                     .await
                     .get(&ino)
-                    .unwrap()
+                    .ok_or(FsError::NotFound("Ino not found"))?
                     .load(Ordering::SeqCst);
                 info!("written for {ino} {write_size}");
                 if attr.size != write_size {
@@ -1552,14 +1545,14 @@ impl EncryptedFs {
                     .lock()
                     .await
                     .get(&ino)
-                    .unwrap()
+                    .ok_or(FsError::NotFound("Ino not found"))?
                     .load(Ordering::SeqCst);
                 let read = self
                     .sizes_read
                     .lock()
                     .await
                     .get(&ino)
-                    .unwrap()
+                    .ok_or(FsError::NotFound("Ino not found"))?
                     .load(Ordering::SeqCst);
                 if requested_read != read {
                     error!(
@@ -1617,7 +1610,11 @@ impl EncryptedFs {
         }
         {
             let guard = self.write_handles.read().await;
-            let ctx = guard.get(&handle).unwrap().lock().await;
+            let ctx = guard
+                .get(&handle)
+                .ok_or(FsError::InvalidFileHandle)?
+                .lock()
+                .await;
             if ctx.ino != ino {
                 return Err(FsError::InvalidFileHandle);
             }
@@ -1633,7 +1630,11 @@ impl EncryptedFs {
         let write_guard = lock.write().await;
 
         let guard = self.write_handles.read().await;
-        let mut ctx = guard.get(&handle).unwrap().lock().await;
+        let mut ctx = guard
+            .get(&handle)
+            .ok_or(FsError::InvalidFileHandle)?
+            .lock()
+            .await;
 
         // write new data
         let (pos, len) = {
@@ -1642,7 +1643,7 @@ impl EncryptedFs {
                     self.cipher.max_plaintext_len(),
                 ));
             }
-            let writer = ctx.writer.as_mut().unwrap();
+            let writer = ctx.writer.as_mut().ok_or(FsError::InvalidFileHandle)?;
             let pos = writer.seek(SeekFrom::Start(offset)).map_err(|err| {
                 error!(err = %err, "seeking");
                 err
@@ -1681,12 +1682,11 @@ impl EncryptedFs {
         drop(write_guard);
         self.reset_handles(ino, Some(handle), true).await?;
 
-        self.sizes_write
-            .lock()
-            .await
-            .get_mut(&ino)
-            .unwrap()
-            .fetch_add(len as u64, Ordering::SeqCst);
+        if let Some(size) = self.sizes_write.lock().await.get_mut(&ino) {
+            size.fetch_add(len as u64, Ordering::SeqCst);
+        } else {
+            return Err(FsError::NotFound("Ino not found"));
+        }
         if buf.len() != len {
             // error!(
             //     "size mismatch in write(), size {size} offset {offset} buf_len {} len {len}",
@@ -1727,7 +1727,12 @@ impl EncryptedFs {
             let write_guard = lock.write().await;
             ctx.writer.as_mut().expect("writer is missing").flush()?;
             File::open(self.contents_path(ctx.ino))?.sync_all()?;
-            File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+            File::open(
+                self.contents_path(ctx.ino)
+                    .parent()
+                    .ok_or(FsError::InvalidInput("File path has no parent"))?,
+            )?
+            .sync_all()?;
             drop(write_guard);
             let ino = ctx.ino;
             drop(ctx);
@@ -1803,12 +1808,11 @@ impl EncryptedFs {
 
         let mut handle: Option<u64> = None;
         if read {
-            handle = Some(self.next_handle());
-            self.do_with_read_handle(
-                *handle.as_ref().unwrap(),
-                ReadHandleContextOperation::Create { ino },
-            )
-            .await?;
+            let next_handle = self.next_handle();
+            self.do_with_read_handle(next_handle, ReadHandleContextOperation::Create { ino })
+                .await?;
+
+            handle = Some(next_handle);
         }
         if write {
             if self.opened_files_for_write.read().await.contains_key(&ino) {
@@ -1911,7 +1915,11 @@ impl EncryptedFs {
             }
             file.commit()?;
         }
-        File::open(file_path.parent().unwrap())?.sync_all()?;
+        if let Some(parent) = file_path.parent() {
+            File::open(parent)?.sync_all()?;
+        } else {
+            return Err(FsError::InvalidInput("File path has no parent"));
+        }
 
         let now = SystemTime::now();
         let set_attr = SetFileAttr::default()
@@ -1959,10 +1967,14 @@ impl EncryptedFs {
             if let Some(lock) = ctx {
                 let mut ctx = lock.lock().await;
 
-                let mut writer = ctx.writer.take().unwrap();
+                let mut writer = ctx.writer.take().ok_or(FsError::InvalidFileHandle)?;
                 let file = writer.finish()?;
                 file.sync_all()?;
-                File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+                if let Some(parent) = self.contents_path(ctx.ino).parent() {
+                    File::open(parent)?.sync_all()?;
+                } else {
+                    return Err(FsError::InvalidInput("File path has no parent"));
+                }
                 let handle = *handle;
                 let set_attr: SetFileAttr = ctx.attr.clone().into();
                 drop(ctx);
@@ -1971,18 +1983,22 @@ impl EncryptedFs {
                 self.set_attr(ino, set_attr).await?;
                 self.reset_handles(ino, Some(handle), true).await?;
                 let write_handles_guard = self.write_handles.write().await;
-                let mut ctx = write_handles_guard.get(&handle).unwrap().lock().await;
-                let writer = self
-                    .create_write_seek(
-                        OpenOptions::new()
-                            .read(true)
-                            .write(true)
-                            .open(self.contents_path(ino))?,
-                    )
-                    .await?;
-                ctx.writer = Some(Box::new(writer));
-                let attr = self.get_inode_from_storage(ino).await?;
-                ctx.attr = attr.into();
+                if let Some(ctx_lock) = write_handles_guard.get(&handle) {
+                    let mut ctx = ctx_lock.lock().await;
+                    let writer = self
+                        .create_write_seek(
+                            OpenOptions::new()
+                                .read(true)
+                                .write(true)
+                                .open(self.contents_path(ino))?,
+                        )
+                        .await?;
+                    ctx.writer = Some(Box::new(writer));
+                    let attr = self.get_inode_from_storage(ino).await?;
+                    ctx.attr = attr.into();
+                } else {
+                    return Err(FsError::InvalidFileHandle);
+                }
             }
         }
         Ok(())
@@ -2184,15 +2200,17 @@ impl EncryptedFs {
         if let Some(set) = lock.get(&ino) {
             for handle in set.iter().filter(|h| skip_write_fh != Some(**h)) {
                 let guard = self.read_handles.read().await;
-                let ctx = guard.get(handle).unwrap().lock().await;
-                let set_attr: SetFileAttr = ctx.attr.clone().into();
-                drop(ctx);
-                self.set_attr(ino, set_attr).await?;
-                let attr = self.get_inode_from_storage(ino).await?;
-                let mut ctx = guard.get(handle).unwrap().lock().await;
-                let reader = self.create_read_seek(File::open(&path)?).await?;
-                ctx.reader = Some(Box::new(reader));
-                ctx.attr = attr.into();
+                if let Some(ctx_lock) = guard.get(handle) {
+                    let ctx = ctx_lock.lock().await;
+                    let set_attr: SetFileAttr = ctx.attr.clone().into();
+                    drop(ctx);
+                    self.set_attr(ino, set_attr).await?;
+                    let attr = self.get_inode_from_storage(ino).await?;
+                    let mut ctx = ctx_lock.lock().await;
+                    let reader = self.create_read_seek(File::open(&path)?).await?;
+                    ctx.reader = Some(Box::new(reader));
+                    ctx.attr = attr.into();
+                }
             }
         }
 
@@ -2207,10 +2225,15 @@ impl EncryptedFs {
             let lock = self.write_handles.read().await;
             if let Some(lock) = lock.get(fh) {
                 let mut ctx = lock.lock().await;
-                let writer = ctx.writer.as_mut().unwrap();
+                let writer = ctx.writer.as_mut().ok_or(FsError::InvalidFileHandle)?;
                 let file = writer.finish()?;
                 file.sync_all()?;
-                File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+                File::open(
+                    self.contents_path(ctx.ino)
+                        .parent()
+                        .ok_or(FsError::InvalidInput("File path has no parent"))?,
+                )?
+                .sync_all()?;
                 let set_attr: Option<SetFileAttr> = if save_attr {
                     Some(ctx.attr.clone().into())
                 } else {
@@ -2346,14 +2369,7 @@ impl EncryptedFs {
         let encrypted_name =
             crypto::encrypt_file_name(&entry.name, self.cipher, &*self.key.get().await?)?;
         // add to LS directory
-        let self_clone = self
-            .self_weak
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .upgrade()
-            .unwrap();
+        let self_clone = self.self_clone()?;
         let parent_path_clone = parent_path.clone();
         let encrypted_name_clone = encrypted_name.clone();
         let entry_clone = entry.clone();
@@ -2362,11 +2378,13 @@ impl EncryptedFs {
             let file_path = parent_path_clone
                 .join(LS_DIR)
                 .join(encrypted_name_clone.clone());
+            let file_path_str = file_path
+                .to_str()
+                .ok_or(FsError::InvalidInput("Invalid file path"))?
+                .to_owned();
             let lock = self_clone
                 .serialize_dir_entries_ls_locks
-                .get_or_insert_with(file_path.to_str().unwrap().to_owned(), || {
-                    RwLock::new(false)
-                });
+                .get_or_insert_with(file_path_str, || RwLock::new(false));
             let _guard = lock.write().await;
             // write inode and file type
             let entry = (entry_clone.ino, entry_clone.kind);
@@ -2379,23 +2397,18 @@ impl EncryptedFs {
             Ok::<(), FsError>(())
         });
         // add to HASH directory
-        let self_clone = self
-            .self_weak
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .upgrade()
-            .unwrap();
+        let self_clone = self.self_clone()?;
         let entry_hash = entry.clone();
         tokio::spawn(async move {
             let name = crypto::hash_file_name(&entry_hash.name);
             let file_path = parent_path.join(HASH_DIR).join(name);
+            let path_str = file_path
+                .to_str()
+                .ok_or(FsError::InvalidInput("Invalid file path"))?
+                .to_owned();
             let lock = self_clone
                 .serialize_dir_entries_hash_locks
-                .get_or_insert_with(file_path.to_str().unwrap().to_owned(), || {
-                    RwLock::new(false)
-                });
+                .get_or_insert_with(path_str, || RwLock::new(false));
             let _guard = lock.write().await;
             // write inode and file type
             // we save the encrypted name also because we need it to remove the entry on [`remove_directory_entry`]
@@ -2413,6 +2426,16 @@ impl EncryptedFs {
         Ok(())
     }
 
+    fn self_clone(&self) -> FsResult<Arc<Self>> {
+        self.self_weak
+            .lock()
+            .map_err(|_| FsError::Other("Failed to lock self_weak"))?
+            .as_ref()
+            .ok_or(FsError::Other("Weak reference is None"))?
+            .upgrade()
+            .ok_or(FsError::Other("Failed to upgrade weak reference"))
+    }
+
     fn ino_file(&self, ino: u64) -> PathBuf {
         self.data_dir.join(INODES_DIR).join(ino.to_string())
     }
@@ -2426,9 +2449,13 @@ impl EncryptedFs {
         // remove from HASH
         let name = crypto::hash_file_name(name);
         let path = parent_path.join(HASH_DIR).join(name);
+        let path_str = path
+            .to_str()
+            .ok_or(FsError::InvalidInput("Invalid file path"))?
+            .to_owned();
         let lock = self
             .serialize_dir_entries_hash_locks
-            .get_or_insert_with(path.to_str().unwrap().to_owned(), || RwLock::new(false));
+            .get_or_insert_with(path_str, || RwLock::new(false));
         let guard = lock.write().await;
         let (_, _, name): (u64, FileType, String) =
             bincode::deserialize_from(crypto::create_read(
@@ -2440,9 +2467,13 @@ impl EncryptedFs {
         drop(guard);
         // remove from LS
         let path = parent_path.join(LS_DIR).join(name);
+        let path_str = path
+            .to_str()
+            .ok_or(FsError::InvalidInput("Invalid file path"))?
+            .to_owned();
         let lock = self
             .serialize_dir_entries_ls_locks
-            .get_or_insert_with(path.to_str().unwrap().to_owned(), || RwLock::new(false));
+            .get_or_insert_with(path_str, || RwLock::new(false));
         let _guard = lock.write().await;
         fs::remove_file(path)?;
         Ok(())
@@ -2544,7 +2575,11 @@ fn read_or_create_key(
         bincode::serialize_into(&mut writer, &key)?;
         let file = writer.finish()?;
         file.sync_all()?;
-        File::open(key_path.parent().unwrap())?.sync_all()?;
+        if let Some(parent) = key_path.parent() {
+            File::open(parent)?.sync_all()?;
+        } else {
+            return Err(FsError::InvalidInput("Path has no parent"));
+        }
         Ok(SecretBox::new(Box::new(key)))
     }
 }
