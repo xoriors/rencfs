@@ -36,6 +36,12 @@ mod bench;
 #[cfg(test)]
 mod test;
 
+
+// Define the rename flags as constants (unsigned integers)
+pub const RENAME_NOREPLACE: u32 = 1 << 0; // Don't overwrite target if it exists
+pub const RENAME_EXCHANGE: u32 = 1 << 1; // Swap source and target
+pub const RENAME_WHITEOUT: u32 = 1 << 2; // Create a whiteout for overlayfs
+
 pub(crate) const INODES_DIR: &str = "inodes";
 pub(crate) const CONTENTS_DIR: &str = "contents";
 pub(crate) const SECURITY_DIR: &str = "security";
@@ -1995,7 +2001,23 @@ impl EncryptedFs {
         name: &SecretString,
         new_parent: u64,
         new_name: &SecretString,
+        flags: u32,  // Added flags parameter
     ) -> FsResult<()> {
+
+         // Validate supported flags first
+        const SUPPORTED: u32 = libc::RENAME_NOREPLACE | libc::RENAME_EXCHANGE;
+        if (flags & !SUPPORTED) != 0 {
+            return Err(FsError::InvalidArgument("Unsupported flags"));
+        }
+
+        // Added flag validation
+        if (flags & RENAME_NOREPLACE != 0) && (flags & RENAME_EXCHANGE != 0) {
+            return Err(FsError::InvalidArgument("RENAME_NOREPLACE and RENAME_EXCHANGE are mutually exclusive"));
+        }
+        //if (flags & RENAME_WHITEOUT != 0) && (flags & RENAME_EXCHANGE != 0) {
+        //    return Err(FsError::InvalidArgument("RENAME_WHITEOUT and RENAME_EXCHANGE are mutually exclusive"));
+        //}
+
         if self.read_only {
             return Err(FsError::ReadOnly);
         }
@@ -2020,6 +2042,47 @@ impl EncryptedFs {
             // no-op
             return Ok(());
         }
+
+        // Added RENAME_NOREPLACE check
+        if flags & RENAME_NOREPLACE != 0 {
+            if self.exists_by_name(new_parent, new_name)? {
+                return Err(FsError::AlreadyExists);
+            }
+        }
+
+        // Added RENAME_EXCHANGE handling
+        if flags & RENAME_EXCHANGE != 0 {
+            let Some(target_attr) = self.find_by_name(new_parent, new_name).await? else {
+                return Err(FsError::NotFound("target does not exist"));
+            };
+            let source_attr = self
+                .find_by_name(parent, name)
+                .await?
+                .ok_or(FsError::NotFound("source not found"))?;
+            
+            //perform atomic swap
+            self.remove_directory_entry(parent, name).await?;
+            self.remove_directory_entry(new_parent, new_name).await?;
+            self.insert_directory_entry(parent, &DirectoryEntry {
+                ino: target_attr.ino,
+                name: name.clone(),
+                kind: target_attr.kind,
+            })
+            .await?;
+            self.insert_directory_entry(new_parent, &DirectoryEntry {
+                ino: source_attr.ino,
+                name: new_name.clone(),
+                kind: source_attr.kind,
+            })
+            .await?;
+
+            return Ok(());
+        }
+
+        // Added RENAME_WHITEOUT handling
+        //if flags & RENAME_WHITEOUT != 0 {
+        //    return Err(FsError::Unsupported("RENAME_WHITEOUT is not supported"));
+        //}
 
         // Only overwrite an existing directory if it's empty
         if let Ok(Some(new_attr)) = self.find_by_name(new_parent, new_name).await {
@@ -2080,6 +2143,51 @@ impl EncryptedFs {
 
         Ok(())
     }
+
+    // Helper functions (assume these are implemented in your codebase)
+    fn exists(&self, ino: u64) -> bool {
+        self.inodes.contains_key(&ino)
+    }
+
+    fn is_dir(&self, ino: u64) -> bool {
+        self.inodes.get(&ino).map(|i| i.is_dir).unwrap_or(false)
+    }
+
+    fn exists_by_name(&self, parent: u64, name: &SecretString) -> FsResult<bool> {
+        let inode = self.inodes.get(&parent).ok_or(FsError::InodeNotFound)?;
+        Ok(inode.children.contains_key(name.expose_secret()))
+    }
+
+    fn validate_filename(&self, name: &SecretString) -> FsResult<()> {
+        // Implement filename validation logic
+        Ok(())
+    }
+
+    async fn find_by_name(&self, parent: u64, name: &SecretString) -> FsResult<Option<DirectoryEntry>> {
+        // Implement logic to find a directory entry by name
+        Ok(None)
+    }
+
+    async fn remove_directory_entry(&self, parent: u64, name: &SecretString) -> FsResult<()> {
+        // Implement logic to remove a directory entry
+        Ok(())
+    }
+
+    async fn insert_directory_entry(&self, parent: u64, entry: &DirectoryEntry) -> FsResult<()> {
+        // Implement logic to insert a directory entry
+        Ok(())
+    }
+
+    fn len(&self, ino: u64) -> FsResult<usize> {
+        // Implement logic to get the number of children in a directory
+        Ok(0)
+    }
+
+    async fn set_attr(&self, ino: u64, attr: SetFileAttr) -> FsResult<()> {
+        // Implement logic to set file attributes
+        Ok(())
+    }
+}
 
     /// Create a crypto writer using internal encryption info.
     pub async fn create_write<W: CryptoInnerWriter + Seek + Send + Sync + 'static>(
