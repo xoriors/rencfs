@@ -21,7 +21,6 @@ use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
 use rencfs::{log, mount};
 use totp_rs::{Algorithm, Secret, TOTP};
-use webbrowser;
 
 static mut PASS: Option<SecretString> = None;
 
@@ -285,7 +284,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             .as_str(),
     )
     .unwrap();
-    
+
     if password.expose_secret().is_empty() {
         print!("Enter password: ");
         io::stdout().flush().unwrap();
@@ -329,126 +328,104 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
 
     if init_2fa {
         if is_bound {
-             error!("2FA is already initialized for this vault.");
-             return Err(ExitStatusError::Failure(1).into());
+            error!("2FA is already initialized for this vault.");
+            return Err(ExitStatusError::Failure(1).into());
         }
 
         info!("Initializing TOTP 2FA...");
-        
-        let secret = Secret::generate_secret();
-        let secret_str = secret.to_encoded().to_string();
 
+        let secret = Secret::generate_secret();
+        let secret_str = SecretString::new(Box::new(secret.to_encoded().to_string()));
+
+        let vault_name = data_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("RencfsVault");
+
+        // Use standard SHA1 for authenticator app compatibility (RFC 6238)
         let totp = TOTP::new(
             Algorithm::SHA1,
             6,
             1,
             30,
-            secret.to_bytes().unwrap(),
+            secret
+                .to_bytes()
+                .map_err(|e| anyhow::anyhow!("Invalid secret bytes: {}", e))?,
             Some("Rencfs".to_string()),
-            "MyVault".to_string(),
-        ).unwrap();
+            vault_name.to_string(),
+        )
+        .map_err(|e| anyhow::anyhow!("TOTP configuration error: {}", e))?;
 
-        let qr_base64 = totp.get_qr_base64()
-            .map_err(|e| anyhow::anyhow!("QR Code generation error: {}", e))?;
+        let totp_url = totp.get_url();
 
-
-        let setup_file_path = std::env::current_dir()?.join("rencfs_2fa_setup.html");
-
-        let _file_guard = TempFileGuard(setup_file_path.clone());
-
-        // generate HTML site with embedded QR code
-        let html_content = format!(
-            r#"
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Rencfs 2FA Setup</title>
-                <style>
-                    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #f0f2f5; }}
-                    .card {{ background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }}
-                    img {{ border: 1px solid #ddd; padding: 10px; border-radius: 4px; margin-bottom: 1rem; }}
-                    code {{ background: #eee; padding: 4px 8px; border-radius: 4px; font-weight: bold; word-break: break-all; }}
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <h2>Setup 2FA</h2>
-                    <p>Scan this QR code with your Authenticator App:</p>
-                    <img src="data:image/png;base64,{}" alt="QR Code" width="250" height="250">
-                    <p>Or enter this secret manually:</p>
-                    <p><code>{}</code></p>
-                </div>
-            </body>
-            </html>
-            "#,
-            qr_base64, secret_str
-        );
-
-        // scope block to force the file to close/flush immediately
-        {
-            let mut file = std::fs::File::create(&setup_file_path)?;
-            file.write_all(html_content.as_bytes())?;
-            file.flush()?; 
-        }
-
-        info!("Opening QR code in default browser...");
-        
-        if webbrowser::open(setup_file_path.to_str().unwrap_or("")).is_err() {
-            warn!("Could not open browser automatically.");
-            println!("Please open this file manually: {}", setup_file_path.display());
-        }
-        
         println!("\n=== 2FA SETUP REQUIRED ===");
-        println!("1. Open Google Authenticator (or similar app).");
-        println!("2. Scan this QR Code from browser:");
-        println!("\nOR enter this secret manually: {}\n", secret_str);
-        
+        println!("Scan this QR code with your Authenticator App:");
+
+        // terminal QR display
+        if let Err(e) = qr2term::print_qr(&totp_url) {
+            error!("Failed to generate terminal QR code: {}", e);
+            println!("(QR rendering failed. Please use the secret below manually)");
+        }
+
+        // only expose secret for manual entry
+        println!("\nManual Secret: {}\n", secret_str.expose_secret());
+
         print!("Enter the 6-digit code to verify and save: ");
         io::stdout().flush().unwrap();
         let mut code = String::new();
         io::stdin().read_line(&mut code)?;
-        
-        if totp.check_current(code.trim()).unwrap_or(false) {
-            info!("Code verified. Saving encrypted 2FA secret...");
-            EncryptedFs::bind_totp_secret(data_path, &password, cipher, &secret_str).await?;
-            println!("2FA enabled successfully.");
-        } else {
-            error!("Invalid code. Setup aborted.");
-            return Err(ExitStatusError::Failure(1).into());
-        }
 
+        match totp.check_current(code.trim()) {
+            Ok(true) => {
+                info!("Code verified. Saving encrypted 2FA secret...");
+                EncryptedFs::bind_totp_secret(data_path, &password, cipher, &secret_str).await?;
+                println!("2FA enabled successfully.");
+            }
+            Ok(false) => {
+                error!("Invalid code. Setup aborted.");
+                return Err(ExitStatusError::Failure(1).into());
+            }
+            Err(e) => {
+                error!("TOTP verification error: {}", e);
+                warn!("Hint: Ensure your system clock is synchronized.");
+                return Err(ExitStatusError::Failure(1).into());
+            }
+        }
     } else if is_bound {
         info!("Locked by 2FA.");
-        
-        let secret_str = EncryptedFs::get_totp_secret(data_path, &password, cipher)
-            .map_err(|_| {
-                error!("Failed to unlock 2FA. Password might be incorrect.");
+
+        let secret_str =
+            EncryptedFs::get_totp_secret(data_path, &password, cipher).map_err(|e| {
+                error!("Failed to unlock 2FA: {}. Password might be incorrect.", e);
                 ExitStatusError::Failure(1)
             })?;
 
-        let secret = Secret::Encoded(secret_str);
-        let totp = TOTP::new(
-            Algorithm::SHA1,
-            6,
-            1,
-            30,
-            secret.to_bytes().unwrap(),
-            None,
-            String::new(),
-        ).unwrap();
+        let secret_bytes = Secret::Encoded(secret_str.expose_secret().clone())
+            .to_bytes()
+            .map_err(|e| anyhow::anyhow!("Corrupted 2FA secret: {}", e))?;
+
+        let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes, None, String::new())
+            .map_err(|e| anyhow::anyhow!("TOTP init error: {}", e))?;
 
         print!("Enter 2FA Code: ");
         io::stdout().flush().unwrap();
         let mut code = String::new();
         io::stdin().read_line(&mut code)?;
 
-        if !totp.check_current(code.trim()).unwrap_or(false) {
-             error!("Invalid 2FA Code. Access Denied.");
-             return Err(ExitStatusError::Failure(1).into());
+        match totp.check_current(code.trim()) {
+            Ok(true) => {
+                info!("2FA Validated. Mounting...");
+            }
+            Ok(false) => {
+                error!("Invalid 2FA Code. Access Denied.");
+                return Err(ExitStatusError::Failure(1).into());
+            }
+            Err(e) => {
+                error!("TOTP Error: {}", e);
+                warn!("Hint: Check system clock.");
+                return Err(ExitStatusError::Failure(1).into());
+            }
         }
-        info!("2FA Validated. Mounting...");
     }
 
     if matches.get_flag("umount-on-start") {
@@ -556,21 +533,6 @@ fn remove_pass() {
         } else {
             info!("Remove password from memory");
             PASS = None;
-        }
-    }
-}
-
-struct TempFileGuard(PathBuf);
-
-impl Drop for TempFileGuard {
-    fn drop(&mut self) {
-        if self.0.exists() {
-            // try to remove the file
-            if let Err(e) = std::fs::remove_file(&self.0) {
-                warn!("Failed to delete temporary setup file: {}", e);
-            } else {
-                info!("Temporary setup file deleted.");
-            }
         }
     }
 }
