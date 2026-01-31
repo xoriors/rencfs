@@ -2481,3 +2481,112 @@ async fn test_read_only_write() {
     )
     .await;
 }
+
+#[tokio::test]
+#[traced_test]
+async fn test_totp_secret_binding() {
+    run_test(
+        TestSetup {
+            key: "test_totp_binding",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+
+            // credentials
+            let pass = SecretString::from_str("password").unwrap();
+            let cipher = Cipher::ChaCha20Poly1305;
+            let secret = SecretString::from_str("JBSWY3DPEHPK3PXP").unwrap(); // Example Base32 secret
+
+            // bind the secret
+            EncryptedFs::bind_totp_secret(&fs.data_dir, &pass, cipher, &secret)
+                .await
+                .expect("Failed to bind TOTP secret");
+
+            assert!(EncryptedFs::is_identity_bound(&fs.data_dir));
+
+            // retrieve and decrypt
+            let retrieved = EncryptedFs::get_totp_secret(&fs.data_dir, &pass, cipher)
+                .expect("Failed to retrieve secret");
+
+            assert_eq!(
+                secret.expose_secret(),
+                retrieved.expose_secret(),
+                "Decrypted secret does not match original"
+            );
+
+            // test missing file handling
+            let invalid_path = fs.data_dir.join("non_existent_vault");
+            let result = EncryptedFs::get_totp_secret(&invalid_path, &pass, cipher);
+            assert!(result.is_err());
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_totp_wrong_password() {
+    run_test(
+        TestSetup {
+            key: "test_totp_wrong_pass",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+
+            let pass = SecretString::from_str("password").unwrap();
+            let wrong_pass = SecretString::from_str("wrong_password").unwrap();
+            let cipher = Cipher::ChaCha20Poly1305;
+            let secret = SecretString::from_str("JBSWY3DPEHPK3PXP").unwrap();
+
+            EncryptedFs::bind_totp_secret(&fs.data_dir, &pass, cipher, &secret)
+                .await
+                .expect("Failed to bind");
+
+            let result = EncryptedFs::get_totp_secret(&fs.data_dir, &wrong_pass, cipher);
+
+            assert!(result.is_err(), "Should fail with wrong password");
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+#[traced_test]
+async fn test_totp_corrupted_file() {
+    run_test(
+        TestSetup {
+            key: "test_totp_corrupt",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let pass = SecretString::from_str("password").unwrap();
+            let cipher = Cipher::ChaCha20Poly1305;
+            let secret = SecretString::from_str("JBSWY3DPEHPK3PXP").unwrap();
+
+            // bind correctly
+            EncryptedFs::bind_totp_secret(&fs.data_dir, &pass, cipher, &secret)
+                .await
+                .expect("Failed to bind");
+
+            // corrupt the identity.enc file manually
+            let identity_path = fs.data_dir.join("security/identity.enc");
+            {
+                use std::fs::OpenOptions;
+                use std::io::Write;
+                let mut file = OpenOptions::new().write(true).open(&identity_path).unwrap();
+                // overwrite start of file with garbage
+                file.write_all(b"GARBAGE_DATA_CORRUPTION").unwrap();
+            }
+
+            // try to retrieve
+            let result = EncryptedFs::get_totp_secret(&fs.data_dir, &pass, cipher);
+
+            // assert failure
+            assert!(result.is_err(), "Should fail on corrupted file");
+        },
+    )
+    .await;
+}
