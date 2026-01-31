@@ -368,6 +368,9 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         }
 
         // only expose secret for manual entry
+        println!("\n=== IMPORTANT RECOVERY INFORMATION ===");
+        println!("If you lose your authenticator device, you will be LOCKED OUT.");
+        println!("Save the secret below in a secure password manager as a backup:");
         println!("\nManual Secret: {}\n", secret_str.expose_secret());
 
         print!("Enter the 6-digit code to verify and save: ");
