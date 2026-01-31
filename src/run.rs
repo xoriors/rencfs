@@ -159,7 +159,7 @@ fn get_cli_args() -> ArgMatches {
                         .action(ArgAction::SetTrue)
                         .requires("mount-point")
                         .requires("data-dir")
-                        .help("Initialize Google 2FA for this filesystem. Required only for the first run to bind the user."),
+                        .help("Initialize TOTP 2FA for this filesystem. Required only for the first run to bind the user."),
                 )
                 .arg(
                     Arg::new("allow-root")
