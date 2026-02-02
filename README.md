@@ -73,7 +73,7 @@ Some of these are still being worked on and marked with `[WIP]`.
 
 # Documentation
 
-- [Tech slides](https://miro.com/app/board/uXjVLa8i1h0=/?share_link_id=169887669731)
+- [Tech slides](https://miro.com/app/board/uXjVLa8i1h0=/?share_link_id=685435182168)
 
 [![rencfs](website/resources/layers.png)](website/resources/layers.png)
 
