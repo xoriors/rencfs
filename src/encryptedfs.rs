@@ -41,6 +41,7 @@ pub(crate) const CONTENTS_DIR: &str = "contents";
 pub(crate) const SECURITY_DIR: &str = "security";
 pub(crate) const KEY_ENC_FILENAME: &str = "key.enc";
 pub(crate) const KEY_SALT_FILENAME: &str = "key.salt";
+pub(crate) const IDENTITY_FILENAME: &str = "identity.enc";
 
 pub(crate) const LS_DIR: &str = "ls";
 pub(crate) const HASH_DIR: &str = "hash";
@@ -638,6 +639,84 @@ impl EncryptedFs {
         arc.ensure_root_exists().await?;
 
         Ok(arc)
+    }
+
+    // checks if the filesystem at the given path is bound to a specific identity.
+    pub fn is_identity_bound(data_dir: &Path) -> bool {
+        data_dir.join(SECURITY_DIR).join(IDENTITY_FILENAME).exists()
+    }
+
+    // decrypts and returns the bound identity (subject ID) if it exists.
+    pub fn get_bound_identity(
+        data_dir: &Path,
+        password: &SecretString,
+        cipher: Cipher,
+    ) -> FsResult<Option<String>> {
+        let identity_path = data_dir.join(SECURITY_DIR).join(IDENTITY_FILENAME);
+        if !identity_path.exists() {
+            return Ok(None);
+        }
+
+        let key_path = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
+        let salt_path = data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME);
+        
+        let key = read_or_create_key(&key_path, &salt_path, password, cipher)?;
+        
+        let reader = crypto::create_read(File::open(&identity_path)?, cipher, &key);
+        let stored_sub: String = bincode::deserialize_from(reader)
+             .map_err(|_| FsError::Other("Failed to decrypt identity. Wrong password?"))?;
+             
+        Ok(Some(stored_sub))
+    }
+
+    // Verifies the identity of the user against the bound Google Account ID (sub).
+    // If no identity is bound, it encrypts and stores the provided `subject` to bind the vault.
+    pub async fn verify_or_bind_identity(
+        data_dir: &Path,
+        password: &SecretString,
+        cipher: Cipher,
+        subject: &str,
+    ) -> FsResult<()> {
+        // Ensure the directory structure exists
+        ensure_structure_created(&data_dir.to_path_buf()).await?;
+
+        let key_path = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
+        let salt_path = data_dir.join(SECURITY_DIR).join(KEY_SALT_FILENAME);
+        let identity_path = data_dir.join(SECURITY_DIR).join(IDENTITY_FILENAME);
+
+        // Derive/Load the master key using the provided password
+        let key = read_or_create_key(&key_path, &salt_path, password, cipher)?;
+
+        if identity_path.exists() {
+            info!("Identity file found. Verifying 2FA Identity...");
+            
+            // Decrypt the stored ID
+            let reader = crypto::create_read(File::open(&identity_path)?, cipher, &key);
+            let stored_sub: String = bincode::deserialize_from(reader)
+                .map_err(|e| {
+                     error!("Failed to deserialize identity: {}", e);
+                     FsError::Other("Failed to read identity file. Password might be wrong or file corrupted.")
+                })?;
+            
+            if stored_sub != subject {
+                 error!("CRITICAL: Identity mismatch! Vault is bound to user '{}', but current user is '{}'", stored_sub, subject);
+                 return Err(FsError::Other("Access Denied: The Google Account used for 2FA does not match the vault owner."));
+            }
+            info!("Identity verified successfully.");
+        } else {
+            info!("No identity file found. Binding vault to Google Account ID: {}", subject);
+            
+            // Encrypt and save the ID
+            crypto::atomic_serialize_encrypt_into(
+                &identity_path, 
+                &subject.to_string(), 
+                cipher, 
+                &key
+            )?;
+            info!("Vault successfully bound to user.");
+        }
+
+        Ok(())
     }
 
     pub fn exists(&self, ino: u64) -> bool {
