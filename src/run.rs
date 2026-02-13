@@ -20,6 +20,7 @@ use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
 use rencfs::{log, mount};
+use totp_rs::{Algorithm, Secret, TOTP};
 
 static mut PASS: Option<SecretString> = None;
 
@@ -153,6 +154,14 @@ fn get_cli_args() -> ArgMatches {
                         .help("If we should try to umount the mountpoint before starting the FUSE server. This can be useful when the previous run crashed or was forced kll and the mountpoint is still mounted."),
                 )
                 .arg(
+                    Arg::new("init-2fa")
+                        .long("init-2fa")
+                        .action(ArgAction::SetTrue)
+                        .requires("mount-point")
+                        .requires("data-dir")
+                        .help("Initialize TOTP 2FA for this filesystem. Required only for the first run to bind the user."),
+                )
+                .arg(
                     Arg::new("allow-root")
                         .long("allow-root")
                         .short('s')
@@ -267,20 +276,21 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         .to_string();
 
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
+    let data_path = Path::new(&data_dir);
 
-    // when running from IDE we can't read from stdin with rpassword, get it from env var
     let mut password = SecretString::from_str(
         env::var("RENCFS_PASSWORD")
             .unwrap_or_else(|_| String::new())
             .as_str(),
     )
     .unwrap();
+
     if password.expose_secret().is_empty() {
-        // read password from stdin
         print!("Enter password: ");
         io::stdout().flush().unwrap();
         password = SecretString::new(Box::new(read_password()?));
 
+        // logic for new directory confirmation
         if !PathBuf::new().join(data_dir.clone()).is_dir()
             || fs::read_dir(&data_dir)
                 .await
@@ -290,7 +300,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
                 .unwrap()
                 .is_none()
         {
-            // first run, ask to confirm password
             print!("Confirm password: ");
             io::stdout().flush().unwrap();
             let confirm_password = SecretString::new(Box::new(read_password()?));
@@ -300,16 +309,125 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             }
         }
     }
-    // save password in keyring
+
+    // Save password to keyring
     info!("Save password in keyring");
     let res = keyring::save(&password, "password").map_err(|err| {
         warn!(err = %err);
     });
     if res.is_err() {
-        // maybe we don't have a security manager, keep it in mem
         unsafe {
             warn!("Cannot save password in keyring, keep it in memory");
             PASS = Some(password.clone());
+        }
+    }
+
+    // TOTP 2FA Logic
+    let is_bound = EncryptedFs::is_identity_bound(data_path);
+    let init_2fa = matches.get_flag("init-2fa");
+
+    if init_2fa {
+        if is_bound {
+            error!("2FA is already initialized for this vault.");
+            return Err(ExitStatusError::Failure(1).into());
+        }
+
+        info!("Initializing TOTP 2FA...");
+
+        let secret = Secret::generate_secret();
+        let secret_str = SecretString::new(Box::new(secret.to_encoded().to_string()));
+
+        let vault_name = data_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("RencfsVault");
+
+        // Use standard SHA1 for authenticator app compatibility (RFC 6238)
+        let totp = TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            secret
+                .to_bytes()
+                .map_err(|e| anyhow::anyhow!("Invalid secret bytes: {}", e))?,
+            Some("Rencfs".to_string()),
+            vault_name.to_string(),
+        )
+        .map_err(|e| anyhow::anyhow!("TOTP configuration error: {}", e))?;
+
+        let totp_url = totp.get_url();
+
+        println!("\n=== 2FA SETUP REQUIRED ===");
+        println!("Scan this QR code with your Authenticator App:");
+
+        // terminal QR display
+        if let Err(e) = qr2term::print_qr(&totp_url) {
+            error!("Failed to generate terminal QR code: {}", e);
+            println!("(QR rendering failed. Please use the secret below manually)");
+        }
+
+        // only expose secret for manual entry
+        println!("\n=== IMPORTANT RECOVERY INFORMATION ===");
+        println!("If you lose your authenticator device, you will be LOCKED OUT.");
+        println!("Save the secret below in a secure password manager as a backup:");
+        println!("\nManual Secret: {}\n", secret_str.expose_secret());
+
+        print!("Enter the 6-digit code to verify and save: ");
+        io::stdout().flush().unwrap();
+        let mut code = String::new();
+        io::stdin().read_line(&mut code)?;
+
+        match totp.check_current(code.trim()) {
+            Ok(true) => {
+                info!("Code verified. Saving encrypted 2FA secret...");
+                EncryptedFs::bind_totp_secret(data_path, &password, cipher, &secret_str).await?;
+                println!("2FA enabled successfully.");
+            }
+            Ok(false) => {
+                error!("Invalid code. Setup aborted.");
+                return Err(ExitStatusError::Failure(1).into());
+            }
+            Err(e) => {
+                error!("TOTP verification error: {}", e);
+                warn!("Hint: Ensure your system clock is synchronized.");
+                return Err(ExitStatusError::Failure(1).into());
+            }
+        }
+    } else if is_bound {
+        info!("Locked by 2FA.");
+
+        let secret_str =
+            EncryptedFs::get_totp_secret(data_path, &password, cipher).map_err(|e| {
+                error!("Failed to unlock 2FA: {}. Password might be incorrect.", e);
+                ExitStatusError::Failure(1)
+            })?;
+
+        let secret_bytes = Secret::Encoded(secret_str.expose_secret().clone())
+            .to_bytes()
+            .map_err(|e| anyhow::anyhow!("Corrupted 2FA secret: {}", e))?;
+
+        let totp = TOTP::new(Algorithm::SHA1, 6, 1, 30, secret_bytes, None, String::new())
+            .map_err(|e| anyhow::anyhow!("TOTP init error: {}", e))?;
+
+        print!("Enter 2FA Code: ");
+        io::stdout().flush().unwrap();
+        let mut code = String::new();
+        io::stdin().read_line(&mut code)?;
+
+        match totp.check_current(code.trim()) {
+            Ok(true) => {
+                info!("2FA Validated. Mounting...");
+            }
+            Ok(false) => {
+                error!("Invalid 2FA Code. Access Denied.");
+                return Err(ExitStatusError::Failure(1).into());
+            }
+            Err(e) => {
+                error!("TOTP Error: {}", e);
+                warn!("Hint: Check system clock.");
+                return Err(ExitStatusError::Failure(1).into());
+            }
         }
     }
 
