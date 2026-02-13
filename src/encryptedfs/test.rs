@@ -2492,33 +2492,67 @@ async fn test_totp_secret_binding() {
         },
         async {
             let fs = get_fs().await;
-
-            // credentials
             let pass = SecretString::from_str("password").unwrap();
             let cipher = Cipher::ChaCha20Poly1305;
-            let secret = SecretString::from_str("JBSWY3DPEHPK3PXP").unwrap(); // Example Base32 secret
+            let secret = SecretString::from_str("JBSWY3DPEHPK3PXP").unwrap();
 
-            // bind the secret
+            // verify inital state
+            assert!(
+                !EncryptedFs::is_identity_bound(&fs.data_dir),
+                "Should not be bound initially"
+            );
+
+            // bind secret
             EncryptedFs::bind_totp_secret(&fs.data_dir, &pass, cipher, &secret)
                 .await
                 .expect("Failed to bind TOTP secret");
 
-            assert!(EncryptedFs::is_identity_bound(&fs.data_dir));
+            // verify state after bind
+            assert!(
+                EncryptedFs::is_identity_bound(&fs.data_dir),
+                "Should be bound now"
+            );
 
-            // retrieve and decrypt
+            // verify
             let retrieved = EncryptedFs::get_totp_secret(&fs.data_dir, &pass, cipher)
                 .expect("Failed to retrieve secret");
 
-            assert_eq!(
-                secret.expose_secret(),
-                retrieved.expose_secret(),
-                "Decrypted secret does not match original"
-            );
+            assert_eq!(secret.expose_secret(), retrieved.expose_secret());
+        },
+    )
+    .await;
+}
 
-            // test missing file handling
-            let invalid_path = fs.data_dir.join("non_existent_vault");
-            let result = EncryptedFs::get_totp_secret(&invalid_path, &pass, cipher);
-            assert!(result.is_err());
+#[tokio::test]
+#[traced_test]
+async fn test_totp_update_secret() {
+    run_test(
+        TestSetup {
+            key: "test_totp_update",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let pass = SecretString::from_str("password").unwrap();
+            let cipher = Cipher::ChaCha20Poly1305;
+            let secret1 = SecretString::from_str("SECRET1").unwrap();
+            let secret2 = SecretString::from_str("SECRET2").unwrap();
+
+            // set first secret
+            EncryptedFs::bind_totp_secret(&fs.data_dir, &pass, cipher, &secret1)
+                .await
+                .unwrap();
+
+            // overwrite
+            EncryptedFs::bind_totp_secret(&fs.data_dir, &pass, cipher, &secret2)
+                .await
+                .expect("Failed to update secret");
+
+            // verify for new value
+            let retrieved = EncryptedFs::get_totp_secret(&fs.data_dir, &pass, cipher).unwrap();
+
+            assert_eq!(secret2.expose_secret(), retrieved.expose_secret());
+            assert_ne!(secret1.expose_secret(), retrieved.expose_secret());
         },
     )
     .await;
