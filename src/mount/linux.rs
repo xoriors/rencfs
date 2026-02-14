@@ -140,7 +140,7 @@ impl EncryptedFsFuse3 {
         read_only: bool,
     ) -> FsResult<Self> {
         Ok(Self {
-            fs: EncryptedFs::new(data_dir, password_provider, cipher, read_only).await?,
+            fs: EncryptedFs::new(data_dir, password_provider, cipher, None, read_only).await?,
         })
     }
 
