@@ -15,11 +15,18 @@ use linux::MountHandleInnerImpl;
 #[cfg(target_os = "linux")]
 use linux::MountPointImpl;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows::MountHandleInnerImpl;
+#[cfg(target_os = "windows")]
+use windows::MountPointImpl;
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 mod dummy;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use dummy::MountHandleInnerImpl;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use dummy::MountPointImpl;
 
 #[async_trait]
@@ -63,6 +70,7 @@ impl Future for MountHandle {
 pub(crate) trait MountHandleInner: Future<Output = io::Result<()>> {
     async fn unmount(mut self) -> io::Result<()>;
 }
+
 /// Available arguments
 ///
 /// **`mountpoint`** where it wil mount the filesystem
@@ -98,38 +106,51 @@ pub fn create_mount_point(
 }
 
 pub fn umount(mountpoint: &str) -> io::Result<()> {
-    // try normal umount
-    if process::Command::new("umount")
-        .arg(mountpoint)
-        .output()?
-        .status
-        .success()
+    #[cfg(target_os = "windows")]
     {
+        // On Windows, unmounting is handled by the WinFsp host via MountHandle::umount().
+        // A best-effort attempt using `net use /delete` is provided for drive-letter mounts.
+        let _ = process::Command::new("net")
+            .args(["use", mountpoint, "/delete", "/yes"])
+            .output();
         return Ok(());
     }
-    // force umount
-    if process::Command::new("umount")
-        .arg("-f")
-        .arg(mountpoint)
-        .output()?
-        .status
-        .success()
+
+    #[cfg(not(target_os = "windows"))]
     {
-        return Ok(());
-    }
-    // lazy umount
-    if process::Command::new("umount")
-        .arg("-l")
-        .arg(mountpoint)
-        .output()?
-        .status
-        .success()
-    {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("cannot umount {mountpoint}"),
-        ))
+        // try normal umount
+        if process::Command::new("umount")
+            .arg(mountpoint)
+            .output()?
+            .status
+            .success()
+        {
+            return Ok(());
+        }
+        // force umount
+        if process::Command::new("umount")
+            .arg("-f")
+            .arg(mountpoint)
+            .output()?
+            .status
+            .success()
+        {
+            return Ok(());
+        }
+        // lazy umount
+        if process::Command::new("umount")
+            .arg("-l")
+            .arg(mountpoint)
+            .output()?
+            .status
+            .success()
+        {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("cannot umount {mountpoint}"),
+            ))
+        }
     }
 }

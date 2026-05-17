@@ -255,3 +255,8 @@ assets = [
 ]
 [package.metadata.generate-rpm.requires]
 fuse3 = "*"
+
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winfsp = "0.3"
+winapi = { version = "0.3", features = ["winerror", "winnt"] }
