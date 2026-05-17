@@ -1,0 +1,16 @@
+[target.x86_64-linux-android]
+rustflags = [
+    "-C", "link-arg=-Wl,--hash-style=both",
+    "-C", "link-arg=-Wl,-z,common-page-size=16384",
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+]
+
+[target.aarch64-linux-android]
+rustflags = [
+    "-C", "link-arg=-Wl,--hash-style=both",
+    "-C", "link-arg=-Wl,-z,common-page-size=16384",
+    "-C", "link-arg=-Wl,-z,max-page-size=16384",
+    "-C", "link-arg=-fuse-ld=lld",   # Use LLVM `lld` linker
+    "-C", "link-arg=-Wl,--allow-shlib-undefined", # Allow undefined symbols (workaround for missing `--as-needed`)
+    "-C", "link-arg=-Wl,-z,notext"   # Fix possible text relocations
+]

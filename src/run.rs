@@ -227,13 +227,13 @@ async fn run_change_password(cipher: Cipher, matches: &ArgMatches) -> Result<()>
     // read password from stdin
     print!("Enter old password: ");
     io::stdout().flush().unwrap();
-    let password = SecretString::from_str(&read_password().unwrap()).unwrap();
+    let password = SecretString::new(Box::new(read_password()?));
     print!("Enter new password: ");
     io::stdout().flush().unwrap();
-    let new_password = SecretString::from_str(&read_password().unwrap()).unwrap();
+    let new_password = SecretString::new(Box::new(read_password()?));
     print!("Confirm new password: ");
     io::stdout().flush().unwrap();
-    let new_password2 = SecretString::from_str(&read_password().unwrap()).unwrap();
+    let new_password2 = SecretString::new(Box::new(read_password()?));
     if new_password.expose_secret() != new_password2.expose_secret() {
         println!("Passwords do not match");
         return Err(ExitStatusError::Failure(1).into());
@@ -279,7 +279,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         // read password from stdin
         print!("Enter password: ");
         io::stdout().flush().unwrap();
-        password = SecretString::from_str(read_password().unwrap().as_str()).unwrap();
+        password = SecretString::new(Box::new(read_password()?));
 
         if !PathBuf::new().join(data_dir.clone()).is_dir()
             || fs::read_dir(&data_dir)
@@ -293,8 +293,7 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             // first run, ask to confirm password
             print!("Confirm password: ");
             io::stdout().flush().unwrap();
-            let confirm_password =
-                SecretString::from_str(read_password().unwrap().as_str()).unwrap();
+            let confirm_password = SecretString::new(Box::new(read_password()?));
             if password.expose_secret() != confirm_password.expose_secret() {
                 error!("Passwords do not match");
                 return Err(ExitStatusError::Failure(1).into());

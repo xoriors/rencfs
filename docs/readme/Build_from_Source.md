@@ -12,6 +12,8 @@ You can compile, run, and try it quickly in the browser. After you start it from
 ```bash
 apt-get update && apt-get install fuse3
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+git clone git@github.com:xoriors/rencfs.git
+cd rencfs
 mkdir final && mkdir data
 cargo run --release -- mount -m final -d data
 ```
@@ -149,7 +151,7 @@ sudo dnf localinstall rencfs-xxx.x86_64.rpm
 
 ## Developing inside a Container
 
-See here how to configure for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html) and for [VsCode](https://code.visualstudio.com/docs/devcontainers/containers).
+See here how to configure for [RustRover](https://www.jetbrains.com/help/rust/connect-to-devcontainer.html) and for [VSCode](https://code.visualstudio.com/docs/devcontainers/containers).
 
 You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build
 and run the app.

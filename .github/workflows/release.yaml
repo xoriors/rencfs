@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true  
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -11,16 +11,16 @@ env:
 
 jobs:
   version:
-    uses: radumarias/rencfs/.github/workflows/version_reusable.yaml@main
+    uses: xoriors/rencfs/.github/workflows/version_reusable.yaml@main
   
   build_and_test:
     name: build and test
-    uses: radumarias/rencfs/.github/workflows/build_and_tests_reusable.yaml@main
+    uses: xoriors/rencfs/.github/workflows/build_and_tests_reusable.yaml@main
     secrets: inherit
 
   package:
-    needs: [version, build_and_test]
-    uses: radumarias/rencfs/.github/workflows/package_reusable.yaml@main
+    needs: [ version, build_and_test ]
+    uses: xoriors/rencfs/.github/workflows/package_reusable.yaml@main
     with:
       upload_artifacts: true
       version: ${{ needs.version.outputs.version }}
@@ -30,10 +30,10 @@ jobs:
       packages: write
       contents: read
       attestations: write
-    
+
   create_release:
     name: create release
-    needs: [version, package]
+    needs: [ version, package ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -55,7 +55,7 @@ jobs:
 
   aur_publish:
     name: publish to AUR
-    needs: [create_release]
+    needs: [ create_release ]
     runs-on: ubuntu-latest
     steps:
       - name: download artifact
@@ -76,10 +76,10 @@ jobs:
 
   cargo_publish:
     name: publish to crates.io
-    needs: [create_release]
+    needs: [ create_release ]
     runs-on: ubuntu-latest
     steps:
-        - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-        - name: publish
-          run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: publish
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

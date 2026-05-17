@@ -1,10 +1,14 @@
 # Sequence flow diagrams
 
 The following diagrams depict the main flows supported by the current implementation. They depict the high-level
-interactions between the various components of the filesystem which means some details have been omitted.
+interactions between the various filesystem components, meaning some details have been omitted.
 
 > [!WARNING]
-> The single source of truth for in-depth interactions is the source code itself.
+> The source code is the single source of truth for in-depth interactions.
+
+- [Overview](../uml/overview.md)
+
+---
 
 - [Mount](../uml/mount.md)
 - [Change Password](../uml/change_pass.md)

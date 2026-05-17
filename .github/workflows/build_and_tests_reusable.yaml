@@ -2,6 +2,10 @@ name: '_build-and-tests'
 on:
   workflow_call:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0 # TODO: remove this when we cache the builds
@@ -18,11 +22,17 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: setup Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          components: rustfmt, clippy
-          profile: minimal
+        run: |
+          rustup toolchain install nightly --component rust-docs
+          rustup default nightly
+          rustup component add rustc          # Rust compiler
+          rustup component add cargo          # Rust package manager
+          rustup component add clippy         # Linting tool
+          rustup component add rustfmt        # Code formatter
+          rustup component add rust-docs      # Documentation
+          rustup component add rust-analysis  # Rust analysis for tools
+          rustup update
+          rustup show
 
       - name: setup Rust
         run: |
@@ -56,8 +66,8 @@ jobs:
         run: cargo test --release --all --all-features -- --skip keyring
 
       - name: bench
-        if: matrix.os != 'windows-latest'
-        run: cargo bench --workspace --all-targets --all-features -- --skip keyring
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo bench --workspace --all-targets --all-features
 
       - name: doc
         run: cargo doc --workspace --all-features --no-deps
@@ -102,10 +112,10 @@ jobs:
           cd java-bridge
           cargo test --release --all --all-features
 
-      - name: java-bridge bench
-        if: matrix.os != 'windows-latest'
+      - name: bench
+        if: matrix.os == 'ubuntu-latest'
         run: |
-          cd java-bridge
+          cd java-bridge        
           cargo bench --workspace --all-targets --all-features
 
       - name: java-bridge doc

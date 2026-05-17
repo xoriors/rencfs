@@ -18,7 +18,10 @@ Steps to reproduce the behavior:
 4. See error
 
 **Actual behavior**
-A clear and concise description of what you exaclty is happening.
+A clear and concise description of what your experience is happening.
+
+**Reproduction rate**
+How often does it reproduce? For example, [always (5 times out of 5), often (3-5/5), sometimes (1-2/5)].
 
 **Expected behavior**
 A clear and concise description of what you expected to happen.
@@ -27,7 +30,7 @@ A clear and concise description of what you expected to happen.
 If applicable, add screenshots or screen recordings to help explain your problem.
 
 **Logs**
-Collectt last 100 lines from terminal and attach those to the issue.
+Collect the last 100 lines from the terminal and attach those to the issue.
 
 **Desktop (please complete the following information):**
  - OS: [e.g. iOS]

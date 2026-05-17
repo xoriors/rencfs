@@ -243,11 +243,7 @@ pub extern "system" fn Java_RustLibrary_umount(
             .unwrap()
             .remove(&handle)
             .unwrap();
-        match handle
-            .umount()
-            .await
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
-        {
+        match handle.umount().await.map_err(io::Error::other) {
             Ok(()) => Ok(()),
             Err(err) => {
                 error!("Cannot umount, force: {}", err);
