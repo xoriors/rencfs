@@ -179,6 +179,7 @@ impl<R: Read + Seek> RingCryptoRead<R> {
 impl<R: Read + Seek> Seek for RingCryptoRead<R> {
     #[allow(clippy::cast_possible_wrap)]
     #[allow(clippy::cast_sign_loss)]
+    #[allow(clippy::manual_is_multiple_of)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let plaintext_len = self.get_plaintext_len()?;
         let new_pos = match pos {
