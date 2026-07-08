@@ -122,3 +122,12 @@ jobs:
         run: |
           cd java-bridge
           cargo doc --workspace --all-features --no-deps
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          log-level: warn
+          command: check
+          arguments: --all-features --config ./deny.toml
+          manifest-path: ./Cargo.toml
+          command-arguments: ""
