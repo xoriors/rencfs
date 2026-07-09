@@ -91,6 +91,9 @@ pub struct FileAttr {
     pub blksize: u32,
     /// Flags (macOS only, see chflags(2))
     pub flags: u32,
+
+    #[serde(default)]
+    pub is_compressed: bool,
 }
 
 /// File types.
@@ -237,6 +240,7 @@ impl From<CreateFileAttr> for FileAttr {
             rdev: value.rdev,
             blksize: 0,
             flags: value.flags,
+            is_compressed: false,
         }
     }
 }
@@ -858,6 +862,7 @@ impl EncryptedFs {
             File::open(hash_path)?,
             self.cipher,
             &*self.key.get().await?,
+            false,
         ))?;
         drop(guard);
         self.get_inode_from_cache_or_storage(ino).await.map(Some)
@@ -1187,6 +1192,7 @@ impl EncryptedFs {
             file,
             self.cipher,
             &*self.key.get().await?,
+            false,
         ));
         drop(guard);
         if let Err(e) = res {
@@ -1255,6 +1261,7 @@ impl EncryptedFs {
             file,
             self.cipher,
             &*self.key.get().await?,
+            false,
         ))?)
     }
 
@@ -1891,9 +1898,11 @@ impl EncryptedFs {
             let mut file = fs_util::open_atomic_write(&file_path)?;
             {
                 // have a new scope, so we drop the reader before moving new content files
-                let mut reader = self.create_read(File::open(file_path.as_path())?).await?;
+                let mut reader = self
+                    .create_read(File::open(file_path.as_path())?, attr.is_compressed)
+                    .await?;
 
-                let mut writer = self.create_write(file).await?;
+                let mut writer = self.create_write(file, attr.is_compressed).await?;
 
                 let len = if size > attr.size {
                     // increase size, copy existing data until existing size
@@ -1972,17 +1981,18 @@ impl EncryptedFs {
                 self.reset_handles(ino, Some(handle), true).await?;
                 let write_handles_guard = self.write_handles.write().await;
                 let mut ctx = write_handles_guard.get(&handle).unwrap().lock().await;
+                let full_attr = self.get_inode_from_storage(ino).await?;
                 let writer = self
                     .create_write_seek(
                         OpenOptions::new()
                             .read(true)
                             .write(true)
                             .open(self.contents_path(ino))?,
+                        full_attr.is_compressed, // PASEAZĂ FLAG-UL AICI
                     )
                     .await?;
                 ctx.writer = Some(Box::new(writer));
-                let attr = self.get_inode_from_storage(ino).await?;
-                ctx.attr = attr.into();
+                ctx.attr = full_attr.into();
             }
         }
         Ok(())
@@ -2085,11 +2095,13 @@ impl EncryptedFs {
     pub async fn create_write<W: CryptoInnerWriter + Seek + Send + Sync + 'static>(
         &self,
         file: W,
+        is_compressed: bool,
     ) -> FsResult<impl CryptoWrite<W>> {
         Ok(crypto::create_write(
             file,
             self.cipher,
             &*self.key.get().await?,
+            is_compressed,
         ))
     }
 
@@ -2097,11 +2109,13 @@ impl EncryptedFs {
     pub async fn create_write_seek<W: Write + Seek + Read + Send + Sync + 'static>(
         &self,
         file: W,
+        is_compressed: bool,
     ) -> FsResult<impl CryptoWriteSeek<W>> {
         Ok(crypto::create_write_seek(
             file,
             self.cipher,
             &*self.key.get().await?,
+            is_compressed,
         ))
     }
 
@@ -2109,11 +2123,13 @@ impl EncryptedFs {
     pub async fn create_read<R: Read + Send + Sync>(
         &self,
         reader: R,
+        is_compressed: bool,
     ) -> FsResult<impl CryptoRead<R>> {
         Ok(crypto::create_read(
             reader,
             self.cipher,
             &*self.key.get().await?,
+            is_compressed,
         ))
     }
 
@@ -2121,11 +2137,13 @@ impl EncryptedFs {
     pub async fn create_read_seek<R: Read + Seek + Send + Sync>(
         &self,
         reader: R,
+        is_compressed: bool,
     ) -> FsResult<impl CryptoReadSeek<R>> {
         Ok(crypto::create_read_seek(
             reader,
             self.cipher,
             &*self.key.get().await?,
+            is_compressed,
         ))
     }
 
@@ -2143,7 +2161,7 @@ impl EncryptedFs {
         )?)?;
         let initial_key = crypto::derive_key(&old_password, cipher, &salt)?;
         let enc_file = data_dir.join(SECURITY_DIR).join(KEY_ENC_FILENAME);
-        let reader = crypto::create_read(File::open(enc_file)?, cipher, &initial_key);
+        let reader = crypto::create_read(File::open(enc_file)?, cipher, &initial_key, false);
         let key: Vec<u8> =
             bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
         let key = SecretBox::new(Box::new(key));
@@ -2190,7 +2208,9 @@ impl EncryptedFs {
                 self.set_attr(ino, set_attr).await?;
                 let attr = self.get_inode_from_storage(ino).await?;
                 let mut ctx = guard.get(handle).unwrap().lock().await;
-                let reader = self.create_read_seek(File::open(&path)?).await?;
+                let reader = self
+                    .create_read_seek(File::open(&path)?, attr.is_compressed)
+                    .await?;
                 ctx.reader = Some(Box::new(reader));
                 ctx.attr = attr.into();
             }
@@ -2220,13 +2240,18 @@ impl EncryptedFs {
                 if let Some(set_attr) = set_attr {
                     self.set_attr(ino, set_attr).await?;
                 }
+                let full_attr = self.get_inode_from_storage(ino).await?;
+
                 let writer = self
-                    .create_write_seek(OpenOptions::new().read(true).write(true).open(&path)?)
+                    .create_write_seek(
+                        OpenOptions::new().read(true).write(true).open(&path)?,
+                        full_attr.is_compressed,
+                    )
                     .await?;
+
                 let mut ctx = lock.lock().await;
                 ctx.writer = Some(Box::new(writer));
-                let attr = self.get_inode_from_storage(ino).await?;
-                ctx.attr = attr.into();
+                ctx.attr = full_attr.into();
             }
         }
 
@@ -2243,8 +2268,11 @@ impl EncryptedFs {
         let attr = self.get_inode_from_storage(ino).await?;
         match op {
             ReadHandleContextOperation::Create { ino } => {
+                let is_compressed = attr.is_compressed;
                 let attr: TimesFileAttr = attr.into();
-                let reader = self.create_read_seek(File::open(&path)?).await?;
+                let reader = self
+                    .create_read_seek(File::open(&path)?, is_compressed)
+                    .await?;
                 let ctx = ReadHandleContext {
                     ino,
                     attr,
@@ -2274,9 +2302,14 @@ impl EncryptedFs {
         let path = self.contents_path(ino);
         match op {
             WriteHandleContextOperation::Create { ino } => {
-                let attr = self.get_attr(ino).await?.into();
+                let full_attr = self.get_attr(ino).await?;
+                let is_compressed_flag = full_attr.is_compressed;
+                let attr: TimesAndSizeFileAttr = full_attr.into();
                 let writer = self
-                    .create_write_seek(OpenOptions::new().read(true).write(true).open(&path)?)
+                    .create_write_seek(
+                        OpenOptions::new().read(true).write(true).open(&path)?,
+                        is_compressed_flag,
+                    )
                     .await?;
                 let ctx = WriteHandleContext {
                     ino,
@@ -2435,6 +2468,7 @@ impl EncryptedFs {
                 File::open(path.clone())?,
                 self.cipher,
                 &*self.key.get().await?,
+                false,
             ))?;
         fs::remove_file(path)?;
         drop(guard);
@@ -2521,7 +2555,7 @@ fn read_or_create_key(
     let derived_key = crypto::derive_key(password, cipher, &salt)?;
     if key_path.exists() {
         // read key
-        let reader = crypto::create_read(File::open(key_path)?, cipher, &derived_key);
+        let reader = crypto::create_read(File::open(key_path)?, cipher, &derived_key, false);
         let key: Vec<u8> =
             bincode::deserialize_from(reader).map_err(|_| FsError::InvalidPassword)?;
         Ok(SecretBox::new(Box::new(key)))
@@ -2540,6 +2574,7 @@ fn read_or_create_key(
                 .open(key_path)?,
             cipher,
             &derived_key,
+            false,
         );
         bincode::serialize_into(&mut writer, &key)?;
         let file = writer.finish()?;

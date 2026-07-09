@@ -78,6 +78,7 @@ pub struct RingCryptoWrite<W: CryptoInnerWriter + Send + Sync> {
     opening_key: Option<OpeningKey<ExistingNonceSequence>>,
     last_nonce: Option<Arc<Mutex<Option<Vec<u8>>>>>,
     decrypt_buf: Option<BufMut>,
+    pub is_compressed: bool,
 }
 
 impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
@@ -88,6 +89,7 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
         seek: bool,
         algorithm: &'static Algorithm,
         key: &SecretVec<u8>,
+        is_compressed: bool,
     ) -> Self {
         let unbound_key = UnboundKey::new(algorithm, &key.expose_secret()).expect("unbound key");
         let nonce_sequence = Arc::new(Mutex::new(RandomNonceSequence::default()));
@@ -100,7 +102,13 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
             let unbound_key = UnboundKey::new(algorithm, &key.expose_secret()).unwrap();
             let nonce_sequence2 = ExistingNonceSequence::new(last_nonce.clone());
             let opening_key = OpeningKey::new(unbound_key, nonce_sequence2);
-            let ciphertext_block_size = NONCE_LEN + BLOCK_SIZE + algorithm.tag_len();
+
+            let ciphertext_block_size = if is_compressed {
+                NONCE_LEN + 4 + BLOCK_SIZE + algorithm.tag_len()
+            } else {
+                NONCE_LEN + BLOCK_SIZE + algorithm.tag_len()
+            };
+
             let decrypt_buf = BufMut::new(vec![0; ciphertext_block_size]);
 
             (Some(last_nonce), Some(opening_key), Some(decrypt_buf))
@@ -113,22 +121,40 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
             sealing_key,
             buf,
             nonce_sequence,
-            ciphertext_block_size: NONCE_LEN + BLOCK_SIZE + algorithm.tag_len(),
+            ciphertext_block_size: if is_compressed {
+                NONCE_LEN + 4 + BLOCK_SIZE + algorithm.tag_len()
+            } else {
+                NONCE_LEN + BLOCK_SIZE + algorithm.tag_len()
+            },
             plaintext_block_size: BLOCK_SIZE,
             block_index: 0,
             opening_key,
             last_nonce,
             decrypt_buf,
+            is_compressed,
         }
     }
 
     fn encrypt_and_write(&mut self) -> io::Result<()> {
-        let data = self.buf.as_mut();
-        let aad = Aad::from(self.block_index.to_le_bytes());
+        let original_data = self.buf.as_mut();
+
+        let mut aad_bytes = self.block_index.to_le_bytes().to_vec();
+        let mut data_to_encrypt;
+        let mut comp_len = 0u32;
+
+        if self.is_compressed {
+            data_to_encrypt = lz4_flex::compress_prepend_size(original_data);
+            comp_len = data_to_encrypt.len() as u32;
+            aad_bytes.extend_from_slice(&comp_len.to_le_bytes());
+        } else {
+            data_to_encrypt = original_data.to_vec();
+        }
+
+        let aad = Aad::from(aad_bytes);
 
         let tag = self
             .sealing_key
-            .seal_in_place_separate_tag(aad, data)
+            .seal_in_place_separate_tag(aad, &mut data_to_encrypt)
             .map_err(|err| io::Error::other(format!("error sealing in place: {err}")))?; // Ensure tag is properly extracted
 
         let nonce_sequence = self.nonce_sequence.lock().unwrap();
@@ -137,10 +163,26 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
             .writer
             .as_mut()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "no writer"))?;
+
         writer.write_all(nonce)?;
-        writer.write_all(data)?;
+
+        if self.is_compressed {
+            writer.write_all(&comp_len.to_le_bytes())?;
+        }
+
+        writer.write_all(&data_to_encrypt)?;
+
         self.buf.clear();
         writer.write_all(tag.as_ref())?;
+
+        if self.is_compressed {
+            let written_so_far = NONCE_LEN + 4 + comp_len as usize + tag.as_ref().len();
+            let padding = self.ciphertext_block_size.saturating_sub(written_so_far);
+            if padding > 0 {
+                writer.write_all(&vec![0; padding])?;
+            }
+        }
+
         writer.flush()?;
         self.block_index += 1;
         Ok(())
@@ -166,7 +208,8 @@ impl<W: CryptoInnerWriter + Send + Sync> RingCryptoWrite<W> {
             self.decrypt_buf.as_mut().unwrap(),
             writer,
             self.last_nonce.as_ref().unwrap(),
-            self.opening_key.as_mut().unwrap()
+            self.opening_key.as_mut().unwrap(),
+            self.is_compressed
         );
         if old_block_index == self.block_index {
             // no decryption happened

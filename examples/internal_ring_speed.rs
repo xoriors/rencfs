@@ -80,14 +80,12 @@ fn main() -> io::Result<()> {
         let len = {
             let mut pos = 0;
             loop {
-                match input.read(&mut buffer[pos..]) {
-                    Ok(read) => {
-                        pos += read;
-                        if read == 0 {
-                            break;
-                        }
+                {
+                    let read = input.read(&mut buffer[pos..])?;
+                    pos += read;
+                    if read == 0 {
+                        break;
                     }
-                    Err(err) => return Err(err),
                 }
             }
             pos
@@ -139,14 +137,12 @@ fn main() -> io::Result<()> {
         let len = {
             let mut pos = 0;
             loop {
-                match input.read(&mut buffer[pos..]) {
-                    Ok(read) => {
-                        pos += read;
-                        if read == 0 {
-                            break;
-                        }
+                {
+                    let read = input.read(&mut buffer[pos..])?;
+                    pos += read;
+                    if read == 0 {
+                        break;
                     }
-                    Err(err) => return Err(err),
                 }
             }
             pos

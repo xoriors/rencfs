@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use shush_rs::{ExposeSecret, SecretString, SecretVec};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
-use tracing::{debug, error, instrument};
+use tracing::{debug, instrument};
 use write::CryptoInnerWriter;
 
 use crate::crypto::read::{CryptoRead, CryptoReadSeek, RingCryptoRead};
@@ -114,8 +114,9 @@ pub fn create_write<W: CryptoInnerWriter + Send + Sync + 'static>(
     writer: W,
     cipher: Cipher,
     key: &SecretVec<u8>,
+    is_compressed: bool,
 ) -> impl CryptoWrite<W> {
-    create_ring_write(writer, cipher, key)
+    create_ring_write(writer, cipher, key, is_compressed)
 }
 
 /// Creates an encrypted writer with seek
@@ -123,56 +124,61 @@ pub fn create_write_seek<W: CryptoInnerWriter + Seek + Read + Send + Sync + 'sta
     writer: W,
     cipher: Cipher,
     key: &SecretVec<u8>,
+    is_compressed: bool,
 ) -> impl CryptoWriteSeek<W> {
-    create_ring_write_seek(writer, cipher, key)
+    create_ring_write_seek(writer, cipher, key, is_compressed)
 }
 
 fn create_ring_write<W: CryptoInnerWriter + Send + Sync>(
     writer: W,
     cipher: Cipher,
     key: &SecretVec<u8>,
+    is_compressed: bool,
 ) -> RingCryptoWrite<W> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoWrite::new(writer, false, algorithm, key)
+    RingCryptoWrite::new(writer, false, algorithm, key, is_compressed)
 }
 
 fn create_ring_write_seek<W: CryptoInnerWriter + Seek + Read + Send + Sync>(
     writer: W,
     cipher: Cipher,
     key: &SecretVec<u8>,
+    is_compressed: bool,
 ) -> RingCryptoWrite<W> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoWrite::new(writer, true, algorithm, key)
+    RingCryptoWrite::new(writer, true, algorithm, key, is_compressed)
 }
 
 fn create_ring_read<R: Read + Send + Sync>(
     reader: R,
     cipher: Cipher,
     key: &SecretVec<u8>,
+    is_compressed: bool,
 ) -> RingCryptoRead<R> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoRead::new(reader, algorithm, key)
+    RingCryptoRead::new(reader, algorithm, key, is_compressed)
 }
 
 fn create_ring_read_seek<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: Cipher,
     key: &SecretVec<u8>,
+    is_compressed: bool,
 ) -> RingCryptoRead<R> {
     let algorithm = match cipher {
         Cipher::ChaCha20Poly1305 => &CHACHA20_POLY1305,
         Cipher::Aes256Gcm => &AES_256_GCM,
     };
-    RingCryptoRead::new_seek(reader, algorithm, key)
+    RingCryptoRead::new_seek(reader, algorithm, key, is_compressed)
 }
 
 /// Creates an encrypted reader
@@ -180,8 +186,9 @@ pub fn create_read<R: Read + Send + Sync>(
     reader: R,
     cipher: Cipher,
     key: &SecretVec<u8>,
+    is_compressed: bool,
 ) -> impl CryptoRead<R> {
-    create_ring_read(reader, cipher, key)
+    create_ring_read(reader, cipher, key, is_compressed)
 }
 
 /// Creates an encrypted reader with seek
@@ -189,14 +196,15 @@ pub fn create_read_seek<R: Read + Seek + Send + Sync>(
     reader: R,
     cipher: Cipher,
     key: &SecretVec<u8>,
+    is_compressed: bool,
 ) -> impl CryptoReadSeek<R> {
-    create_ring_read_seek(reader, cipher, key)
+    create_ring_read_seek(reader, cipher, key, is_compressed)
 }
 
 #[allow(clippy::missing_errors_doc)]
 pub fn encrypt(s: &SecretString, cipher: Cipher, key: &SecretVec<u8>) -> Result<String> {
     let mut cursor = io::Cursor::new(vec![]);
-    let mut writer = create_write(cursor, cipher, key);
+    let mut writer = create_write(cursor, cipher, key, false);
     writer.write_all(s.expose_secret().as_bytes())?;
     cursor = writer.finish()?;
     let v = cursor.into_inner();
@@ -209,7 +217,7 @@ pub fn decrypt(s: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretStr
     let vec = BASE64.decode(s)?;
     let cursor = io::Cursor::new(vec);
 
-    let mut reader = create_read(cursor, cipher, key);
+    let mut reader = create_read(cursor, cipher, key, false);
     let mut decrypted = String::new();
     reader.read_to_string(&mut decrypted)?;
     Ok(SecretString::new(Box::new(decrypted)))
@@ -323,7 +331,12 @@ pub fn copy_from_file(
         return Ok(0);
     }
     // create a new reader by reading from the beginning of the file
-    let mut reader = create_read(OpenOptions::new().read(true).open(file)?, cipher, key);
+    let mut reader = create_read(
+        OpenOptions::new().read(true).open(file)?,
+        cipher,
+        key,
+        false,
+    );
     // move read position to the write position
     let pos2 = stream_util::seek_forward(&mut reader, pos, stop_on_eof)?;
     if pos2 < pos {
@@ -357,7 +370,7 @@ where
     W: CryptoInnerWriter + Send + Sync + 'static,
     T: serde::Serialize + ?Sized,
 {
-    let mut writer = create_write(writer, cipher, key);
+    let mut writer = create_write(writer, cipher, key, false);
     bincode::serialize_into(&mut writer, value)?;
     let writer = writer.finish()?;
     Ok(writer)
@@ -415,6 +428,7 @@ mod tests {
             File::create(encrypted_file_path.clone()).unwrap(),
             cipher,
             key,
+            false,
         );
         io::copy(&mut file, &mut writer).unwrap();
         writer.finish().unwrap();

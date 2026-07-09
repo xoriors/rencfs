@@ -86,9 +86,9 @@ fn stream_speed(
     let path_out2 = Path::new(&path_out).to_path_buf().with_extension("dec");
     let _ = fs::remove_file(path_out2.clone());
     let mut file_out2 = File::create(path_out2.clone())?;
-    let mut writer = crypto::create_write(file_out, cipher, key);
+    let mut writer = crypto::create_write(file_out, cipher, key, true);
     let size = file_in.metadata()?.len();
-    let f = || crypto::create_read(File::open(path_out).unwrap(), cipher, key);
+    let f = || crypto::create_read(File::open(path_out).unwrap(), cipher, key, false);
     test_speed(&mut file_in, &mut writer, &mut file_out2, size, f)?;
     file_in.seek(io::SeekFrom::Start(0))?;
     check_hash(&mut file_in, &mut f())?;
@@ -101,12 +101,12 @@ fn file_speed(path_in: &str, path_out: &str, cipher: Cipher, key: &SecretVec<u8>
     println!("file speed");
     let _ = fs::remove_file(path_out);
     let mut file_in = File::open(path_in)?;
-    let mut writer = crypto::create_write(File::create(Path::new(path_out))?, cipher, key);
+    let mut writer = crypto::create_write(File::create(Path::new(path_out))?, cipher, key, true);
     let path_out2 = Path::new(&path_out).to_path_buf().with_extension("dec");
     let _ = fs::remove_file(path_out2.clone());
     let mut file_out2 = File::create(path_out2.clone())?;
     let size = file_in.metadata()?.len();
-    let f = || crypto::create_read(File::open(path_out).unwrap(), cipher, key);
+    let f = || crypto::create_read(File::open(path_out).unwrap(), cipher, key, false);
     test_speed(&mut file_in, &mut writer, &mut file_out2, size, f)?;
     file_in.seek(io::SeekFrom::Start(0)).unwrap();
     check_hash(&mut file_in, &mut f())?;

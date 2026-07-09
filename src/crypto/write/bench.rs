@@ -25,7 +25,8 @@ fn bench_writer_1mb_cha_cha20poly1305_file(b: &mut Bencher) {
     b.iter(|| {
         black_box({
             let mut reader = rnd_reader.clone();
-            let mut writer = crypto::create_write(tempfile::tempfile().unwrap(), cipher, &key);
+            let mut writer =
+                crypto::create_write(tempfile::tempfile().unwrap(), cipher, &key, true);
             io::copy(&mut reader, &mut writer).unwrap();
             writer.finish().unwrap()
         })
@@ -56,7 +57,8 @@ fn bench_writer_1mb_aes256gcm_file(b: &mut Bencher) {
     b.iter(|| {
         black_box({
             let mut reader = rnd_reader.clone();
-            let mut writer = crypto::create_write(tempfile::tempfile().unwrap(), cipher, &key);
+            let mut writer =
+                crypto::create_write(tempfile::tempfile().unwrap(), cipher, &key, true);
             io::copy(&mut reader, &mut writer).unwrap();
             writer.finish().unwrap()
         })
@@ -88,7 +90,7 @@ fn bench_writer_1mb_cha_cha20poly1305_mem(b: &mut Bencher) {
         black_box({
             let mut reader = rnd_reader.clone();
             let cursor_write = io::Cursor::new(vec![]);
-            let mut writer = crypto::create_write(cursor_write, cipher, &key);
+            let mut writer = crypto::create_write(cursor_write, cipher, &key, true);
             io::copy(&mut reader, &mut writer).unwrap();
             writer.finish().unwrap()
         })
@@ -120,7 +122,7 @@ fn bench_writer_1mb_aes256gcm_mem(b: &mut Bencher) {
         black_box({
             let mut reader = rnd_reader.clone();
             let cursor_write = io::Cursor::new(vec![]);
-            let mut writer = crypto::create_write(cursor_write, cipher, &key);
+            let mut writer = crypto::create_write(cursor_write, cipher, &key, true);
             io::copy(&mut reader, &mut writer).unwrap();
             writer.finish().unwrap()
         })
