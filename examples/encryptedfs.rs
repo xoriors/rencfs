@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
         data_dir.clone(),
         Box::new(PasswordProviderImpl {}),
         cipher,
+        None,
         false,
     )
     .await?;
