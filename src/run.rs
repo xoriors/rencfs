@@ -16,12 +16,14 @@ use tokio::{fs, task};
 use tracing::{error, info, warn, Level};
 
 use crate::keyring;
+
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
 use rencfs::{log, mount};
 
 static mut PASS: Option<SecretString> = None;
+
 
 #[derive(Debug, Error)]
 enum ExitStatusError {
@@ -52,6 +54,7 @@ pub(super) async fn run() -> Result<()> {
         })
     })
     .await;
+
     match res {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(err))) => {
@@ -151,6 +154,14 @@ fn get_cli_args() -> ArgMatches {
                         .requires("mount-point")
                         .requires("data-dir")
                         .help("If we should try to umount the mountpoint before starting the FUSE server. This can be useful when the previous run crashed or was forced kll and the mountpoint is still mounted."),
+                )
+                .arg(
+                    Arg::new("init-2fa")
+                        .long("init-2fa")
+                        .action(ArgAction::SetTrue)
+                        .requires("mount-point")
+                        .requires("data-dir")
+                        .help("Initialize Google 2FA for this filesystem. Required only for the first run to bind the user."),
                 )
                 .arg(
                     Arg::new("allow-root")
@@ -267,20 +278,21 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         .to_string();
 
     let data_dir: String = matches.get_one::<String>("data-dir").unwrap().to_string();
-
-    // when running from IDE we can't read from stdin with rpassword, get it from env var
+    let data_path = Path::new(&data_dir);
+    
     let mut password = SecretString::from_str(
         env::var("RENCFS_PASSWORD")
             .unwrap_or_else(|_| String::new())
             .as_str(),
     )
     .unwrap();
+    
     if password.expose_secret().is_empty() {
-        // read password from stdin
         print!("Enter password: ");
         io::stdout().flush().unwrap();
         password = SecretString::new(Box::new(read_password()?));
 
+        // confirm password logic for new directories
         if !PathBuf::new().join(data_dir.clone()).is_dir()
             || fs::read_dir(&data_dir)
                 .await
@@ -290,7 +302,6 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
                 .unwrap()
                 .is_none()
         {
-            // first run, ask to confirm password
             print!("Confirm password: ");
             io::stdout().flush().unwrap();
             let confirm_password = SecretString::new(Box::new(read_password()?));
@@ -300,16 +311,52 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
             }
         }
     }
+
     // save password in keyring
     info!("Save password in keyring");
     let res = keyring::save(&password, "password").map_err(|err| {
         warn!(err = %err);
     });
     if res.is_err() {
-        // maybe we don't have a security manager, keep it in mem
         unsafe {
             warn!("Cannot save password in keyring, keep it in memory");
             PASS = Some(password.clone());
+        }
+    }
+
+    // check 2FA Requirement
+    let is_bound = EncryptedFs::is_identity_bound(data_path);
+    let init_2fa = matches.get_flag("init-2fa");
+    
+    if is_bound || init_2fa {
+        info!("2FA is required. Checking identity...");
+
+        let raw_client_id = env::var("GOOGLE_CLIENT_ID").unwrap_or_default();
+        let raw_client_secret = env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default();
+        let google_client_id = raw_client_id.trim().trim_matches('"').trim_matches('\'').to_string();
+        let google_client_secret = raw_client_secret.trim().trim_matches('"').trim_matches('\'').to_string();
+
+        if google_client_id.is_empty() || google_client_secret.is_empty() {
+             return Err(anyhow::anyhow!("CRITICAL: GOOGLE_CLIENT_ID/SECRET missing."));
+        }
+
+        // determine expected User
+        let expected_sub = if is_bound {
+             EncryptedFs::get_bound_identity(data_path, &password, cipher)?
+        } else {
+             None
+        };
+
+        // authenticate
+        let (_refresh_token, subject) = crate::auth::authenticate_google(
+            google_client_id, 
+            google_client_secret,
+            expected_sub
+        ).await?;
+
+        // bind if this was a new initialization
+        if !is_bound {
+            EncryptedFs::verify_or_bind_identity(data_path, &password, cipher, &subject).await?;
         }
     }
 

@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 mod keyring;
+mod auth;
 
 #[cfg(target_os = "linux")]
 mod run;
