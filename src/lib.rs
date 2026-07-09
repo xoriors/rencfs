@@ -290,6 +290,7 @@ use std::sync::LazyLock;
 
 pub mod arc_hashmap;
 pub mod async_util;
+pub mod c_api;
 pub mod crypto;
 pub mod encryptedfs;
 pub mod expire_value;

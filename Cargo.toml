@@ -2,6 +2,7 @@ cargo-features = ["profile-rustflags"]
 
 [package]
 name = "rencfs"
+crate-type = ["cdylib", "staticlib", "rlib"]
 description = "WARNING! UNDER ACTIVE DEVELOPMENT. An encrypted file system that is mounted with FUSE on Linux. It can be used to create encrypted directories."
 version = "0.14.11"
 edition = "2021"
@@ -14,6 +15,11 @@ keywords = ["privacy", "filesystem", "encryption", "security", "cryptography"]
 categories = ["cryptography", "filesystem"]
 documentation = "https://docs.rs/rencfs"
 exclude = [".github/"]
+
+[lib]
+name = "rencfs"
+crate-type = ["cdylib", "staticlib", "rlib"]
+path = "src/lib.rs"
 
 [dependencies]
 clap = { version = "4.5.4", features = ["derive", "cargo"] }
