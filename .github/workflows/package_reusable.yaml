@@ -37,14 +37,14 @@ jobs:
 
       - name: upload PKGBUILD artifact
         if: inputs.upload_artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: PKGBUILD
           path: ./target/cargo-aur/PKGBUILD
 
       - name: upload ${{ github.event.repository.name }}-${{ inputs.version }}-x86_64.tar.gz artifact
         if: inputs.upload_artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ github.event.repository.name }}-${{ inputs.version }}-x86_64.tar.gz
           path: ./target/cargo-aur/${{ github.event.repository.name }}-${{ inputs.version }}-x86_64.tar.gz
