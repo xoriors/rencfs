@@ -7,6 +7,7 @@ export RUSTFLAGS="-Dwarnings"
 export RUSTDOCFLAGS="-Dwarnings"
 export RUST_TEST_THREADS=14
 export CARGO_BUILD_JOBS=14
+export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
 
 cargo fmt --all
 

@@ -1,0 +1,21 @@
+[package]
+name = "rencfs-python"
+version = "0.1.0"
+edition = "2021"
+authors = ["Radu Marias <hello@xorio.rs>"]
+
+[lib]
+name = "rencfs"
+crate-type = ["cdylib"]
+doc = false
+test = false
+doctest = false
+
+[dependencies]
+pyo3 = { version = "0.21.0", features = ["extension-module", "anyhow", "macros"] }
+rencfs = { path = "../" }
+tokio = { version = "1.36", features = ["full"] }
+shush-rs = "0.1.10"
+
+[package.metadata]
+PYO3_USE_ABI3_FORWARD_COMPATIBILITY = "1"

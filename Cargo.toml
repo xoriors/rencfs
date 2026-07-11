@@ -41,7 +41,7 @@ strum_macros = "0.26.2"
 rpassword = "7.3.1"
 anyhow = "1.0.82"
 argon2 = "0.5.3"
-keyring = "2.3.2"
+keyring = { version = "4.1.4", features = ["dbus-secret-service-keyring-store"] }
 retainer = "0.3.0"
 num-format = "0.4.4"
 ring = "0.17.12"
@@ -244,3 +244,13 @@ assets = [
 ]
 [package.metadata.generate-rpm.requires]
 fuse3 = "*"
+
+[workspace]
+members = [
+    ".",
+    "rencfs-python"
+]
+
+
+[dev-dependencies]
+serial_test = "3.1.1"

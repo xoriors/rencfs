@@ -71,8 +71,6 @@ macro_rules! decrypt_block {
     }};
 }
 
-pub(crate) use decrypt_block;
-
 #[allow(clippy::module_name_repetitions)]
 pub struct RingCryptoRead<R: Read> {
     input: Option<R>,

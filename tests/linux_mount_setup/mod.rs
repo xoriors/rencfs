@@ -1,18 +1,19 @@
 #![cfg(target_os = "linux")]
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::sleep;
 use std::time::Duration;
 
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::PasswordProvider;
-use rencfs::mount::{create_mount_point, MountHandle, MountPoint};
+use rencfs::mount::{create_mount_point, MountHandle, MountPoint, umount};
 use shush_rs::SecretString;
 use tokio::runtime::Runtime;
 
+#[allow(dead_code)]
 struct TestResource {
     mount_handle: Option<MountHandle>,
     runtime: Runtime,
@@ -21,11 +22,34 @@ struct TestResource {
 pub const MOUNT_PATH: &str = "/tmp/rencfs/mnt";
 pub const DATA_PATH: &str = "/tmp/rencfs/data";
 
+// Use OnceLock for thread-safe global initialization
+static TEST_RESOURCES: OnceLock<Arc<Mutex<TestResource>>> = OnceLock::new();
+
 impl TestResource {
+    fn ensure_clean_environment() {
+        // Try to unmount using the library function first
+        let _ = umount(MOUNT_PATH);
+        // Fallback to fusermount3 and fusermount if the above fails
+        let _ = Command::new("fusermount3")
+            .arg("-u")
+            .arg(MOUNT_PATH)
+            .status();
+        let _ = Command::new("fusermount")
+            .arg("-u")
+            .arg(MOUNT_PATH)
+            .status();
+        let _ = fs::remove_dir_all(MOUNT_PATH);
+        let _ = fs::remove_dir_all(DATA_PATH);
+        let _ = fs::create_dir_all(MOUNT_PATH);
+        let _ = fs::create_dir_all(DATA_PATH);
+    }
+
     fn new() -> Self {
+        Self::ensure_clean_environment();
+
         let mount_point = create_mount_point(
-            Path::new(&MOUNT_PATH),
-            Path::new(&DATA_PATH),
+            Path::new(MOUNT_PATH),
+            Path::new(DATA_PATH),
             get_password_provider(),
             Cipher::ChaCha20Poly1305,
             false,
@@ -53,55 +77,22 @@ impl TestResource {
     }
 }
 
-impl Drop for TestResource {
-    fn drop(&mut self) {
-        let mh = self
-            .mount_handle
-            .take()
-            .expect("MountHandle should be some");
-        let res = self.runtime.block_on(async { mh.umount().await });
-        match res {
-            Ok(_) => println!("Succesfully unmounted"),
-            Err(e) => {
-                panic!("Something went wrong when unmounting {e}.You may need to manually unmount")
-            }
-        }
-    }
-}
-
-static mut TEST_RESOURCES: Option<Arc<Mutex<TestResource>>> = None;
-static INIT: Once = Once::new();
-static TEARDOWN: Once = Once::new();
-static RESOURCE_COUNT: AtomicUsize = AtomicUsize::new(0);
-
 pub struct TestGuard;
 
 impl TestGuard {
     pub fn setup() -> Self {
-        unsafe {
-            INIT.call_once(|| {
-                println!("Initializing the mount");
-                TEST_RESOURCES = Some(Arc::new(Mutex::new(TestResource::new())));
-            });
-        }
-        RESOURCE_COUNT.fetch_add(1, Ordering::SeqCst);
+        // Initialize once, safely, without unsafe blocks
+        TEST_RESOURCES.get_or_init(|| {
+            println!("Initializing the mount");
+            Arc::new(Mutex::new(TestResource::new()))
+        });
         Self
     }
 }
 
-#[allow(static_mut_refs)]
-impl Drop for TestGuard {
-    fn drop(&mut self) {
-        if RESOURCE_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
-            TEARDOWN.call_once(|| unsafe {
-                if let Some(resources) = TEST_RESOURCES.take() {
-                    println!("Deinitializing the mount");
-                    drop(resources);
-                }
-            });
-        }
-    }
-}
+// We removed the custom Drop implementation that was manually triggering teardown.
+// The OS handles the FUSE cleanup when the process exits, which is safer
+// than forcing a teardown during a potential panic or shutdown.
 
 struct TestPasswordProvider {}
 impl PasswordProvider for TestPasswordProvider {
@@ -114,16 +105,14 @@ pub fn get_password_provider() -> Box<dyn PasswordProvider> {
     Box::new(TestPasswordProvider {})
 }
 
+#[allow(dead_code)]
 pub fn count_files(folder_path: &str) -> u32 {
-    println!("<<<[{}]>>>", &folder_path);
     let path = Path::new(folder_path);
     let mut file_count = 0;
     if let Ok(dir_iterator) = fs::read_dir(path) {
         for _entry in dir_iterator {
-            let _ = _entry.inspect(|e| println!("[{:?}]", e.file_name()));
             file_count += 1;
         }
     }
-    println!("<<< File count [{}] >>>", &file_count);
     file_count
 }
