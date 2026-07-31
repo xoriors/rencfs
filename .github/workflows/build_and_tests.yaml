@@ -24,8 +24,7 @@ jobs:
       group: build-${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
     name: build and test
-    uses: xoriors/rencfs/.github/workflows/build_and_tests_reusable.yaml@main
-    secrets: inherit
+    uses: ./.github/workflows/build_and_tests_reusable.yaml
 
   package:
     needs: [ version, build_and_test ]

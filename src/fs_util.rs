@@ -43,3 +43,33 @@ pub fn open_atomic_write(file: &Path) -> io::Result<AtomicWriteFile> {
     opt.preserve_mode(true).preserve_owner(true);
     opt.open(file)
 }
+
+/// Flush directory metadata when the platform exposes directories as regular
+/// file handles. Windows' standard `File::open` cannot open a directory, and
+/// file contents are already flushed by callers before this function is used.
+pub fn sync_directory(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(path)?.sync_all()
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+/// Flush an existing file using an access mode accepted by the platform.
+pub fn sync_file(path: &Path) -> io::Result<()> {
+    #[cfg(target_os = "windows")]
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+
+    #[cfg(not(target_os = "windows"))]
+    let file = std::fs::File::open(path)?;
+
+    file.sync_all()
+}

@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io;
 use std::io::{Read, Seek, Write};
 use std::num::ParseIntError;
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use shush_rs::{ExposeSecret, SecretString, SecretVec};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
-use tracing::{debug, error, instrument};
+use tracing::{debug, instrument};
 use write::CryptoInnerWriter;
 
 use crate::crypto::read::{CryptoRead, CryptoReadSeek, RingCryptoRead};
@@ -217,7 +217,9 @@ pub fn decrypt(s: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretStr
 
 #[allow(clippy::missing_errors_doc)]
 pub fn decrypt_file_name(name: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretString> {
-    let name = String::from(name).replace('|', "/");
+    // `|` is the original Unix-safe escape. `-` is emitted on Windows because
+    // it is not part of standard Base64 and is valid in Windows file names.
+    let name = String::from(name).replace(['|', '-'], "/");
     decrypt(&name, cipher, key)
 }
 
@@ -242,13 +244,20 @@ pub fn encrypt_file_name(
     let secret_string = name.expose_secret();
 
     match secret_string.as_str() {
-        "$." | "$.." => Ok(secret_string.clone()),
-        "." | ".." => Ok(format!("${secret_string}")),
+        "$." | "." => Ok(dot_entry_storage_name().to_owned()),
+        "$.." | ".." => Ok(dot_dot_entry_storage_name().to_owned()),
         _ => {
             let secret = SecretString::from_str(&secret_string)
                 .map_err(|err| Error::GenericString(err.to_string()))?;
             let mut encrypted = encrypt(&secret, cipher, key)?;
-            encrypted = encrypted.replace('/', "|");
+            #[cfg(target_os = "windows")]
+            {
+                encrypted = encrypted.replace('/', "-");
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                encrypted = encrypted.replace('/', "|");
+            }
 
             Ok(encrypted)
         }
@@ -258,13 +267,67 @@ pub fn encrypt_file_name(
 #[allow(clippy::missing_errors_doc)]
 #[must_use]
 pub fn hash_file_name(name: &SecretString) -> String {
-    if *name.expose_secret() == "$." || *name.expose_secret() == "$.." {
-        name.expose_secret().clone()
-    } else if *name.expose_secret() == "." || *name.expose_secret() == ".." {
-        format!("${}", name.expose_secret())
-    } else {
-        hex::encode(hash_secret_string(name))
+    match name.expose_secret().as_str() {
+        "$." | "." => dot_entry_storage_name().to_owned(),
+        "$.." | ".." => dot_dot_entry_storage_name().to_owned(),
+        _ => hex::encode(hash_secret_string(name)),
     }
+}
+
+/// Returns every on-disk hash name that can represent `name`, preferring the
+/// native spelling. Dot entries have a second, cross-platform spelling.
+#[must_use]
+pub(crate) fn hash_file_name_candidates(name: &SecretString) -> Vec<String> {
+    match name.expose_secret().as_str() {
+        "$." | "." => {
+            let alternate = if dot_entry_storage_name() == "$dot" {
+                "$."
+            } else {
+                "$dot"
+            };
+            vec![dot_entry_storage_name().to_owned(), alternate.to_owned()]
+        }
+        "$.." | ".." => {
+            let alternate = if dot_dot_entry_storage_name() == "$dotdot" {
+                "$.."
+            } else {
+                "$dotdot"
+            };
+            vec![
+                dot_dot_entry_storage_name().to_owned(),
+                alternate.to_owned(),
+            ]
+        }
+        _ => vec![hex::encode(hash_secret_string(name))],
+    }
+}
+
+#[must_use]
+pub(crate) const fn dot_entry_storage_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "$dot"
+    } else {
+        "$."
+    }
+}
+
+#[must_use]
+pub(crate) const fn dot_dot_entry_storage_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "$dotdot"
+    } else {
+        "$.."
+    }
+}
+
+#[must_use]
+pub(crate) fn is_dot_entry_storage_name(name: &str) -> bool {
+    matches!(name, "$." | "$dot")
+}
+
+#[must_use]
+pub(crate) fn is_dot_dot_entry_storage_name(name: &str) -> bool {
+    matches!(name, "$.." | "$dotdot")
 }
 
 #[must_use]
@@ -376,7 +439,7 @@ where
     let mut file = fs_util::open_atomic_write(file)?;
     file = serialize_encrypt_into(file, value, cipher, key)?;
     file.commit()?;
-    File::open(parent)?.sync_all()?;
+    fs_util::sync_directory(parent)?;
     Ok(())
 }
 
@@ -549,27 +612,42 @@ mod tests {
 
     #[test]
     fn test_hash_file_name_special_cases() {
-        let expected = "$.".to_owned();
-        let name = SecretString::new(Box::new(expected.clone()));
+        let name = SecretString::new(Box::new("$.".to_owned()));
         let result = hash_file_name(&name);
-        assert_eq!(result, expected);
+        assert_eq!(result, dot_entry_storage_name());
 
-        let expected = "$..".to_owned();
-        let name = SecretString::new(Box::new(expected.clone()));
+        let name = SecretString::new(Box::new("$..".to_owned()));
         let result = hash_file_name(&name);
-        assert_eq!(result, expected);
+        assert_eq!(result, dot_dot_entry_storage_name());
 
         let input = ".".to_owned();
-        let expected = "$.".to_owned();
         let name = SecretString::new(Box::new(input));
         let result = hash_file_name(&name);
-        assert_eq!(result, expected);
+        assert_eq!(result, dot_entry_storage_name());
 
         let input = "..".to_owned();
-        let expected = "$..".to_owned();
         let name = SecretString::new(Box::new(input));
         let result = hash_file_name(&name);
-        assert_eq!(result, expected);
+        assert_eq!(result, dot_dot_entry_storage_name());
+    }
+
+    #[test]
+    fn test_hash_file_name_candidates_include_both_platform_spellings() {
+        let dot = SecretString::new(Box::new(".".to_owned()));
+        let dot_candidates = hash_file_name_candidates(&dot);
+        assert_eq!(dot_candidates[0], dot_entry_storage_name());
+        assert!(dot_candidates.iter().any(|candidate| candidate == "$."));
+        assert!(dot_candidates.iter().any(|candidate| candidate == "$dot"));
+
+        let dot_dot = SecretString::new(Box::new("..".to_owned()));
+        let dot_dot_candidates = hash_file_name_candidates(&dot_dot);
+        assert_eq!(dot_dot_candidates[0], dot_dot_entry_storage_name());
+        assert!(dot_dot_candidates
+            .iter()
+            .any(|candidate| candidate == "$.."));
+        assert!(dot_dot_candidates
+            .iter()
+            .any(|candidate| candidate == "$dotdot"));
     }
 
     #[test]

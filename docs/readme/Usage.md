@@ -74,8 +74,7 @@ For the library, you can follow the [documentation](https://docs.rs/rencfs/lates
 
 ### Dependencies
 
-To use the encrypted file system, you need to have FUSE installed on your system. You can install it by running the
-following command (or based on your distribution).
+On Linux, install FUSE using your distribution's package manager.
 
 Arch
 
@@ -88,6 +87,9 @@ Ubuntu
 ```bash
 sudo apt-get update && sudo apt-get -y install fuse3
 ```
+
+On Windows, install [WinFSP 2.1](https://github.com/winfsp/winfsp/releases/tag/v2.1).
+The WinFSP driver must be installed before building or running `rencfs`.
 
 ### Install from AUR
 
@@ -113,7 +115,13 @@ A basic example of how to use the encrypted file system is shown below
 rencfs mount --mount-point MOUNT_POINT --data-dir DATA_DIR
 ```
 
-- `MOUNT_POINT` act as a client, and mount FUSE at the given path
+On Windows, the mount point can be a free drive letter:
+
+```powershell
+rencfs mount --mount-point R: --data-dir C:\Users\me\rencfs-data
+```
+
+- `MOUNT_POINT` acts as a client and mounts FUSE on Linux or WinFSP on Windows
 - `DATA_DIR` where to store the encrypted data
   with the sync provider. But it needs to be on the same filesystem as the data-dir
 

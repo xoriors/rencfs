@@ -39,6 +39,26 @@ jobs:
           cargo install cargo-aur
           cargo install cargo-generate-rpm          
 
+      - name: install WinFSP
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP 'winfsp-2.1.25156.msi'
+          Invoke-WebRequest `
+            -Uri 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi' `
+            -OutFile $msi
+          $expected = '073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A'
+          $actual = (Get-FileHash -Algorithm SHA256 $msi).Hash
+          if ($actual -ne $expected) {
+            throw "WinFSP MSI checksum mismatch: $actual"
+          }
+          $installer = Start-Process msiexec.exe `
+            -ArgumentList @('/i', $msi, '/qn', '/norestart') `
+            -Wait -PassThru -WindowStyle Hidden
+          if ($installer.ExitCode -notin @(0, 3010)) {
+            throw "WinFSP installation failed with exit code $($installer.ExitCode)"
+          }
+
       - name: build
         run: |
           cargo build --all-targets --all-features
@@ -64,6 +84,69 @@ jobs:
       - name: tests
         if: matrix.os != 'windows-latest'
         run: cargo test --release --all --all-features -- --skip keyring
+
+      - name: Windows WinFSP adapter tests
+        if: matrix.os == 'windows-latest'
+        run: cargo test --release --lib mount::windows::tests
+
+      - name: Windows WinFSP mount smoke test
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $dataDir = Join-Path $env:RUNNER_TEMP 'rencfs-smoke-data'
+          $stdout = Join-Path $env:RUNNER_TEMP 'rencfs-smoke.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'rencfs-smoke.stderr.log'
+          $env:RENCFS_PASSWORD = 'ci-only-smoke-test-password'
+          $arguments = @(
+            'mount',
+            '--mount-point', 'R:',
+            '--data-dir', "`"$dataDir`"",
+            '--log-level', 'WARN'
+          )
+          $rencfsProcess = Start-Process `
+            -FilePath '.\target\release\rencfs.exe' `
+            -ArgumentList $arguments `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr `
+            -PassThru -WindowStyle Hidden
+          try {
+            $mounted = $false
+            for ($attempt = 0; $attempt -lt 60; $attempt++) {
+              if ($rencfsProcess.HasExited) {
+                throw "rencfs exited before mounting (exit $($rencfsProcess.ExitCode))"
+              }
+              if (Test-Path -LiteralPath 'R:\') {
+                $mounted = $true
+                break
+              }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $mounted) {
+              throw 'WinFSP mount R: did not appear within 30 seconds'
+            }
+
+            New-Item -ItemType Directory -Path 'R:\smoke' | Out-Null
+            $payload = 'WinFSP end-to-end smoke test'
+            [System.IO.File]::WriteAllText('R:\smoke\hello.txt', $payload)
+            $actual = [System.IO.File]::ReadAllText('R:\smoke\hello.txt')
+            if ($actual -ne $payload) {
+              throw "mounted file contents differ: $actual"
+            }
+            Move-Item -LiteralPath 'R:\smoke\hello.txt' -Destination 'R:\smoke\renamed.txt'
+            Remove-Item -LiteralPath 'R:\smoke\renamed.txt'
+            Remove-Item -LiteralPath 'R:\smoke'
+          }
+          catch {
+            if (Test-Path -LiteralPath $stdout) { Get-Content -LiteralPath $stdout }
+            if (Test-Path -LiteralPath $stderr) { Get-Content -LiteralPath $stderr }
+            throw
+          }
+          finally {
+            if (-not $rencfsProcess.HasExited) {
+              Stop-Process -Id $rencfsProcess.Id -Force
+              $rencfsProcess.WaitForExit()
+            }
+          }
 
       - name: bench
         if: matrix.os == 'ubuntu-latest'

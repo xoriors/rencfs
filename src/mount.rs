@@ -3,10 +3,12 @@ use crate::encryptedfs::{FsResult, PasswordProvider};
 use async_trait::async_trait;
 use futures_util::FutureExt;
 use std::future::Future;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+#[cfg(target_os = "linux")]
+use std::process;
 use std::task::{Context, Poll};
-use std::{io, process};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -15,11 +17,18 @@ use linux::MountHandleInnerImpl;
 #[cfg(target_os = "linux")]
 use linux::MountPointImpl;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows::MountHandleInnerImpl;
+#[cfg(target_os = "windows")]
+use windows::MountPointImpl;
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 mod dummy;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use dummy::MountHandleInnerImpl;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use dummy::MountPointImpl;
 
 #[async_trait]
@@ -97,6 +106,7 @@ pub fn create_mount_point(
     )
 }
 
+#[cfg(target_os = "linux")]
 pub fn umount(mountpoint: &str) -> io::Result<()> {
     // try normal umount
     if process::Command::new("umount")
@@ -129,4 +139,18 @@ pub fn umount(mountpoint: &str) -> io::Result<()> {
     } else {
         Err(io::Error::other(format!("cannot umount {mountpoint}")))
     }
+}
+
+#[cfg(target_os = "windows")]
+pub fn umount(_mountpoint: &str) -> io::Result<()> {
+    // WinFSP mount points are removed by `MountHandle::umount`. There is no
+    // separate process-wide unmount command to invoke here.
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub fn umount(_mountpoint: &str) -> io::Result<()> {
+    Err(io::Error::other(
+        "unmount is not supported on this platform",
+    ))
 }
