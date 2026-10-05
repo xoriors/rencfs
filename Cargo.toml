@@ -62,6 +62,14 @@ criterion = { version = "0.5.1", features = ["html_reports"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 fuse3 = { version = "0.8.1", features = ["tokio-runtime", "unprivileged"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# Dokan is MIT, the user mode library it loads is LGPL, so it's compatible with our license.
+# Needs Dokan driver installed at runtime https://github.com/dokan-dev/dokany/releases
+dokan = "0.3.1"
+dokan-sys = "0.3.1"
+widestring = "0.4.3"
+winapi = { version = "0.3.9", features = ["ntstatus", "winnt", "fileapi", "winbase"] }
+
 [[bench]]
 name = "crypto_read"
 harness = false

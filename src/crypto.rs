@@ -33,6 +33,16 @@ pub mod write;
 
 pub static BASE64: GeneralPurpose = GeneralPurpose::new(&STANDARD, NO_PAD);
 
+/// `/` is not allowed in file names, so it's replaced in the base64 encoded encrypted names.
+/// On Unix we keep `|` for compatibility with existing data dirs.
+const FILE_NAME_SLASH_REPLACEMENT_UNIX: &str = "|";
+/// `|` is not allowed in file names on Windows, use `_`, which is not part of the standard base64 alphabet.
+const FILE_NAME_SLASH_REPLACEMENT_WINDOWS: &str = "_";
+#[cfg(not(windows))]
+const FILE_NAME_SLASH_REPLACEMENT: &str = FILE_NAME_SLASH_REPLACEMENT_UNIX;
+#[cfg(windows)]
+const FILE_NAME_SLASH_REPLACEMENT: &str = FILE_NAME_SLASH_REPLACEMENT_WINDOWS;
+
 #[derive(
     Debug, Clone, Copy, EnumIter, EnumString, Display, Serialize, Deserialize, PartialEq, Eq,
 )]
@@ -217,7 +227,10 @@ pub fn decrypt(s: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretStr
 
 #[allow(clippy::missing_errors_doc)]
 pub fn decrypt_file_name(name: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretString> {
-    let name = String::from(name).replace('|', "/");
+    // accept both separators so data dirs created on any platform can be read
+    let name = String::from(name)
+        .replace(FILE_NAME_SLASH_REPLACEMENT_UNIX, "/")
+        .replace(FILE_NAME_SLASH_REPLACEMENT_WINDOWS, "/");
     decrypt(&name, cipher, key)
 }
 
@@ -248,7 +261,7 @@ pub fn encrypt_file_name(
             let secret = SecretString::from_str(&secret_string)
                 .map_err(|err| Error::GenericString(err.to_string()))?;
             let mut encrypted = encrypt(&secret, cipher, key)?;
-            encrypted = encrypted.replace('/', "|");
+            encrypted = encrypted.replace('/', FILE_NAME_SLASH_REPLACEMENT);
 
             Ok(encrypted)
         }
@@ -459,6 +472,50 @@ mod tests {
             let encrypted = encrypt_file_name(&secret_name, cipher, &key).unwrap();
             let decrypted = decrypt_file_name(&encrypted, cipher, &key).unwrap();
             assert_eq!(decrypted.expose_secret(), secret_name.expose_secret());
+        }
+    }
+
+    #[test]
+    fn test_encrypted_file_name_is_valid_on_all_platforms() {
+        // these chars are not allowed in file names on Windows
+        const INVALID_CHARS: &[char] = &['/', '\\', '|', ':', '*', '?', '"', '<', '>'];
+        for &cipher in &[Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+            let key = secret_key(cipher);
+            for i in 0..200 {
+                let secret_name = SecretString::from_str(&format!("file {i}.txt")).unwrap();
+                let encrypted = encrypt_file_name(&secret_name, cipher, &key).unwrap();
+                #[cfg(windows)]
+                assert!(!encrypted.contains(INVALID_CHARS), "{encrypted}");
+                #[cfg(not(windows))]
+                assert!(
+                    !encrypted.contains(|c| c != '|' && INVALID_CHARS.contains(&c)),
+                    "{encrypted}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_decrypt_file_name_accepts_both_slash_replacements() {
+        for &cipher in &[Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+            let key = secret_key(cipher);
+            // loop until we get a base64 encoding which contains '/'
+            let (secret_name, encrypted) = (0..)
+                .map(|i| {
+                    let secret_name = SecretString::from_str(&format!("name-{i}")).unwrap();
+                    let encrypted = encrypt(&secret_name, cipher, &key).unwrap();
+                    (secret_name, encrypted)
+                })
+                .find(|(_, encrypted)| encrypted.contains('/'))
+                .unwrap();
+            for replacement in [
+                FILE_NAME_SLASH_REPLACEMENT_UNIX,
+                FILE_NAME_SLASH_REPLACEMENT_WINDOWS,
+            ] {
+                let name = encrypted.replace('/', replacement);
+                let decrypted = decrypt_file_name(&name, cipher, &key).unwrap();
+                assert_eq!(decrypted.expose_secret(), secret_name.expose_secret());
+            }
         }
     }
 
