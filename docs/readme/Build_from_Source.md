@@ -38,6 +38,10 @@ For now, the `FUSE` (`fuse3` crate) only works on `Linux`, so you must be on Lin
 Instead, you can [Develop inside a Container](#developing-inside-a-container) by starting a local Linux container to which the IDE will connect. You can build, run, and debug the app there and use the terminal to test it.  
 On Windows, you can start it in [WSL](https://harsimranmaan.medium.com/install-and-setup-rust-development-environment-on-wsl2-dccb4bf63700).
 
+### Windows (experimental)
+
+There is an experimental native Windows backend using [Dokan](https://dokan-dev.github.io), see [Windows](#windows).
+
 ### Getting the sources
 
 ```bash
@@ -155,3 +159,23 @@ See here how to configure for [RustRover](https://www.jetbrains.com/help/rust/co
 
 You can use the `.devcontainer` directory from the project to start a container with all the necessary tools to build
 and run the app.
+
+## Windows
+
+The native Windows backend (`src/mount/windows.rs`) uses [Dokan](https://dokan-dev.github.io). It's **experimental**.
+
+- Install the Dokan driver from [dokany releases](https://github.com/dokan-dev/dokany/releases) (`DokanSetup.exe`, 2.x).
+- Build with the MSVC or GNU toolchain: `cargo build --release`. The `dokan-sys` crate builds the Dokan user mode library
+  `dokan2.dll` from source, or links the installed one if `DokanLibrary2_LibraryPath_x64` is set. Keep `dokan2.dll` next to `rencfs.exe`
+  (set `DOKAN_DLL_OUTPUT_PATH` to have it copied) or use the one installed with the driver.
+- Mount on a free drive letter or on an empty NTFS directory:
+
+```powershell
+rencfs.exe mount --mount-point M: --data-dir C:\rencfs-data
+```
+
+Notes:
+- We use Dokan and not WinFsp because the WinFsp Rust bindings are GPLv3. Dokan bindings are MIT and its user mode library is LGPL.
+- Paths are case-sensitive.
+- `--allow-root` and `--allow-other` are ignored.
+- Windows file attributes (hidden, system, ...) are not stored, and file times can't be set to a time older than the current one.
