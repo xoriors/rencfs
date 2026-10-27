@@ -638,3 +638,120 @@ fn reader_with_seeks() {
     reader.seek(SeekFrom::Start(42)).unwrap();
     assert_eq!(reader.stream_position().unwrap(), 42);
 }
+
+#[test]
+fn test_reader_rewind_after_repeated_eof() {
+    use crate::crypto::{
+        self,
+        write::{CryptoWrite, BLOCK_SIZE},
+        Cipher,
+    };
+    use std::io::{Cursor, Read, SeekFrom, Write};
+
+    for cipher in [Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+        let key = create_secret_key(cipher.key_len());
+        for len in [8, BLOCK_SIZE + 8, BLOCK_SIZE * 2 + 8] {
+            let data: Vec<_> = (0..len)
+                .map(|pos| u8::try_from(pos % 251).unwrap())
+                .collect();
+            let mut writer = crypto::create_write(Cursor::new(Vec::new()), cipher, &key);
+            writer.write_all(&data).unwrap();
+            let encrypted = writer.finish().unwrap().into_inner();
+            let mut reader = crypto::create_read_seek(Cursor::new(encrypted), cipher, &key);
+
+            let mut actual = Vec::new();
+            reader.read_to_end(&mut actual).unwrap();
+            assert_eq!(actual, data);
+            for _ in 0..3 {
+                assert_eq!(reader.read(&mut [0; 4096]).unwrap(), 0);
+                assert_eq!(reader.read(&mut []).unwrap(), 0);
+                assert_eq!(reader.stream_position().unwrap(), len as u64);
+            }
+            assert_eq!(reader.seek(SeekFrom::Start(0)).unwrap(), 0);
+            actual.clear();
+            reader.read_to_end(&mut actual).unwrap();
+            assert_eq!(actual, data);
+            assert_eq!(reader.seek(SeekFrom::End(-3)).unwrap(), (len - 3) as u64);
+            let mut tail = [0; 3];
+            reader.read_exact(&mut tail).unwrap();
+            assert_eq!(tail, data[len - 3..]);
+            assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
+            assert_eq!(reader.stream_position().unwrap(), len as u64);
+        }
+    }
+}
+
+#[test]
+fn test_reader_seek_end_at_exact_block_boundary() {
+    use crate::crypto::{
+        self,
+        write::{CryptoWrite, BLOCK_SIZE},
+        Cipher,
+    };
+    use std::io::{Cursor, Read, SeekFrom, Write};
+
+    for cipher in [Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+        let key = create_secret_key(cipher.key_len());
+        for len in [BLOCK_SIZE, BLOCK_SIZE * 2] {
+            let data: Vec<_> = (0..len)
+                .map(|pos| u8::try_from(pos % 251).unwrap())
+                .collect();
+            let mut writer = crypto::create_write(Cursor::new(Vec::new()), cipher, &key);
+            writer.write_all(&data).unwrap();
+            let encrypted = writer.finish().unwrap().into_inner();
+            let mut reader = crypto::create_read_seek(Cursor::new(encrypted), cipher, &key);
+
+            assert_eq!(reader.seek(SeekFrom::End(0)).unwrap(), len as u64);
+            for _ in 0..3 {
+                assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
+                assert_eq!(reader.stream_position().unwrap(), len as u64);
+            }
+            assert_eq!(
+                reader.seek(SeekFrom::Current(-1)).unwrap(),
+                (len - 1) as u64
+            );
+            let mut last = [0];
+            reader.read_exact(&mut last).unwrap();
+            assert_eq!(last[0], data[len - 1]);
+            assert_eq!(reader.seek(SeekFrom::Start(0)).unwrap(), 0);
+            let mut actual = Vec::new();
+            reader.read_to_end(&mut actual).unwrap();
+            assert_eq!(actual, data);
+        }
+    }
+}
+
+#[test]
+fn test_reader_empty_reads_preserve_input_and_cached_plaintext() {
+    use crate::crypto::{
+        self,
+        write::{CryptoWrite, BLOCK_SIZE},
+        Cipher,
+    };
+    use std::io::{Cursor, Read, Write};
+
+    for cipher in [Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+        let key = create_secret_key(cipher.key_len());
+        let data: Vec<_> = (0..BLOCK_SIZE + 8)
+            .map(|pos| u8::try_from(pos % 251).unwrap())
+            .collect();
+        let mut writer = crypto::create_write(Cursor::new(Vec::new()), cipher, &key);
+        writer.write_all(&data).unwrap();
+        let encrypted = writer.finish().unwrap().into_inner();
+
+        let mut reader = crypto::create_read(Cursor::new(encrypted.clone()), cipher, &key);
+        assert_eq!(reader.read(&mut []).unwrap(), 0);
+        assert_eq!(reader.into_inner().position(), 0);
+
+        let mut reader = crypto::create_read(Cursor::new(encrypted), cipher, &key);
+        let mut first = [0];
+        reader.read_exact(&mut first).unwrap();
+        assert_eq!(first[0], data[0]);
+        for _ in 0..3 {
+            assert_eq!(reader.read(&mut []).unwrap(), 0);
+        }
+        let mut rest = Vec::new();
+        reader.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, data[1..]);
+    }
+}

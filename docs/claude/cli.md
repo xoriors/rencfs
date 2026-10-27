@@ -6,8 +6,8 @@ Files: `src/main.rs` (entry + platform gate), `src/run.rs` (clap CLI and mount/p
 
 ## Platform gate (`main.rs`)
 
-- Linux → `run::run()`
-- macOS/Windows → prints "not yet ready for this platform" and exits
+- Linux/Windows → `run::run()`
+- macOS → prints "not yet ready for this platform" and exits
 - anything else → prints "not supported" and exits
 
 ## CLI shape (`run.rs::get_cli_args`)
@@ -26,9 +26,10 @@ The subcommand name appears in two places that must stay in sync: the definition
 
 1. `RENCFS_PASSWORD` env var, if set (dev convenience — do not document as production usage).
 2. Otherwise prompt on stdin (`rpassword`); on first run (empty/missing data dir) asks for confirmation.
-3. Password is saved to the OS keyring (`keyring.rs`: service `"rencfs"`, user `"rencfs.<suffix>"`, suffix `password`); if no keyring is available it falls back to a `static mut` in-memory copy.
+3. Password is saved to the OS keyring (`keyring.rs`: service `"rencfs"`, user `"rencfs.<suffix>"`, suffix `password`); if no keyring is available it falls back to a mutex-protected secret in memory.
 4. `PasswordProvider` given to the mount reads it back from keyring (or memory) on demand — the `EncryptedFs` key itself expires after 10 min of inactivity (see [encryptedfs.md](encryptedfs.md)).
-5. A `ctrlc` handler unmounts, removes the password from keyring/memory, and exits.
+5. A `ctrlc` handler sends a stop request. The owning runtime awaits unmount,
+   removes the password, and returns. Unexpected host termination also ends the CLI.
 
 ## Logging (`log.rs`)
 

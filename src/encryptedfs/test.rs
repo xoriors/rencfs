@@ -2481,3 +2481,623 @@ async fn test_read_only_write() {
     )
     .await;
 }
+
+/// Portable stores must not depend on Windows' treatment of trailing dots.
+#[tokio::test]
+async fn test_portable_storage_dot_records_and_literal_names() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = EncryptedFs::new(
+        directory.path().to_path_buf(),
+        Box::new(PasswordProviderImpl {}),
+        Cipher::ChaCha20Poly1305,
+        false,
+    )
+    .await
+    .unwrap();
+    let (_, child) = fs
+        .create(
+            ROOT_INODE,
+            &SecretString::from_str("child").unwrap(),
+            create_attr(FileType::Directory),
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+    for (ino, parent) in [(ROOT_INODE, ROOT_INODE), (child.ino, ROOT_INODE)] {
+        let path = fs.contents_path(ino);
+        assert!(path.join(super::LS_DIR).join(crypto::DOT_ENTRY).is_file());
+        assert!(path.join(HASH_DIR).join(crypto::DOT_ENTRY).is_file());
+        assert_eq!(
+            fs.find_by_name(ino, &SecretString::from_str(".").unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            ino
+        );
+        if ino != ROOT_INODE {
+            assert!(path
+                .join(super::LS_DIR)
+                .join(crypto::DOTDOT_ENTRY)
+                .is_file());
+            assert_eq!(
+                fs.find_by_name(ino, &SecretString::from_str("..").unwrap())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .ino,
+                parent
+            );
+        }
+    }
+    for literal in ["$dot", "$dotdot"] {
+        let name = SecretString::from_str(literal).unwrap();
+        let (_, file) = fs
+            .create(
+                child.ino,
+                &name,
+                create_attr(FileType::RegularFile),
+                false,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.find_by_name(child.ino, &name)
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            file.ino
+        );
+        fs.remove_file(child.ino, &name).await.unwrap();
+    }
+    assert_eq!(fs.len(child.ino).unwrap(), 0);
+}
+
+// Windows cannot create legacy names containing `|` or ending in a dot. Build
+// an authentic old-format fixture on Unix and check that the new reader can
+// still traverse and modify it, including migrating a moved directory's `..`.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_portable_storage_reads_legacy_and_updates_parent_link() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = EncryptedFs::new(
+        directory.path().to_path_buf(),
+        Box::new(PasswordProviderImpl {}),
+        Cipher::ChaCha20Poly1305,
+        false,
+    )
+    .await
+    .unwrap();
+    let name = SecretString::from_str("old-child").unwrap();
+    let (_, child) = fs
+        .create(
+            ROOT_INODE,
+            &name,
+            create_attr(FileType::Directory),
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+    let (_, parent) = fs
+        .create(
+            ROOT_INODE,
+            &SecretString::from_str("new-parent").unwrap(),
+            create_attr(FileType::Directory),
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+    let key = fs.key.get().await.unwrap();
+    for (canonical, legacy) in [(crypto::DOT_ENTRY, "$."), (crypto::DOTDOT_ENTRY, "$..")] {
+        let path = fs.contents_path(child.ino);
+        let hash = path.join(HASH_DIR).join(canonical);
+        let mut record: (u64, FileType, String) = bincode::deserialize_from(crypto::create_read(
+            std::fs::File::open(&hash).unwrap(),
+            fs.cipher,
+            &key,
+        ))
+        .unwrap();
+        record.2 = legacy.to_owned();
+        crypto::atomic_serialize_encrypt_into(
+            &path.join(HASH_DIR).join(legacy),
+            &record,
+            fs.cipher,
+            &key,
+        )
+        .unwrap();
+        std::fs::remove_file(hash).unwrap();
+        std::fs::rename(
+            path.join(super::LS_DIR).join(canonical),
+            path.join(super::LS_DIR).join(legacy),
+        )
+        .unwrap();
+    }
+    for (component, expected) in [(".", child.ino), ("..", ROOT_INODE)] {
+        let component = SecretString::from_str(component).unwrap();
+        assert!(fs.exists_by_name(child.ino, &component).unwrap());
+        assert_eq!(
+            fs.find_by_name(child.ino, &component)
+                .await
+                .unwrap()
+                .unwrap()
+                .ino,
+            expected
+        );
+    }
+    let listing = fs
+        .read_dir(child.ino)
+        .await
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(listing.len(), 2);
+    let moved = SecretString::from_str("moved").unwrap();
+    fs.rename(ROOT_INODE, &name, parent.ino, &moved)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.find_by_name(child.ino, &SecretString::from_str("..").unwrap())
+            .await
+            .unwrap()
+            .unwrap()
+            .ino,
+        parent.ino
+    );
+    assert_eq!(fs.len(child.ino).unwrap(), 0);
+    let path = fs.contents_path(child.ino);
+    assert!(!path.join(super::LS_DIR).join("$..").exists());
+    assert!(!path.join(HASH_DIR).join("$..").exists());
+    assert!(path.join(HASH_DIR).join(crypto::DOTDOT_ENTRY).is_file());
+}
+
+#[tokio::test]
+async fn test_portable_storage_read_only_listing_and_close_do_not_write() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = EncryptedFs::new(
+        directory.path().to_path_buf(),
+        Box::new(PasswordProviderImpl {}),
+        Cipher::ChaCha20Poly1305,
+        false,
+    )
+    .await
+    .unwrap();
+    let (_, file) = fs
+        .create(
+            ROOT_INODE,
+            &SecretString::from_str("file").unwrap(),
+            create_attr(FileType::RegularFile),
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+    let inode_before = std::fs::read(fs.ino_file(file.ino)).unwrap();
+    let root_before = std::fs::read(fs.ino_file(ROOT_INODE)).unwrap();
+    drop(fs);
+    let fs = EncryptedFs::new(
+        directory.path().to_path_buf(),
+        Box::new(PasswordProviderImpl {}),
+        Cipher::ChaCha20Poly1305,
+        true,
+    )
+    .await
+    .unwrap();
+    let handle = fs.open(file.ino, true, false).await.unwrap();
+    assert_eq!(fs.read(file.ino, 0, &mut [0; 8], handle).await.unwrap(), 0);
+    fs.release(handle).await.unwrap();
+    assert!(fs.read_handles.read().await.is_empty());
+    assert!(fs.opened_files_for_read.read().await.is_empty());
+    assert_eq!(fs.read_dir(ROOT_INODE).await.unwrap().count(), 2);
+    assert_eq!(fs.read_dir_plus(ROOT_INODE).await.unwrap().count(), 2);
+    assert_eq!(std::fs::read(fs.ino_file(file.ino)).unwrap(), inode_before);
+    assert_eq!(std::fs::read(fs.ino_file(ROOT_INODE)).unwrap(), root_before);
+}
+
+#[tokio::test]
+async fn test_portable_storage_failed_write_open_does_not_leak_read_handle() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = EncryptedFs::new(
+        directory.path().to_path_buf(),
+        Box::new(PasswordProviderImpl {}),
+        Cipher::ChaCha20Poly1305,
+        false,
+    )
+    .await
+    .unwrap();
+    let (first, file) = fs
+        .create(
+            ROOT_INODE,
+            &SecretString::from_str("file").unwrap(),
+            create_attr(FileType::RegularFile),
+            false,
+            true,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        fs.open(file.ino, true, true).await,
+        Err(FsError::AlreadyOpenForWrite)
+    ));
+    assert!(fs.read_handles.read().await.is_empty());
+    assert!(fs.opened_files_for_read.read().await.is_empty());
+    fs.release(first).await.unwrap();
+    let next = fs.open(file.ino, true, true).await.unwrap();
+    fs.release(next).await.unwrap();
+    assert!(fs.read_handles.read().await.is_empty());
+    assert!(fs.write_handles.read().await.is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_portable_storage_reads_and_removes_legacy_encrypted_filename() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = EncryptedFs::new(
+        directory.path().to_path_buf(),
+        Box::new(PasswordProviderImpl {}),
+        Cipher::ChaCha20Poly1305,
+        false,
+    )
+    .await
+    .unwrap();
+    let name = SecretString::new(Box::new("private-name".repeat(7)));
+    let (handle, file) = fs
+        .create(
+            ROOT_INODE,
+            &name,
+            create_attr(FileType::RegularFile),
+            false,
+            true,
+        )
+        .await
+        .unwrap();
+    write_all_bytes_to_fs(&fs, file.ino, 0, b"private data", handle)
+        .await
+        .unwrap();
+    fs.release(handle).await.unwrap();
+    let directory = fs.contents_path(ROOT_INODE);
+    let hash_path = directory.join(HASH_DIR).join(crypto::hash_file_name(&name));
+    let key = fs.key.get().await.unwrap();
+    let mut record: (u64, FileType, String) = bincode::deserialize_from(crypto::create_read(
+        std::fs::File::open(&hash_path).unwrap(),
+        fs.cipher,
+        &key,
+    ))
+    .unwrap();
+    let legacy_name = record.2.replace('_', "|");
+    if legacy_name != record.2 {
+        std::fs::rename(
+            directory.join(super::LS_DIR).join(&record.2),
+            directory.join(super::LS_DIR).join(&legacy_name),
+        )
+        .unwrap();
+    }
+    record.2 = legacy_name;
+    crypto::atomic_serialize_encrypt_into(&hash_path, &record, fs.cipher, &key).unwrap();
+    let names = fs
+        .read_dir(ROOT_INODE)
+        .await
+        .unwrap()
+        .map(|entry| entry.unwrap().name.expose_secret().to_string())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&name.expose_secret().to_string()));
+    assert_eq!(
+        fs.find_by_name(ROOT_INODE, &name)
+            .await
+            .unwrap()
+            .unwrap()
+            .ino,
+        file.ino
+    );
+    assert_eq!(
+        test_common::read_to_string(file.ino, &fs).await,
+        "private data"
+    );
+    fs.remove_file(ROOT_INODE, &name).await.unwrap();
+    assert!(!hash_path.exists());
+    assert!(!directory.join(super::LS_DIR).join(&record.2).exists());
+    assert_eq!(fs.len(ROOT_INODE).unwrap(), 0);
+}
+
+#[tokio::test]
+async fn test_portable_storage_competing_writer_opens_keep_single_owner() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = EncryptedFs::new(
+        directory.path().to_path_buf(),
+        Box::new(PasswordProviderImpl {}),
+        Cipher::ChaCha20Poly1305,
+        false,
+    )
+    .await
+    .unwrap();
+    let (_, file) = fs
+        .create(
+            ROOT_INODE,
+            &SecretString::from_str("file").unwrap(),
+            create_attr(FileType::RegularFile),
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+    let (first, second) =
+        tokio::join!(fs.open(file.ino, true, true), fs.open(file.ino, true, true));
+    let owner = match (first, second) {
+        (Ok(handle), Err(FsError::AlreadyOpenForWrite))
+        | (Err(FsError::AlreadyOpenForWrite), Ok(handle)) => handle,
+        other => panic!("expected exactly one writer, got {other:?}"),
+    };
+    assert_eq!(fs.write_handles.read().await.len(), 1);
+    assert_eq!(fs.read_handles.read().await.len(), 1);
+    fs.release(owner).await.unwrap();
+    assert!(fs.write_handles.read().await.is_empty());
+    assert!(fs.read_handles.read().await.is_empty());
+}
+
+#[tokio::test]
+async fn test_live_handle_reads_after_write_and_flush() {
+    for cipher in [Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+        let backing = tempfile::tempdir().unwrap();
+        let fs = EncryptedFs::new(
+            backing.path().to_path_buf(),
+            Box::new(PasswordProviderImpl {}),
+            cipher,
+            false,
+        )
+        .await
+        .unwrap();
+        let name = SecretString::from_str("live-read-write").unwrap();
+        let (handle, attr) = fs
+            .create(
+                ROOT_INODE,
+                &name,
+                create_attr(FileType::RegularFile),
+                true,
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(fs.write(attr.ino, 0, b"abcdef", handle).await.unwrap(), 6);
+        assert_eq!(fs.get_attr(attr.ino).await.unwrap().size, 6);
+        fs.flush(handle).await.unwrap();
+        let mut buffer = [0; 16];
+        assert_eq!(fs.read(attr.ino, 0, &mut buffer, handle).await.unwrap(), 6);
+        assert_eq!(&buffer[..6], b"abcdef");
+        // A reader opened on an earlier encrypted snapshot must also observe
+        // an overwrite of the same plaintext block through its paired writer.
+        assert_eq!(fs.write(attr.ino, 2, b"XY", handle).await.unwrap(), 2);
+        fs.flush(handle).await.unwrap();
+        assert_eq!(fs.read(attr.ino, 0, &mut buffer, handle).await.unwrap(), 6);
+        assert_eq!(&buffer[..6], b"abXYef");
+        fs.release(handle).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn test_live_handle_truncate_changes_eof_and_persists() {
+    for cipher in [Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+        let backing = tempfile::tempdir().unwrap();
+        let fs = EncryptedFs::new(
+            backing.path().to_path_buf(),
+            Box::new(PasswordProviderImpl {}),
+            cipher,
+            false,
+        )
+        .await
+        .unwrap();
+        let name = SecretString::from_str("live-truncate").unwrap();
+        let (handle, attr) = fs
+            .create(
+                ROOT_INODE,
+                &name,
+                create_attr(FileType::RegularFile),
+                true,
+                true,
+            )
+            .await
+            .unwrap();
+        fs.write(attr.ino, 0, b"abcdef", handle).await.unwrap();
+        let observer = fs.open(attr.ino, true, false).await.unwrap();
+        fs.set_len(attr.ino, 3).await.unwrap();
+        assert_eq!(fs.get_attr(attr.ino).await.unwrap().size, 3);
+        let mut buffer = [0; 16];
+        for reader in [handle, observer] {
+            assert_eq!(fs.read(attr.ino, 0, &mut buffer, reader).await.unwrap(), 3);
+            assert_eq!(&buffer[..3], b"abc");
+            assert_eq!(fs.read(attr.ino, 3, &mut buffer, reader).await.unwrap(), 0);
+        }
+        fs.set_len(attr.ino, 0).await.unwrap();
+        assert_eq!(fs.get_attr(attr.ino).await.unwrap().size, 0);
+        for reader in [handle, observer] {
+            assert_eq!(fs.read(attr.ino, 0, &mut buffer, reader).await.unwrap(), 0);
+        }
+        fs.write(attr.ino, 0, b"new", handle).await.unwrap();
+        fs.flush(handle).await.unwrap();
+        fs.release(observer).await.unwrap();
+        fs.release(handle).await.unwrap();
+        drop(fs);
+        let reopened = EncryptedFs::new(
+            backing.path().to_path_buf(),
+            Box::new(PasswordProviderImpl {}),
+            cipher,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(reopened.get_attr(attr.ino).await.unwrap().size, 3);
+        let reader = reopened.open(attr.ino, true, false).await.unwrap();
+        assert_eq!(
+            reopened
+                .read(attr.ino, 0, &mut buffer, reader)
+                .await
+                .unwrap(),
+            3
+        );
+        assert_eq!(&buffer[..3], b"new");
+        reopened.release(reader).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn test_live_handle_flushes_partial_and_boundary_blocks_for_all_readers() {
+    for cipher in [Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+        let backing = tempfile::tempdir().unwrap();
+        let fs = EncryptedFs::new(
+            backing.path().to_path_buf(),
+            Box::new(PasswordProviderImpl {}),
+            cipher,
+            false,
+        )
+        .await
+        .unwrap();
+        let name = SecretString::from_str("live-boundary-write").unwrap();
+        let (handle, attr) = fs
+            .create(
+                ROOT_INODE,
+                &name,
+                create_attr(FileType::RegularFile),
+                true,
+                true,
+            )
+            .await
+            .unwrap();
+        let observer = fs.open(attr.ino, true, false).await.unwrap();
+        let block = crate::crypto::write::BLOCK_SIZE;
+        let mut expected = (0..block * 2 + 7)
+            .map(|i| (i % 251) as u8)
+            .collect::<Vec<_>>();
+        let mut written = 0;
+        while written < expected.len() {
+            let count = fs
+                .write(attr.ino, written as u64, &expected[written..], handle)
+                .await
+                .unwrap();
+            assert!(count > 0);
+            written += count;
+        }
+        fs.flush(handle).await.unwrap();
+        // Repeated flush must preserve both EOF and the last partial block.
+        fs.flush(handle).await.unwrap();
+        let mut buffer = vec![0; expected.len() + 32];
+        for reader in [handle, observer] {
+            test_common::read_exact(&fs, attr.ino, 0, &mut buffer[..expected.len()], reader).await;
+            assert_eq!(&buffer[..expected.len()], expected.as_slice());
+        }
+        let mut written = 0;
+        while written < 3 {
+            let count = fs
+                .write(
+                    attr.ino,
+                    (block - 1 + written) as u64,
+                    &b"XYZ"[written..],
+                    handle,
+                )
+                .await
+                .unwrap();
+            assert!(count > 0);
+            written += count;
+        }
+        expected[block - 1..block + 2].copy_from_slice(b"XYZ");
+        fs.flush(handle).await.unwrap();
+        for reader in [handle, observer] {
+            test_common::read_exact(&fs, attr.ino, 0, &mut buffer[..expected.len()], reader).await;
+            assert_eq!(&buffer[..expected.len()], expected.as_slice());
+        }
+        fs.set_len(attr.ino, (block + 1) as u64).await.unwrap();
+        expected.truncate(block + 1);
+        fs.set_len(attr.ino, (block * 3 + 5) as u64).await.unwrap();
+        expected.resize(block * 3 + 5, 0);
+        buffer.resize(expected.len() + 32, 0xff);
+        assert_eq!(
+            fs.get_attr(attr.ino).await.unwrap().size,
+            expected.len() as u64
+        );
+        for reader in [handle, observer] {
+            test_common::read_exact(&fs, attr.ino, 0, &mut buffer[..expected.len()], reader).await;
+            assert_eq!(&buffer[..expected.len()], expected.as_slice());
+            assert_eq!(
+                fs.read(attr.ino, expected.len() as u64, &mut buffer, reader)
+                    .await
+                    .unwrap(),
+                0
+            );
+        }
+        fs.release(handle).await.unwrap();
+        fs.release(observer).await.unwrap();
+        drop(fs);
+        let reopened = EncryptedFs::new(
+            backing.path().to_path_buf(),
+            Box::new(PasswordProviderImpl {}),
+            cipher,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            reopened.get_attr(attr.ino).await.unwrap().size,
+            expected.len() as u64
+        );
+        let reader = reopened.open(attr.ino, true, false).await.unwrap();
+        test_common::read_exact(
+            &reopened,
+            attr.ino,
+            0,
+            &mut buffer[..expected.len()],
+            reader,
+        )
+        .await;
+        assert_eq!(&buffer[..expected.len()], expected.as_slice());
+        reopened.release(reader).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn test_repeated_reads_after_oversized_read_rewind_from_eof() {
+    for cipher in [Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+        let backing = tempfile::tempdir().unwrap();
+        let fs = EncryptedFs::new(
+            backing.path().to_path_buf(),
+            Box::new(PasswordProviderImpl {}),
+            cipher,
+            false,
+        )
+        .await
+        .unwrap();
+        let name = SecretString::from_str("readahead-rewind").unwrap();
+        let (writer, attr) = fs
+            .create(
+                ROOT_INODE,
+                &name,
+                create_attr(FileType::RegularFile),
+                false,
+                true,
+            )
+            .await
+            .unwrap();
+        fs.write(attr.ino, 0, b"abcXYZ++", writer).await.unwrap();
+        fs.release(writer).await.unwrap();
+        let reader = fs.open(attr.ino, true, false).await.unwrap();
+
+        // Windows can request a full page for read-ahead, then repeat the
+        // application read from zero through the same context.
+        let mut page = [0; 4096];
+        assert_eq!(fs.read(attr.ino, 0, &mut page, reader).await.unwrap(), 8);
+        assert_eq!(&page[..8], b"abcXYZ++");
+        let mut exact = [0; 8];
+        for _ in 0..2 {
+            assert_eq!(fs.read(attr.ino, 0, &mut exact, reader).await.unwrap(), 8);
+            assert_eq!(&exact, b"abcXYZ++");
+            let mut tail = [0; 16];
+            assert_eq!(fs.read(attr.ino, 7, &mut tail, reader).await.unwrap(), 1);
+            assert_eq!(tail[0], b'+');
+            assert_eq!(fs.read(attr.ino, 8, &mut tail, reader).await.unwrap(), 0);
+            assert_eq!(fs.read(attr.ino, 0, &mut page, reader).await.unwrap(), 8);
+            assert_eq!(&page[..8], b"abcXYZ++");
+        }
+        fs.release(reader).await.unwrap();
+    }
+}

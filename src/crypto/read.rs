@@ -82,6 +82,8 @@ pub struct RingCryptoRead<R: Read> {
     ciphertext_block_size: usize,
     plaintext_block_size: usize,
     block_index: u64,
+    // The decrypted buffer is cleared when probing EOF, so its cursor cannot track this.
+    position: u64,
 }
 
 impl<R: Read> RingCryptoRead<R> {
@@ -101,6 +103,7 @@ impl<R: Read> RingCryptoRead<R> {
             ciphertext_block_size,
             plaintext_block_size: BLOCK_SIZE,
             block_index: 0,
+            position: 0,
         }
     }
 }
@@ -108,9 +111,13 @@ impl<R: Read> RingCryptoRead<R> {
 impl<R: Read> Read for RingCryptoRead<R> {
     #[instrument(name = "RingCryptoReader:read", skip(self, buf))]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
         // first try to read remaining decrypted data
         let len = self.buf.read(buf)?;
         if len != 0 {
+            self.position += len as u64;
             return Ok(len);
         }
         // we read all the data from the buffer, so we need to read a new block and decrypt it
@@ -122,6 +129,7 @@ impl<R: Read> Read for RingCryptoRead<R> {
             self.opening_key
         );
         let len = self.buf.read(buf)?;
+        self.position += len as u64;
         Ok(len)
     }
 }
@@ -160,8 +168,7 @@ impl<R: Read + Seek> RingCryptoRead<R> {
     }
 
     const fn pos(&self) -> u64 {
-        self.block_index.saturating_sub(1) * self.plaintext_block_size as u64
-            + self.buf.pos_read().saturating_sub(NONCE_LEN) as u64
+        self.position
     }
 
     fn get_plaintext_len(&mut self) -> io::Result<u64> {
@@ -170,7 +177,7 @@ impl<R: Read + Seek> RingCryptoRead<R> {
             return Ok(0);
         }
         let plaintext_len = ciphertext_len
-            - ((ciphertext_len / self.ciphertext_block_size as u64) + 1)
+            - ciphertext_len.div_ceil(self.ciphertext_block_size as u64)
                 * (self.ciphertext_block_size - self.plaintext_block_size) as u64;
         Ok(plaintext_len)
     }
@@ -198,49 +205,26 @@ impl<R: Read + Seek> Seek for RingCryptoRead<R> {
         if self.pos() == new_pos {
             return Ok(new_pos);
         }
-        let block_index = self.pos() / self.plaintext_block_size as u64;
-        let new_block_index = new_pos / self.plaintext_block_size as u64;
-        if block_index == new_block_index {
-            let at_full_block_end = self.pos().is_multiple_of(self.plaintext_block_size as u64)
-                && self.buf.available_read() == 0;
-            if self.buf.available() > 0
-                // this make sure we are not at the end of the current block, which is the start boundary of next block
-                // in that case we need to seek inside the next block
-                && !at_full_block_end
-            {
-                // seek inside current block
-                self.buf.seek_read(SeekFrom::Start(
-                    NONCE_LEN as u64 + new_pos % self.plaintext_block_size as u64,
-                ))?;
-            } else {
-                // we need to read a new block and seek inside that block
-                let plaintext_block_size = self.plaintext_block_size;
-                stream_util::seek_forward(self, new_pos % plaintext_block_size as u64, true)?;
+        if self.buf.available() > NONCE_LEN {
+            let block_start = self.position - (self.buf.pos_read() - NONCE_LEN) as u64;
+            let block_end = block_start + (self.buf.available() - NONCE_LEN) as u64;
+            if (block_start..=block_end).contains(&new_pos) {
+                self.buf
+                    .seek_read(SeekFrom::Start(NONCE_LEN as u64 + new_pos - block_start))?;
+                self.position = new_pos;
+                return Ok(new_pos);
             }
-        } else {
-            // change block
-            self.input.as_mut().unwrap().seek(SeekFrom::Start(
-                new_block_index * self.ciphertext_block_size as u64,
-            ))?;
-            self.buf.clear();
-            self.block_index = new_block_index;
-            if new_pos.is_multiple_of(self.plaintext_block_size as u64) {
-                // in case we need to seek at the start of the new block, we need to decrypt here, because we altered
-                // the block_index but the seek seek_forward from below will not decrypt anything
-                // as the offset in new block is 0. In that case the po()
-                // method is affected as it will use the wrong block_index value
-                decrypt_block!(
-                    self.block_index,
-                    self.buf,
-                    self.input.as_mut().unwrap(),
-                    self.last_nonce,
-                    self.opening_key
-                );
-            }
-            // seek inside new block
-            let plaintext_block_size = self.plaintext_block_size;
-            stream_util::seek_forward(self, new_pos % plaintext_block_size as u64, true)?;
         }
+
+        let new_block_index = new_pos / self.plaintext_block_size as u64;
+        self.input.as_mut().unwrap().seek(SeekFrom::Start(
+            new_block_index * self.ciphertext_block_size as u64,
+        ))?;
+        self.buf.clear();
+        self.block_index = new_block_index;
+        self.position = new_block_index * self.plaintext_block_size as u64;
+        let offset = new_pos - self.position;
+        stream_util::seek_forward(self, offset, true)?;
         Ok(self.pos())
     }
 }

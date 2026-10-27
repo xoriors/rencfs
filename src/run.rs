@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::Mutex;
 use std::{env, io, panic, process};
 
 use anyhow::Result;
@@ -11,7 +11,6 @@ use rpassword::read_password;
 use shush_rs::{ExposeSecret, SecretString};
 use strum::IntoEnumIterator;
 use thiserror::Error;
-use tokio::sync::Mutex;
 use tokio::{fs, task};
 use tracing::{error, info, warn, Level};
 
@@ -21,7 +20,7 @@ use rencfs::encryptedfs::{EncryptedFs, FsError, PasswordProvider};
 use rencfs::mount::MountPoint;
 use rencfs::{log, mount};
 
-static mut PASS: Option<SecretString> = None;
+static PASS: Mutex<Option<SecretString>> = Mutex::new(None);
 
 #[derive(Debug, Error)]
 enum ExitStatusError {
@@ -307,10 +306,8 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
     });
     if res.is_err() {
         // maybe we don't have a security manager, keep it in mem
-        unsafe {
-            warn!("Cannot save password in keyring, keep it in memory");
-            PASS = Some(password.clone());
-        }
+        warn!("Cannot save password in keyring, keep it in memory");
+        *PASS.lock().unwrap() = Some(password.clone());
     }
 
     if matches.get_flag("umount-on-start") {
@@ -322,23 +319,19 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
 
     struct PasswordProviderImpl {}
     #[allow(clippy::items_after_statements)]
-    #[allow(static_mut_refs)]
     impl PasswordProvider for PasswordProviderImpl {
         fn get_password(&self) -> Option<SecretString> {
-            unsafe {
-                if PASS.is_some() {
-                    info!("Get password from memory");
-                    PASS.clone()
-                } else {
-                    info!("Get password from keyring");
-                    keyring::get("password")
-                        .map_err(|err| {
-                            error!(err = %err, "cannot get password from keyring");
-                            err
-                        })
-                        .ok()
-                }
+            if let Some(password) = PASS.lock().unwrap().as_ref() {
+                info!("Get password from memory");
+                return Some(password.clone());
             }
+            info!("Get password from keyring");
+            keyring::get("password")
+                .map_err(|err| {
+                    error!(err = %err, "cannot get password from keyring");
+                    err
+                })
+                .ok()
         }
     }
     let mount_point = mount::create_mount_point(
@@ -350,74 +343,73 @@ async fn run_mount(cipher: Cipher, matches: &ArgMatches) -> Result<()> {
         matches.get_flag("allow-other"),
         matches.get_flag("read-only"),
     );
-    let mount_handle = mount_point.mount().await.map_err(|err| {
+    let mut mount_handle = mount_point.mount().await.map_err(|err| {
         error!(err = %err);
         ExitStatusError::Failure(1)
     })?;
-    let mount_handle = Arc::new(Mutex::new(Some(Some(mount_handle))));
-    let mount_handle_clone = mount_handle.clone();
-    // cleanup on process kill
-    set_handler(move || {
-        // can't use tracing methods here as guard cannot be dropper to flush content before we exit
-        eprintln!("Received signal to exit");
-        let mut status: Option<ExitStatusError> = None;
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    let stop_tx = Mutex::new(Some(stop_tx));
+    if let Err(err) = set_handler(move || {
+        // The first signal requests teardown on the owning runtime. Another
+        // signal can still stop the process if graceful shutdown gets stuck.
+        if !request_graceful_shutdown(&stop_tx) {
+            process::exit(130);
+        }
+    }) {
+        let _ = mount_handle.umount().await;
         remove_pass();
-        eprintln!("Unmounting {mountpoint}");
-        // create new tokio runtime
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let _ = rt
-            .block_on(async {
-                let res = mount_handle_clone
-                    .lock()
-                    .await
-                    .replace(None)
-                    .unwrap()
-                    .unwrap()
-                    .umount()
-                    .await;
-                if res.is_err() {
-                    mount::umount(mountpoint.as_str())?;
-                }
-                Ok::<(), io::Error>(())
-            })
-            .map_err(|err| {
-                eprintln!("Error: {err}");
-                status.replace(ExitStatusError::Failure(1));
-                err
-            });
-        eprintln!("Bye!");
-        process::exit(status.map_or(0, |x| match x {
-            ExitStatusError::Failure(status) => status,
-        }));
-    })?;
-
-    task::spawn_blocking(|| {
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
-            tokio::time::sleep(tokio::time::Duration::from_secs(u64::MAX)).await;
-        });
-    })
-    .await?;
-
+        return Err(err.into());
+    }
+    let result = tokio::select! {
+        result = &mut mount_handle => result,
+        _ = stop_rx => mount_handle.umount().await,
+    };
+    remove_pass();
+    result?;
     Ok(())
 }
 
-#[allow(static_mut_refs)]
+fn request_graceful_shutdown(stop_tx: &Mutex<Option<tokio::sync::oneshot::Sender<()>>>) -> bool {
+    let Some(tx) = stop_tx.lock().unwrap().take() else {
+        return false;
+    };
+    tx.send(()).is_ok()
+}
+
 fn remove_pass() {
-    unsafe {
-        if PASS.is_none() {
-            info!("Delete password from keyring");
-            keyring::remove("password")
-                .map_err(|err| {
-                    error!(err = %err);
-                })
-                .ok();
-        } else {
-            info!("Remove password from memory");
-            PASS = None;
+    let mut pass = PASS.lock().unwrap();
+    if pass.is_none() {
+        info!("Delete password from keyring");
+        if let Err(err) = keyring::remove("password") {
+            error!(err = %err);
         }
+    } else {
+        info!("Remove password from memory");
+        *pass = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_signal_requests_shutdown_and_repeated_signals_force_exit() {
+        let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
+        let stop_tx = Mutex::new(Some(stop_tx));
+
+        assert!(request_graceful_shutdown(&stop_tx));
+        assert_eq!(stop_rx.try_recv(), Ok(()));
+        assert!(!request_graceful_shutdown(&stop_tx));
+        assert!(!request_graceful_shutdown(&stop_tx));
+    }
+
+    #[test]
+    fn signal_forces_exit_when_shutdown_receiver_is_gone() {
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+        let stop_tx = Mutex::new(Some(stop_tx));
+        drop(stop_rx);
+
+        assert!(!request_graceful_shutdown(&stop_tx));
     }
 }

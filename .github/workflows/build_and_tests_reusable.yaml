@@ -23,21 +23,27 @@ jobs:
 
       - name: setup Rust
         run: |
-          rustup toolchain install nightly --component rust-docs
-          rustup default nightly
-          rustup component add rustc          # Rust compiler
-          rustup component add cargo          # Rust package manager
-          rustup component add clippy         # Linting tool
-          rustup component add rustfmt        # Code formatter
-          rustup component add rust-docs      # Documentation
-          rustup component add rust-analysis  # Rust analysis for tools
-          rustup update
+          rustup toolchain install nightly-2025-03-01 --profile minimal --component rustfmt,clippy
           rustup show
 
-      - name: setup Rust
+      - name: packaging tools
+        if: matrix.os == 'ubuntu-latest'
         run: |
           cargo install cargo-aur
           cargo install cargo-generate-rpm          
+
+      - name: Install pinned WinFsp runtime and developer files
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP 'winfsp-2.1.25156.msi'
+          Invoke-WebRequest 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi' -OutFile $msi
+          $expected = '073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a'
+          if ((Get-FileHash $msi -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+            throw 'WinFsp installer checksum mismatch'
+          }
+          $install = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart', 'ADDLOCAL=ALL')
+          if ($install.ExitCode -ne 0) { throw "WinFsp install failed/requires reboot: $($install.ExitCode)" }
 
       - name: build
         run: |
@@ -65,6 +71,12 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: cargo test --release --all --all-features -- --skip keyring
 
+      - name: Native Windows callbacks and mounted filesystem
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          .\scripts\test-windows.ps1 -Drive R: -TranscriptPath windows-test.log
+
       - name: bench
         if: matrix.os == 'ubuntu-latest'
         run: cargo bench --workspace --all-targets --all-features
@@ -83,6 +95,11 @@ jobs:
           cd java-bridge
           cargo build --all-targets --all-features
           cargo build --release --all-targets --all-features
+
+      - name: java-bridge Windows DLL loading
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: .\scripts\test-windows-java-bridge.ps1 -DllPath .\java-bridge\target\release\java_bridge.dll
 
       - name: java-bridge fmt check
         run: |

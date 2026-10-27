@@ -726,13 +726,12 @@ impl EncryptedFs {
                             // these operations are a bit slow, but are necessary to make sure the file is correctly created
                             // i.e. creating 100 files takes 0.965 sec with sync_all and 0.130 sec without
                             file.sync_all()?;
-                            File::open(
+                            fs_util::sync_directory(
                                 self_clone
                                     .contents_path(attr.ino)
                                     .parent()
                                     .expect("oops, we don't have a parent"),
-                            )?
-                            .sync_all()?;
+                            )?;
                             Ok::<(), FsError>(())
                         });
                     }
@@ -843,8 +842,7 @@ impl EncryptedFs {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
-        let hash = crypto::hash_file_name(name);
-        let hash_path = self.contents_path(parent).join(HASH_DIR).join(hash);
+        let hash_path = self.directory_hash_path(parent, name);
         if !hash_path.is_file() {
             return Ok(None);
         }
@@ -1039,8 +1037,7 @@ impl EncryptedFs {
         if !self.is_dir(parent) {
             return Err(FsError::InvalidInodeType);
         }
-        let hash = crypto::hash_file_name(name);
-        let hash_path = self.contents_path(parent).join(HASH_DIR).join(hash);
+        let hash_path = self.directory_hash_path(parent, name);
         Ok(hash_path.is_file())
     }
 
@@ -1055,8 +1052,10 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(ls_dir)?;
-        let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
-        self.set_attr(ino, set_attr).await?;
+        if !self.read_only {
+            let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
+            self.set_attr(ino, set_attr).await?;
+        }
         Ok(self.create_directory_entry_iterator(iter).await)
     }
 
@@ -1071,8 +1070,10 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(ls_dir)?;
-        let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
-        self.set_attr(ino, set_attr).await?;
+        if !self.read_only {
+            let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
+            self.set_attr(ino, set_attr).await?;
+        }
         Ok(self.create_directory_entry_plus_iterator(iter).await)
     }
 
@@ -1136,9 +1137,9 @@ impl EncryptedFs {
         let entry = entry.unwrap();
         let name = entry.file_name().to_string_lossy().to_string();
         let name = {
-            if name == "$." {
+            if name == "$." || name == crypto::DOT_ENTRY {
                 SecretString::new(Box::new(".".into()))
-            } else if name == "$.." {
+            } else if name == "$.." || name == crypto::DOTDOT_ENTRY {
                 SecretString::from_str("..").unwrap()
             } else {
                 // try from cache
@@ -1507,7 +1508,9 @@ impl EncryptedFs {
             let set_attr: SetFileAttr = ctx.attr.clone().into();
             let ino = ctx.ino;
             drop(ctx);
-            self.set_attr(ino, set_attr).await?;
+            if !self.read_only {
+                self.set_attr(ino, set_attr).await?;
+            }
 
             valid_fh = true;
         }
@@ -1527,7 +1530,7 @@ impl EncryptedFs {
             let write_guard = lock.write().await;
             let file = writer.finish()?;
             file.sync_all()?;
-            File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+            fs_util::sync_directory(self.contents_path(ctx.ino).parent().unwrap())?;
             // write attr only here to avoid serializing it multiple times while writing
             // it will merge time fields with existing data because it might got change while we kept the handle
             let ino = ctx.ino;
@@ -1713,33 +1716,34 @@ impl EncryptedFs {
             return Err(FsError::ReadOnly);
         }
         if handle == 0 {
-            // in the case of directory or if the file was crated without being opened we don't use a handle
+            // Directories and metadata-only creates have no content handle.
             return Ok(());
         }
-        let lock = self.read_handles.read().await;
-        let mut valid_fh = lock.get(&handle).is_some();
-        let lock = self.write_handles.read().await;
-        if let Some(ctx) = lock.get(&handle) {
-            let mut ctx = ctx.lock().await;
+        let writer_ino = {
+            let handles = self.write_handles.read().await;
+            if let Some(context) = handles.get(&handle) {
+                Some(context.lock().await.ino)
+            } else {
+                None
+            }
+        };
+        if let Some(ino) = writer_ino {
             let lock = self
                 .read_write_locks
-                .get_or_insert_with(ctx.ino, || RwLock::new(false));
-            let write_guard = lock.write().await;
-            ctx.writer.as_mut().expect("writer is missing").flush()?;
-            File::open(self.contents_path(ctx.ino))?.sync_all()?;
-            File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
-            drop(write_guard);
-            let ino = ctx.ino;
-            drop(ctx);
-            self.reset_handles(ino, Some(handle), true).await?;
-            valid_fh = true;
+                .get_or_insert_with(ino, || RwLock::new(false));
+            let _write_guard = lock.write().await;
+            // CryptoWrite::flush only emits complete encryption blocks. Finish
+            // and recreate the writer so short writes are also committed, then
+            // replace every reader's cached encrypted snapshot, including the
+            // reader sharing this read/write handle.
+            self.flush_and_reset_writers(ino).await?;
+            return Ok(());
         }
-
-        if !valid_fh {
-            return Err(FsError::InvalidFileHandle);
+        if self.read_handles.read().await.contains_key(&handle) {
+            Ok(())
+        } else {
+            Err(FsError::InvalidFileHandle)
         }
-
-        Ok(())
     }
 
     /// Helpful when we want to copy just some portions of the file.
@@ -1801,6 +1805,17 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
 
+        // Serialize the single-writer check with handle creation. Otherwise a
+        // competing read+write open could leak its read handle on failure, or
+        // two simultaneous callers could replace each other's write handle.
+        let open_lock = self
+            .read_write_locks
+            .get_or_insert_with(ino, || RwLock::new(false));
+        let _open_guard = open_lock.write().await;
+        if write && self.opened_files_for_write.read().await.contains_key(&ino) {
+            return Err(FsError::AlreadyOpenForWrite);
+        }
+
         let mut handle: Option<u64> = None;
         if read {
             handle = Some(self.next_handle());
@@ -1811,9 +1826,6 @@ impl EncryptedFs {
             .await?;
         }
         if write {
-            if self.opened_files_for_write.read().await.contains_key(&ino) {
-                return Err(FsError::AlreadyOpenForWrite);
-            }
             if handle.is_none() {
                 handle = Some(self.next_handle());
             }
@@ -1824,12 +1836,15 @@ impl EncryptedFs {
                 )
                 .await;
             if res.is_err() && read {
-                // on error remove the read handle if it was added above,
-                // remove the read handle if it was added above
-                self.read_handles
-                    .write()
-                    .await
-                    .remove(handle.as_ref().unwrap());
+                let fh = handle.as_ref().unwrap();
+                self.read_handles.write().await.remove(fh);
+                let mut reads = self.opened_files_for_read.write().await;
+                if let Some(handles) = reads.get_mut(&ino) {
+                    handles.remove(fh);
+                    if handles.is_empty() {
+                        reads.remove(&ino);
+                    }
+                }
             }
             res?;
         }
@@ -1911,7 +1926,7 @@ impl EncryptedFs {
             }
             file.commit()?;
         }
-        File::open(file_path.parent().unwrap())?.sync_all()?;
+        fs_util::sync_directory(file_path.parent().unwrap())?;
 
         let now = SystemTime::now();
         let set_attr = SetFileAttr::default()
@@ -1921,22 +1936,9 @@ impl EncryptedFs {
             .with_atime(now);
         self.set_attr2(ino, set_attr, true).await?;
 
-        let attr = self.get_inode_from_storage(ino).await?;
-        println!("attr 1: {:?}", attr.size);
-        let attr = self.get_attr(ino).await?;
-        println!("attr 1: {:?}", attr.size);
-
-        // reset handles because the file has changed
-        self.reset_handles(attr.ino, None, false).await?;
-
-        let attr = self.get_inode_from_storage(ino).await?;
-        println!("attr 2: {:?}", attr.size);
-        let attr = self.get_attr(ino).await?;
-        println!("attr 2: {:?}", attr.size);
-
-        if size != attr.size {
-            error!("error truncating file expected {size} actual {}", attr.size);
-        }
+        // The inode now contains the requested EOF. Reset cached read and
+        // write state without merging pre-truncate sizes back into it.
+        self.reset_handles(ino, None, false).await?;
 
         Ok(())
     }
@@ -1962,7 +1964,7 @@ impl EncryptedFs {
                 let mut writer = ctx.writer.take().unwrap();
                 let file = writer.finish()?;
                 file.sync_all()?;
-                File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+                fs_util::sync_directory(self.contents_path(ctx.ino).parent().unwrap())?;
                 let handle = *handle;
                 let set_attr: SetFileAttr = ctx.attr.clone().into();
                 drop(ctx);
@@ -2179,20 +2181,37 @@ impl EncryptedFs {
     ) -> FsResult<()> {
         let path = self.contents_path(ino);
 
-        // read
-        let lock = self.opened_files_for_read.read().await;
-        if let Some(set) = lock.get(&ino) {
-            for handle in set.iter().filter(|h| skip_write_fh != Some(**h)) {
-                let guard = self.read_handles.read().await;
-                let ctx = guard.get(handle).unwrap().lock().await;
-                let set_attr: SetFileAttr = ctx.attr.clone().into();
-                drop(ctx);
-                self.set_attr(ino, set_attr).await?;
+        // Do not retain the handle-map guards while saving attributes: that
+        // path re-enters get_attr and reads these maps itself.
+        let readers = self.opened_files_for_read.read().await.get(&ino).cloned();
+        if let Some(readers) = readers {
+            for handle in readers {
+                let set_attr = {
+                    let handles = self.read_handles.read().await;
+                    if let Some(context) = handles.get(&handle) {
+                        Some(SetFileAttr::from(context.lock().await.attr.clone()))
+                    } else {
+                        None
+                    }
+                };
+                let Some(set_attr) = set_attr else {
+                    // A concurrently released reader no longer needs resetting.
+                    continue;
+                };
+                // After truncation, the stored size is authoritative. Saving
+                // reader times through get_attr here would merge the writer's
+                // old size back into that new inode before it has been reset.
+                if save_attr {
+                    self.set_attr(ino, set_attr).await?;
+                }
                 let attr = self.get_inode_from_storage(ino).await?;
-                let mut ctx = guard.get(handle).unwrap().lock().await;
                 let reader = self.create_read_seek(File::open(&path)?).await?;
-                ctx.reader = Some(Box::new(reader));
-                ctx.attr = attr.into();
+                let handles = self.read_handles.read().await;
+                if let Some(context) = handles.get(&handle) {
+                    let mut context = context.lock().await;
+                    context.reader = Some(Box::new(reader));
+                    context.attr = attr.into();
+                }
             }
         }
 
@@ -2210,7 +2229,7 @@ impl EncryptedFs {
                 let writer = ctx.writer.as_mut().unwrap();
                 let file = writer.finish()?;
                 file.sync_all()?;
-                File::open(self.contents_path(ctx.ino).parent().unwrap())?.sync_all()?;
+                fs_util::sync_directory(self.contents_path(ctx.ino).parent().unwrap())?;
                 let set_attr: Option<SetFileAttr> = if save_attr {
                     Some(ctx.attr.clone().into())
                 } else {
@@ -2345,6 +2364,13 @@ impl EncryptedFs {
         let parent_path = self.contents_path(ino_contents_dir);
         let encrypted_name =
             crypto::encrypt_file_name(&entry.name, self.cipher, &*self.key.get().await?)?;
+        let legacy_dot =
+            crypto::legacy_special_file_name(&entry.name.expose_secret()).map(|name| {
+                (
+                    parent_path.join(LS_DIR).join(name),
+                    parent_path.join(HASH_DIR).join(name),
+                )
+            });
         // add to LS directory
         let self_clone = self
             .self_weak
@@ -2410,6 +2436,18 @@ impl EncryptedFs {
         })
         .await??;
         h.await??;
+        // Updating an old directory's parent link migrates that internal record
+        // after both new records have been written. Keeping both spellings would
+        // expose duplicate `..` entries and corrupt child counts.
+        if let Some((legacy_ls, legacy_hash)) = legacy_dot {
+            for path in [legacy_ls, legacy_hash] {
+                match fs::remove_file(path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2421,11 +2459,28 @@ impl EncryptedFs {
         self.data_dir.join(CONTENTS_DIR).join(ino.to_string())
     }
 
+    // Ordinary names keep the same plaintext hash in every format. Only the
+    // internal dot aliases changed; accept the old spelling when opening an
+    // existing store instead of making old Unix directories unreachable.
+    fn directory_hash_path(&self, parent: u64, name: &SecretString) -> PathBuf {
+        let directory = self.contents_path(parent).join(HASH_DIR);
+        let canonical = directory.join(crypto::hash_file_name(name));
+        if canonical.is_file() {
+            return canonical;
+        }
+        if let Some(legacy) = crypto::legacy_special_file_name(&name.expose_secret()) {
+            let legacy = directory.join(legacy);
+            if legacy.is_file() {
+                return legacy;
+            }
+        }
+        canonical
+    }
+
     async fn remove_directory_entry(&self, parent: u64, name: &SecretString) -> FsResult<()> {
         let parent_path = self.contents_path(parent);
         // remove from HASH
-        let name = crypto::hash_file_name(name);
-        let path = parent_path.join(HASH_DIR).join(name);
+        let path = self.directory_hash_path(parent, name);
         let lock = self
             .serialize_dir_entries_hash_locks
             .get_or_insert_with(path.to_str().unwrap().to_owned(), || RwLock::new(false));
@@ -2514,7 +2569,7 @@ fn read_or_create_key(
         bincode::serialize_into(&mut file, &salt)?;
         file.flush()?;
         file.sync_all()?;
-        File::open(salt_path.parent().expect("oops, we don't have a parent"))?.sync_all()?;
+        fs_util::sync_directory(salt_path.parent().expect("oops, we don't have a parent"))?;
         salt
     };
     // derive key from password
@@ -2544,7 +2599,7 @@ fn read_or_create_key(
         bincode::serialize_into(&mut writer, &key)?;
         let file = writer.finish()?;
         file.sync_all()?;
-        File::open(key_path.parent().unwrap())?.sync_all()?;
+        fs_util::sync_directory(key_path.parent().unwrap())?;
         Ok(SecretBox::new(Box::new(key)))
     }
 }

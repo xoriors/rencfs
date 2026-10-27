@@ -6,18 +6,21 @@ Detailed per-module guides live in `docs/claude/` — read the linked file when 
 
 - [docs/claude/crypto.md](docs/claude/crypto.md) — ciphers, block-based encrypted streams, key derivation, hashing
 - [docs/claude/encryptedfs.md](docs/claude/encryptedfs.md) — `EncryptedFs` core, data-dir layout, key management, caching/locking
-- [docs/claude/mount.md](docs/claude/mount.md) — FUSE integration (fuse3, Linux-only) and the platform-independent mount API
+- [docs/claude/mount.md](docs/claude/mount.md) — Linux FUSE and Windows WinFsp adapters and the platform-independent mount API
+- [docs/readme/Windows.md](docs/readme/Windows.md) — native WinFsp setup, supported scope and validation
 - [docs/claude/cli.md](docs/claude/cli.md) — binary entry point, clap CLI, password/keyring flow, logging
 - [docs/claude/testing.md](docs/claude/testing.md) — test/bench layout, pre-push script, CI
 - [java-bridge/CLAUDE.md](java-bridge/CLAUDE.md) — JNI bindings crate (auto-loaded when working in `java-bridge/`)
 
 ## Project Overview
 
-**rencfs** is an encrypted filesystem written in Rust that mounts with FUSE on Linux. It creates encrypted directories that can be safely backed up to untrusted servers or cloud storage. **Under active development — not audited, not recommended for sensitive production data.**
+**rencfs** is an encrypted filesystem written in Rust that mounts with FUSE on Linux and has an initial native WinFsp backend on Windows. It creates encrypted directories that can be safely backed up to untrusted servers or cloud storage. **Under active development — not audited, not recommended for sensitive production data.**
 
 Key differentiators: fast seek on reads and writes (256 KB encrypted blocks), parallel writes to the same file, memory-safe key handling (`shush-rs`: mlock/mprotect/zeroize), full metadata + filename encryption, and a modular design usable as a library without FUSE.
 
-Platform support: full functionality on **Linux only**. The binary prints a "not yet ready" / "not supported" message on other platforms; the library compiles elsewhere via a dummy mount backend.
+Platform support: Linux uses FUSE. Windows has an initial native WinFsp backend;
+see `docs/readme/Windows.md` and `WINDOWS_VALIDATION.md` for its limitations and
+required native validation. Other platforms retain a dummy mount backend.
 
 ## Common Development Commands
 
@@ -66,7 +69,7 @@ Tokio (async runtime) · fuse3 (FUSE, Linux-only dep) · ring (AEAD) · argon2 (
 | `src/lib.rs` | Library root with extensive rustdoc usage examples; exports `UID`/`GID`/`is_debug` | — |
 | `src/crypto.rs` + `src/crypto/` | Ciphers, encrypted read/write streams, KDF, hashing | [crypto.md](docs/claude/crypto.md) |
 | `src/encryptedfs.rs` + `src/encryptedfs/` | Core `EncryptedFs` (inode-based, FUSE-independent) | [encryptedfs.md](docs/claude/encryptedfs.md) |
-| `src/mount.rs` + `src/mount/` | Mount API; `linux.rs` (fuse3) / `dummy.rs` (other OS) | [mount.md](docs/claude/mount.md) |
+| `src/mount.rs` + `src/mount/` | Mount API; `linux.rs` (fuse3), `windows.rs` (WinFsp), `dummy.rs` (other OS) | [mount.md](docs/claude/mount.md), [Windows.md](docs/readme/Windows.md) |
 | `src/main.rs`, `src/run.rs`, `src/keyring.rs` | Binary only (not in the library): platform gate, CLI, OS keyring | [cli.md](docs/claude/cli.md) |
 | `src/log.rs` | tracing init (`log_init` returns a guard that must be kept alive) | [cli.md](docs/claude/cli.md) |
 | `java-bridge/` | Separate cdylib crate with JNI bindings | [java-bridge/CLAUDE.md](java-bridge/CLAUDE.md) |

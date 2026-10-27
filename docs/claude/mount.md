@@ -1,8 +1,11 @@
 # mount module
 
-Files: `src/mount.rs` (platform-independent API), `src/mount/linux.rs` (fuse3 implementation, Linux only), `src/mount/dummy.rs` (stub for other platforms)
+Files: `src/mount.rs` (platform-independent API), `src/mount/linux.rs` (fuse3 implementation, Linux only), `src/mount/windows.rs` (native WinFsp implementation, Windows only), `src/mount/dummy.rs` (stub for other platforms)
 
-Adapts `EncryptedFs` to a FUSE mount. Compiled per-platform via `#[cfg(target_os = "linux")]`: Linux gets the real `fuse3` implementation, everything else gets `dummy.rs` (compiles but does not work) so the library still builds cross-platform.
+Adapts `EncryptedFs` to a mounted filesystem. Linux selects `linux.rs` (FUSE),
+Windows selects `windows.rs` (WinFsp), and other platforms select `dummy.rs`.
+Windows prerequisites, limitations and native validation are documented in
+[Windows.md](../readme/Windows.md).
 
 ## Public API (`src/mount.rs`)
 
@@ -11,7 +14,7 @@ Adapts `EncryptedFs` to a FUSE mount. Compiled per-platform via `#[cfg(target_os
 - `MountHandle`:
   - implements `Future<Output = io::Result<()>>` — await it to block until the fs is unmounted externally
   - `umount()` (async) — unmount programmatically
-- `umount(mountpoint)` — shells out to `umount`, escalating: normal → `-f` (force) → `-l` (lazy)
+- `umount(mountpoint)` — Unix shells out to `umount`, escalating: normal → `-f` (force) → `-l` (lazy). Windows returns Unsupported; use the owning handle instead.
 
 Usage example in `src/lib.rs` rustdoc and `examples/mount.rs`.
 

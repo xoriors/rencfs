@@ -43,3 +43,26 @@ pub fn open_atomic_write(file: &Path) -> io::Result<AtomicWriteFile> {
     opt.preserve_mode(true).preserve_owner(true);
     opt.open(file)
 }
+
+/// Flush directory metadata where the operating system supports directory
+/// fsync. This implementation does not attempt a per-directory Windows flush.
+/// Ordinary directory handles cannot be used like Unix fsync handles. File data
+/// is still flushed through writable file handles before this function is
+/// called, but we do not claim Unix-style directory-fsync crash guarantees on
+/// Windows.
+pub(crate) fn sync_directory(directory: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        fs::File::open(directory)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        if !directory.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "directory not found",
+            ));
+        }
+        Ok(())
+    }
+}

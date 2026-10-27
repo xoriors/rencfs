@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io;
 use std::io::{Read, Seek, Write};
 use std::num::ParseIntError;
@@ -217,8 +217,33 @@ pub fn decrypt(s: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretStr
 
 #[allow(clippy::missing_errors_doc)]
 pub fn decrypt_file_name(name: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretString> {
-    let name = String::from(name).replace('|', "/");
+    // The first storage format used `|` for the base64 slash.  `|` is not a
+    // valid Windows filename character; new stores use `_` instead. Neither
+    // character occurs in the standard base64 alphabet, so both encodings can
+    // be decoded without changing the encrypted bytes or authentication tag.
+    let name = name.replace(['|', '_'], "/");
     decrypt(&name, cipher, key)
+}
+
+/// On-disk dot entries must not end in a period (Win32 strips trailing periods).
+/// These names cannot collide with encrypted names, whose alphabet excludes `$`.
+pub(crate) const DOT_ENTRY: &str = "$dot";
+pub(crate) const DOTDOT_ENTRY: &str = "$dotdot";
+
+pub(crate) fn special_file_name(name: &str) -> Option<&'static str> {
+    match name {
+        "." | "$." => Some(DOT_ENTRY),
+        ".." | "$.." => Some(DOTDOT_ENTRY),
+        _ => None,
+    }
+}
+
+pub(crate) fn legacy_special_file_name(name: &str) -> Option<&'static str> {
+    match name {
+        "." | "$." => Some("$."),
+        ".." | "$.." => Some("$.."),
+        _ => None,
+    }
 }
 
 #[instrument(skip(password, salt))]
@@ -241,14 +266,13 @@ pub fn encrypt_file_name(
 ) -> FsResult<String> {
     let secret_string = name.expose_secret();
 
-    match secret_string.as_str() {
-        "$." | "$.." => Ok(secret_string.clone()),
-        "." | ".." => Ok(format!("${secret_string}")),
-        _ => {
+    match special_file_name(secret_string.as_str()) {
+        Some(name) => Ok(name.to_owned()),
+        None => {
             let secret = SecretString::from_str(&secret_string)
                 .map_err(|err| Error::GenericString(err.to_string()))?;
             let mut encrypted = encrypt(&secret, cipher, key)?;
-            encrypted = encrypted.replace('/', "|");
+            encrypted = encrypted.replace('/', "_");
 
             Ok(encrypted)
         }
@@ -258,12 +282,9 @@ pub fn encrypt_file_name(
 #[allow(clippy::missing_errors_doc)]
 #[must_use]
 pub fn hash_file_name(name: &SecretString) -> String {
-    if *name.expose_secret() == "$." || *name.expose_secret() == "$.." {
-        name.expose_secret().clone()
-    } else if *name.expose_secret() == "." || *name.expose_secret() == ".." {
-        format!("${}", name.expose_secret())
-    } else {
-        hex::encode(hash_secret_string(name))
+    match special_file_name(&name.expose_secret()) {
+        Some(name) => name.to_owned(),
+        None => hex::encode(hash_secret_string(name)),
     }
 }
 
@@ -376,7 +397,7 @@ where
     let mut file = fs_util::open_atomic_write(file)?;
     file = serialize_encrypt_into(file, value, cipher, key)?;
     file.commit()?;
-    File::open(parent)?.sync_all()?;
+    fs_util::sync_directory(parent)?;
     Ok(())
 }
 
@@ -549,27 +570,74 @@ mod tests {
 
     #[test]
     fn test_hash_file_name_special_cases() {
-        let expected = "$.".to_owned();
-        let name = SecretString::new(Box::new(expected.clone()));
+        let expected = DOT_ENTRY.to_owned();
+        let name = SecretString::new(Box::new("$.".to_owned()));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
 
-        let expected = "$..".to_owned();
-        let name = SecretString::new(Box::new(expected.clone()));
+        let expected = DOTDOT_ENTRY.to_owned();
+        let name = SecretString::new(Box::new("$..".to_owned()));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
 
         let input = ".".to_owned();
-        let expected = "$.".to_owned();
+        let expected = DOT_ENTRY.to_owned();
         let name = SecretString::new(Box::new(input));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
 
         let input = "..".to_owned();
-        let expected = "$..".to_owned();
+        let expected = DOTDOT_ENTRY.to_owned();
         let name = SecretString::new(Box::new(input));
         let result = hash_file_name(&name);
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_portable_file_names_decode_legacy_ciphertext() {
+        let name = SecretString::new(Box::new("long-name".repeat(64)));
+        for cipher in [Cipher::ChaCha20Poly1305, Cipher::Aes256Gcm] {
+            let key = secret_key(cipher);
+            let portable = encrypt_file_name(&name, cipher, &key).unwrap();
+            assert!(!portable.chars().any(|c| "<>:\"/\\|?*".contains(c)));
+            assert!(!portable.ends_with('.'));
+            let old = portable.replace('_', "|");
+            for encoded in [&portable, &old] {
+                let decoded = decrypt_file_name(encoded, cipher, &key).unwrap();
+                assert_eq!(decoded.expose_secret(), name.expose_secret());
+            }
+        }
+    }
+
+    #[test]
+    fn test_portable_dot_entries_do_not_reserve_plaintext_names() {
+        let cipher = Cipher::ChaCha20Poly1305;
+        let key = secret_key(cipher);
+        for (name, expected) in [
+            (".", DOT_ENTRY),
+            ("..", DOTDOT_ENTRY),
+            ("$.", DOT_ENTRY),
+            ("$..", DOTDOT_ENTRY),
+        ] {
+            let name = SecretString::from_str(name).unwrap();
+            assert_eq!(encrypt_file_name(&name, cipher, &key).unwrap(), expected);
+            assert_eq!(hash_file_name(&name), expected);
+        }
+        // A user can still store literal `$dot` and `$dotdot` names. They are
+        // encrypted and hashed normally, distinct from the internal records.
+        for name in [DOT_ENTRY, DOTDOT_ENTRY] {
+            let secret = SecretString::from_str(name).unwrap();
+            assert_ne!(hash_file_name(&secret), name);
+            let encrypted = encrypt_file_name(&secret, cipher, &key).unwrap();
+            assert_ne!(encrypted, name);
+            assert_eq!(
+                decrypt_file_name(&encrypted, cipher, &key)
+                    .unwrap()
+                    .expose_secret()
+                    .as_str(),
+                name
+            );
+        }
     }
 
     #[test]
