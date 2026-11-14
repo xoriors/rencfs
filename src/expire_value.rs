@@ -86,6 +86,8 @@ impl<
 
     pub async fn clear(&self) {
         self.cache.clear().await;
+        let mut weak = self.weak.write().await;
+        *weak = None;
     }
 }
 
@@ -147,7 +149,14 @@ mod tests {
         expire_value.clear().await;
         let _ = expire_value.get().await.unwrap();
         // ensure provider was called again
-        let called = called.clone();
         assert_eq!(called.load(Ordering::SeqCst), 3);
+
+        // clear while a strong ref is still alive, the old value must not be served anymore
+        let held = expire_value.get().await.unwrap();
+        assert_eq!(called.load(Ordering::SeqCst), 3);
+        expire_value.clear().await;
+        let _ = expire_value.get().await.unwrap();
+        assert_eq!(called.load(Ordering::SeqCst), 4);
+        drop(held);
     }
 }

@@ -1,15 +1,15 @@
 #![cfg(target_os = "linux")]
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Mutex, OnceLock};
 use std::thread::sleep;
 use std::time::Duration;
 
 use rencfs::crypto::Cipher;
 use rencfs::encryptedfs::PasswordProvider;
-use rencfs::mount::{create_mount_point, MountHandle, MountPoint};
+use rencfs::mount::{create_mount_point, umount, MountHandle, MountPoint};
 use shush_rs::SecretString;
 use tokio::runtime::Runtime;
 
@@ -21,11 +21,60 @@ struct TestResource {
 pub const MOUNT_PATH: &str = "/tmp/rencfs/mnt";
 pub const DATA_PATH: &str = "/tmp/rencfs/data";
 
+static TEST_RESOURCES: OnceLock<Mutex<TestResource>> = OnceLock::new();
+
+/// Unmounts whatever is mounted on [`MOUNT_PATH`], ignoring "not mounted" errors.
+fn force_umount() {
+    if umount(MOUNT_PATH).is_ok() {
+        return;
+    }
+    for cmd in ["fusermount3", "fusermount"] {
+        if let Ok(status) = Command::new(cmd).arg("-u").arg(MOUNT_PATH).status() {
+            if status.success() {
+                return;
+            }
+        }
+    }
+}
+
+/// Runs when the test process exits, statics are never dropped so we cannot rely on `Drop`.
+extern "C" fn teardown() {
+    let Some(resources) = TEST_RESOURCES.get() else {
+        return;
+    };
+    // don't panic in an exit handler, a test could have failed while holding the lock
+    let mut resources = match resources.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(mh) = resources.mount_handle.take() {
+        if let Err(err) = resources.runtime.block_on(mh.umount()) {
+            eprintln!("cannot unmount {MOUNT_PATH}: {err}, trying to force unmount");
+            force_umount();
+        }
+    }
+}
+
 impl TestResource {
+    fn ensure_clean_environment() {
+        // a previous run that was killed could have left a stale mount behind
+        force_umount();
+        for path in [MOUNT_PATH, DATA_PATH] {
+            match fs::remove_dir_all(path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => panic!("cannot clean {path}: {err}"),
+            }
+            fs::create_dir_all(path).unwrap_or_else(|err| panic!("cannot create {path}: {err}"));
+        }
+    }
+
     fn new() -> Self {
+        Self::ensure_clean_environment();
+
         let mount_point = create_mount_point(
-            Path::new(&MOUNT_PATH),
-            Path::new(&DATA_PATH),
+            Path::new(MOUNT_PATH),
+            Path::new(DATA_PATH),
             get_password_provider(),
             Cipher::ChaCha20Poly1305,
             false,
@@ -53,53 +102,20 @@ impl TestResource {
     }
 }
 
-impl Drop for TestResource {
-    fn drop(&mut self) {
-        let mh = self
-            .mount_handle
-            .take()
-            .expect("MountHandle should be some");
-        let res = self.runtime.block_on(async { mh.umount().await });
-        match res {
-            Ok(_) => println!("Succesfully unmounted"),
-            Err(e) => {
-                panic!("Something went wrong when unmounting {e}.You may need to manually unmount")
-            }
-        }
-    }
-}
-
-static mut TEST_RESOURCES: Option<Arc<Mutex<TestResource>>> = None;
-static INIT: Once = Once::new();
-static TEARDOWN: Once = Once::new();
-static RESOURCE_COUNT: AtomicUsize = AtomicUsize::new(0);
-
 pub struct TestGuard;
 
 impl TestGuard {
     pub fn setup() -> Self {
-        unsafe {
-            INIT.call_once(|| {
-                println!("Initializing the mount");
-                TEST_RESOURCES = Some(Arc::new(Mutex::new(TestResource::new())));
-            });
-        }
-        RESOURCE_COUNT.fetch_add(1, Ordering::SeqCst);
+        TEST_RESOURCES.get_or_init(|| {
+            println!("Initializing the mount");
+            let resources = Mutex::new(TestResource::new());
+            // unmount when the test binary exits
+            unsafe {
+                libc::atexit(teardown);
+            }
+            resources
+        });
         Self
-    }
-}
-
-#[allow(static_mut_refs)]
-impl Drop for TestGuard {
-    fn drop(&mut self) {
-        if RESOURCE_COUNT.fetch_sub(1, Ordering::SeqCst) == 1 {
-            TEARDOWN.call_once(|| unsafe {
-                if let Some(resources) = TEST_RESOURCES.take() {
-                    println!("Deinitializing the mount");
-                    drop(resources);
-                }
-            });
-        }
     }
 }
 
@@ -115,15 +131,12 @@ pub fn get_password_provider() -> Box<dyn PasswordProvider> {
 }
 
 pub fn count_files(folder_path: &str) -> u32 {
-    println!("<<<[{}]>>>", &folder_path);
     let path = Path::new(folder_path);
     let mut file_count = 0;
     if let Ok(dir_iterator) = fs::read_dir(path) {
         for _entry in dir_iterator {
-            let _ = _entry.inspect(|e| println!("[{:?}]", e.file_name()));
             file_count += 1;
         }
     }
-    println!("<<< File count [{}] >>>", &file_count);
     file_count
 }
