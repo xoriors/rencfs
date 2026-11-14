@@ -245,8 +245,7 @@ pub fn encrypt_file_name(
         "$." | "$.." => Ok(secret_string.clone()),
         "." | ".." => Ok(format!("${secret_string}")),
         _ => {
-            let secret = SecretString::from_str(&secret_string)
-                .map_err(|err| Error::GenericString(err.to_string()))?;
+            let secret = SecretString::from_str(&secret_string).unwrap();
             let mut encrypted = encrypt(&secret, cipher, key)?;
             encrypted = encrypted.replace('/', "|");
 

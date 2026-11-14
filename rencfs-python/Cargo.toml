@@ -10,12 +10,10 @@ crate-type = ["cdylib"]
 doc = false
 test = false
 doctest = false
-
+bench = false
 [dependencies]
-pyo3 = { version = "0.21.0", features = ["extension-module", "anyhow", "macros"] }
+pyo3 = { version = "0.30.1", features = ["extension-module"] }
 rencfs = { path = "../" }
 tokio = { version = "1.36", features = ["full"] }
 shush-rs = "0.1.10"
-
-[package.metadata]
-PYO3_USE_ABI3_FORWARD_COMPATIBILITY = "1"
+libc = "0.2.153"

@@ -7,7 +7,6 @@ export RUSTFLAGS="-Dwarnings"
 export RUSTDOCFLAGS="-Dwarnings"
 export RUST_TEST_THREADS=14
 export CARGO_BUILD_JOBS=14
-export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
 
 cargo fmt --all
 
@@ -49,4 +48,13 @@ cargo clippy --all-targets --release -- \
 cargo test --release --all --all-features
 cargo bench --workspace --all-targets --all-features -j 14
 cargo doc --workspace --all-features --no-deps
+cd ..
+
+cd rencfs-python
+python3 -m venv .venv
+source .venv/bin/activate
+pip install maturin pytest
+maturin develop
+pytest tests
+deactivate
 cd ..

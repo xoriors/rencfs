@@ -1,4 +1,4 @@
-use pyo3::exceptions::{PyFileNotFoundError, PyPermissionError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyFileExistsError, PyOSError, PyFileNotFoundError, PyPermissionError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use rencfs::crypto::Cipher as RustCipher;
 use rencfs::encryptedfs::{
@@ -7,7 +7,7 @@ use rencfs::encryptedfs::{
 };
 
 /// Wrapper for the FileType
-#[pyclass]
+#[pyclass(module = "rencfs", eq, eq_int, from_py_object)]
 #[derive(Clone, PartialEq, Debug)]
 pub enum FileType {
     RegularFile,
@@ -33,7 +33,7 @@ impl From<FileType> for RustFileType {
 }
 
 /// Wrapper for the supported Ciphers
-#[pyclass]
+#[pyclass(module = "rencfs", eq, eq_int, from_py_object)]
 #[derive(Clone, PartialEq, Debug)]
 pub enum Cipher {
     Aes256Gcm,
@@ -58,7 +58,7 @@ impl From<Cipher> for RustCipher {
     }
 }
 
-#[pyclass]
+#[pyclass(module = "rencfs", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct CreateFileAttr {
     #[pyo3(get, set)]
@@ -104,7 +104,7 @@ impl From<CreateFileAttr> for RustCreateFileAttr {
     }
 }
 
-#[pyclass]
+#[pyclass(module = "rencfs", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct FileAttr {
     #[pyo3(get, set)]
@@ -177,7 +177,7 @@ impl From<RustFileAttr> for FileAttr {
     }
 }
 
-#[pyclass]
+#[pyclass(module = "rencfs", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct SetFileAttr {
     #[pyo3(get, set)]
@@ -253,7 +253,7 @@ impl SetFileAttr {
     }
 }
 
-#[pyclass]
+#[pyclass(module = "rencfs", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct DirEntry {
     #[pyo3(get)]
@@ -272,7 +272,7 @@ impl DirEntry {
     }
 }
 
-#[pyclass]
+#[pyclass(module = "rencfs", from_py_object)]
 #[derive(Clone, Debug)]
 pub struct DirEntryPlus {
     #[pyo3(get)]
@@ -309,12 +309,15 @@ impl From<FsError> for PyFsError {
 impl From<PyFsError> for PyErr {
     fn from(err: PyFsError) -> PyErr {
         match err.0 {
-            FsError::InodeNotFound => PyFileNotFoundError::new_err("Inode not found"),
-            FsError::AlreadyExists => {
-                pyo3::exceptions::PyFileExistsError::new_err("File already exists")
-            }
-            FsError::InvalidInput(msg) => PyValueError::new_err(msg.to_string()),
-            FsError::ReadOnly => PyPermissionError::new_err("File system is read only"),
+            FsError::Io { source, .. } => source.into(),
+            FsError::InodeNotFound => PyFileNotFoundError::new_err("inode not found"),
+            FsError::NotFound(msg) => PyFileNotFoundError::new_err(msg),
+            FsError::AlreadyExists => PyFileExistsError::new_err("already exists"),
+            FsError::NotEmpty => PyOSError::new_err((libc::ENOTEMPTY, "directory not empty")),
+            FsError::InvalidFileHandle => PyOSError::new_err((libc::EBADF, "invalid file handle")),
+            FsError::InvalidInput(msg) => PyValueError::new_err(msg),
+            FsError::InvalidPassword => PyPermissionError::new_err("invalid password"),
+            FsError::ReadOnly => PyPermissionError::new_err("file system is read only"),
             e => PyRuntimeError::new_err(e.to_string()),
         }
     }

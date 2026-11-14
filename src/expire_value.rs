@@ -141,7 +141,6 @@ mod tests {
 
         // drop ref so now provider should be called again
         drop(v);
-
         let _ = expire_value.get().await.unwrap();
         // ensure provider was called again
         assert_eq!(called.load(Ordering::SeqCst), 2);
@@ -151,5 +150,13 @@ mod tests {
         let _ = expire_value.get().await.unwrap();
         // ensure provider was called again
         assert_eq!(called.load(Ordering::SeqCst), 3);
+
+        // clear while a strong ref is still alive, the old value must not be served anymore
+        let held = expire_value.get().await.unwrap();
+        assert_eq!(called.load(Ordering::SeqCst), 3);
+        expire_value.clear().await;
+        let _ = expire_value.get().await.unwrap();
+        assert_eq!(called.load(Ordering::SeqCst), 4);
+        drop(held);
     }
 }

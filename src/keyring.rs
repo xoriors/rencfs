@@ -29,10 +29,10 @@ pub(crate) fn get(suffix: &str) -> Result<SecretString, keyring::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial; // <--- ADDED THIS IMPORT
+    use serial_test::serial;
 
     #[test]
-    #[serial] // <--- ADDED THIS ATTRIBUTE
+    #[serial]
     fn test_save() {
         let password = SecretString::from_str("password").unwrap();
         assert!(save(&password, "test1").is_ok());
@@ -40,7 +40,7 @@ mod tests {
     }
 
     #[test]
-    #[serial] // <--- ADDED THIS ATTRIBUTE
+    #[serial]
     fn test_get() {
         let password = SecretString::from_str("password").unwrap();
         save(&password, "test2").unwrap();
@@ -52,7 +52,7 @@ mod tests {
     }
 
     #[test]
-    #[serial] // <--- ADDED THIS ATTRIBUTE
+    #[serial]
     fn test_remove() {
         let password = SecretString::from_str("password").unwrap();
         save(&password, "test3").unwrap();
