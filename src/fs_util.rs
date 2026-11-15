@@ -43,3 +43,21 @@ pub fn open_atomic_write(file: &Path) -> io::Result<AtomicWriteFile> {
     opt.preserve_mode(true).preserve_owner(true);
     opt.open(file)
 }
+
+/// Flushes directory metadata where the host exposes directory fsync.
+///
+/// Windows does not support opening directories with `std::fs::File::open`
+/// for this purpose, so this is a no-op there. Callers still sync the file
+/// contents before calling this helper.
+pub fn sync_directory(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        let _ = path;
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    {
+        fs::File::open(path)?.sync_all()
+    }
+}

@@ -208,8 +208,10 @@ async fn test_read() {
             assert_eq!(data, &buf);
 
             // larger buffer
-            let len = fs.read(attr.ino, 0, &mut [0; 42], fh).await.unwrap();
+            let mut repeated_read = [0; 42];
+            let len = fs.read(attr.ino, 0, &mut repeated_read, fh).await.unwrap();
             assert_eq!(len, 7);
+            assert_eq!(&data[..], &repeated_read[..len]);
 
             // offset
             let data = b"test-37";

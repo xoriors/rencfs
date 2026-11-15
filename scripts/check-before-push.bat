@@ -2,7 +2,7 @@
 setlocal
 
 set CARGO_TERM_COLOR=always
-gsset RUSTFLAGS=-Dwarnings
+set RUSTFLAGS=-Dwarnings
 set RUSTDOCFLAGS=-Dwarnings
 set RUST_TEST_THREADS=14
 set CARGO_BUILD_JOBS=14
