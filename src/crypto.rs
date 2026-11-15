@@ -223,7 +223,7 @@ pub fn decrypt_file_name(name: &str, cipher: Cipher, key: &SecretVec<u8>) -> Res
 }
 
 fn unescape_encrypted_file_name(name: &str) -> String {
-    name.replace('|', "/").replace('%', "/")
+    name.replace(['|', '%'], "/")
 }
 
 fn escape_encrypted_file_name(name: &str) -> String {

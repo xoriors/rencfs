@@ -4,7 +4,7 @@ setlocal
 set CARGO_TERM_COLOR=always
 set RUSTFLAGS=-Dwarnings
 set RUSTDOCFLAGS=-Dwarnings
-set RUST_TEST_THREADS=14
+set RUST_TEST_THREADS=1
 set CARGO_BUILD_JOBS=14
 
 if %errorlevel% neq 0 exit /b %errorlevel%
@@ -58,7 +58,7 @@ if %errorlevel% neq 0 exit /b %errorlevel%
 cargo check --all
 if %errorlevel% neq 0 exit /b %errorlevel%
 
-cargo clippy --all-targets --release ^
+cargo clippy --all-targets --release -- ^
     -A clippy::similar_names ^
     -A clippy::too_many_arguments ^
     -A clippy::significant_drop_tightening ^

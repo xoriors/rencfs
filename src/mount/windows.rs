@@ -330,12 +330,10 @@ impl EncryptedFsWinFsp {
                 }
                 Ok(None) => {
                     // Exact match failed — try case-insensitive fallback.
-                    match self.case_insensitive_lookup(current_ino, component) {
-                        Ok(attr) => {
-                            current_ino = attr.ino;
-                            continue;
-                        }
-                        Err(e) => return Err(e),
+                    {
+                        let attr = self.case_insensitive_lookup(current_ino, component)?;
+                        current_ino = attr.ino;
+                        continue;
                     }
                 }
                 Err(e) => return Err(e),
