@@ -78,6 +78,16 @@ jobs:
           cargo aur
           cargo generate-rpm
 
+      - name: python bindings tests
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd rencfs-python
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install maturin pytest
+          maturin develop
+          pytest tests
+
       - name: java-bridge build
         run: |
           cd java-bridge

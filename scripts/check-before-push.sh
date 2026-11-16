@@ -49,3 +49,12 @@ cargo test --release --all --all-features
 cargo bench --workspace --all-targets --all-features -j 14
 cargo doc --workspace --all-features --no-deps
 cd ..
+
+cd rencfs-python
+python3 -m venv .venv
+source .venv/bin/activate
+pip install maturin pytest
+maturin develop
+pytest tests
+deactivate
+cd ..
