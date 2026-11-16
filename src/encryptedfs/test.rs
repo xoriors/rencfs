@@ -254,6 +254,51 @@ async fn exact_attribute_timestamps_are_stored_and_omitted_values_are_preserved(
 }
 
 #[tokio::test]
+async fn open_reader_cannot_restore_stale_times_after_writer_closes() {
+    run_test(
+        TestSetup {
+            key: "reader_writer_timestamp_merge",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let name = SecretString::from_str("reader-writer-times.txt").unwrap();
+            let (initial_handle, attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &name,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    true,
+                )
+                .await
+                .unwrap();
+            fs.write(attr.ino, 0, b"before", initial_handle)
+                .await
+                .unwrap();
+            fs.release(initial_handle).await.unwrap();
+
+            let reader = fs.open(attr.ino, true, false).await.unwrap();
+            let writer = fs.open(attr.ino, false, true).await.unwrap();
+            let before_write = fs.get_attr(attr.ino).await.unwrap();
+            fs.write(attr.ino, 0, b"after!", writer).await.unwrap();
+            let after_write = fs.get_attr(attr.ino).await.unwrap();
+            assert!(after_write.mtime > before_write.mtime);
+
+            fs.release(writer).await.unwrap();
+            let after_writer_close = fs.get_attr(attr.ino).await.unwrap();
+            assert_eq!(after_writer_close.mtime, after_write.mtime);
+            fs.release(reader).await.unwrap();
+            assert_eq!(
+                fs.get_attr(attr.ino).await.unwrap().mtime,
+                after_write.mtime
+            );
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 // #[ignore]

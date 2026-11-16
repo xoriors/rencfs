@@ -149,6 +149,13 @@ pub struct SetFileAttr {
     pub flags: Option<u32>,
 }
 
+#[derive(Clone, Copy)]
+enum TimestampUpdateMode {
+    Touch,
+    Merge,
+    Exact,
+}
+
 impl SetFileAttr {
     #[must_use]
     pub const fn with_size(mut self, size: u64) -> Self {
@@ -1330,7 +1337,8 @@ impl EncryptedFs {
         if self.read_only {
             return Err(FsError::ReadOnly);
         }
-        self.set_attr2(ino, set_attr, false, false).await
+        self.set_attr2(ino, set_attr, false, TimestampUpdateMode::Touch)
+            .await
     }
 
     /// Set the supplied metadata timestamps exactly, preserving omitted fields.
@@ -1342,7 +1350,8 @@ impl EncryptedFs {
             .read_write_locks
             .get_or_insert_with(ino, || RwLock::new(false));
         let _write_guard = lock.write().await;
-        self.set_attr2(ino, set_attr, false, true).await?;
+        self.set_attr2(ino, set_attr, false, TimestampUpdateMode::Exact)
+            .await?;
         self.update_open_handle_timestamps(ino, &set_attr).await;
         Ok(())
     }
@@ -1352,7 +1361,7 @@ impl EncryptedFs {
         ino: u64,
         set_attr: SetFileAttr,
         overwrite_size: bool,
-        exact_timestamps: bool,
+        timestamp_mode: TimestampUpdateMode,
     ) -> FsResult<()> {
         let serialize_update_lock = self
             .serialize_update_inode_locks
@@ -1361,23 +1370,27 @@ impl EncryptedFs {
 
         let mut attr = self.get_attr(ino).await?;
         merge_attr(&mut attr, &set_attr, overwrite_size);
-        if exact_timestamps {
-            if let Some(atime) = set_attr.atime {
-                attr.atime = atime;
+        match timestamp_mode {
+            TimestampUpdateMode::Touch => {
+                let now = SystemTime::now();
+                attr.ctime = now;
+                attr.atime = now;
             }
-            if let Some(mtime) = set_attr.mtime {
-                attr.mtime = mtime;
+            TimestampUpdateMode::Merge => {}
+            TimestampUpdateMode::Exact => {
+                if let Some(atime) = set_attr.atime {
+                    attr.atime = atime;
+                }
+                if let Some(mtime) = set_attr.mtime {
+                    attr.mtime = mtime;
+                }
+                if let Some(ctime) = set_attr.ctime {
+                    attr.ctime = ctime;
+                }
+                if let Some(crtime) = set_attr.crtime {
+                    attr.crtime = crtime;
+                }
             }
-            if let Some(ctime) = set_attr.ctime {
-                attr.ctime = ctime;
-            }
-            if let Some(crtime) = set_attr.crtime {
-                attr.crtime = crtime;
-            }
-        } else {
-            let now = SystemTime::now();
-            attr.ctime = now;
-            attr.atime = now;
         }
 
         self.write_inode_to_storage(&attr).await?;
@@ -1603,7 +1616,8 @@ impl EncryptedFs {
             let ino = ctx.ino;
             drop(ctx);
             if !self.read_only {
-                self.set_attr2(ino, set_attr, false, true).await?;
+                self.set_attr2(ino, set_attr, false, TimestampUpdateMode::Merge)
+                    .await?;
             }
 
             valid_fh = true;
@@ -1639,7 +1653,8 @@ impl EncryptedFs {
                 let set_attr: SetFileAttr = context.attr.clone().into();
                 drop(context);
                 drop(write_handles);
-                self.set_attr2(ino, set_attr, false, true).await?;
+                self.set_attr2(ino, set_attr, false, TimestampUpdateMode::Merge)
+                    .await?;
                 let attr = self.get_attr(ino).await?;
                 {
                     let write_size = self
@@ -1852,7 +1867,8 @@ impl EncryptedFs {
                     let set_attr: SetFileAttr = context.attr.clone().into();
                     drop(context);
                     drop(write_handles);
-                    self.set_attr2(ino, set_attr, false, true).await?;
+                    self.set_attr2(ino, set_attr, false, TimestampUpdateMode::Merge)
+                        .await?;
                     let attr = self.get_inode_from_storage(ino).await?;
                     {
                         let write_handles = self.write_handles.read().await;
@@ -2061,7 +2077,8 @@ impl EncryptedFs {
             .with_mtime(now)
             .with_ctime(now)
             .with_atime(now);
-        self.set_attr2(ino, set_attr, true, false).await?;
+        self.set_attr2(ino, set_attr, true, TimestampUpdateMode::Touch)
+            .await?;
 
         let attr = self.get_inode_from_storage(ino).await?;
         println!("attr 1: {:?}", attr.size);
@@ -2102,7 +2119,8 @@ impl EncryptedFs {
                 let set_attr: SetFileAttr = ctx.attr.clone().into();
                 drop(ctx);
                 drop(write_handles_guard);
-                self.set_attr2(ino, set_attr, false, true).await?;
+                self.set_attr2(ino, set_attr, false, TimestampUpdateMode::Merge)
+                    .await?;
                 self.reset_handles(ino, Some(handle), None, true).await?;
                 let attr = self.get_inode_from_storage(ino).await?;
                 let write_handles_guard = self.write_handles.read().await;
@@ -2351,7 +2369,8 @@ impl EncryptedFs {
                 let ctx = guard.get(handle).unwrap().lock().await;
                 let set_attr: SetFileAttr = ctx.attr.clone().into();
                 drop(ctx);
-                self.set_attr2(ino, set_attr, false, true).await?;
+                self.set_attr2(ino, set_attr, false, TimestampUpdateMode::Merge)
+                    .await?;
                 let attr = self.get_inode_from_storage(ino).await?;
                 let mut ctx = guard.get(handle).unwrap().lock().await;
                 let reader = self.create_read_seek(File::open(&path)?).await?;
@@ -2379,7 +2398,8 @@ impl EncryptedFs {
                 };
                 drop(ctx);
                 if let Some(set_attr) = set_attr {
-                    self.set_attr2(ino, set_attr, false, true).await?;
+                    self.set_attr2(ino, set_attr, false, TimestampUpdateMode::Merge)
+                        .await?;
                 }
                 let attr = self.get_inode_from_storage(ino).await?;
                 let mut ctx = lock.lock().await;
