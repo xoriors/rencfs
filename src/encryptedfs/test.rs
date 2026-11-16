@@ -254,6 +254,50 @@ async fn exact_attribute_timestamps_are_stored_and_omitted_values_are_preserved(
 }
 
 #[tokio::test]
+async fn exact_timestamp_update_racing_reader_release_keeps_exact_value() {
+    run_test(
+        TestSetup {
+            key: "exact_timestamp_reader_release_race",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let name = SecretString::from_str("exact-race.txt").unwrap();
+            let (_, attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &name,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+            let reader = fs.open(attr.ino, true, false).await.unwrap();
+            let exact_atime = UNIX_EPOCH + Duration::from_secs(100);
+
+            // Hold the handle map so release and the exact update both reach
+            // their map-lock wait. Release must not remove the context before
+            // the exact update has copied its timestamp into that context.
+            let read_handles = fs.read_handles.write().await;
+            let mut release = Box::pin(fs.release(reader));
+            assert!(futures_util::poll!(release.as_mut()).is_pending());
+            let mut exact_update = Box::pin(
+                fs.set_attr_exact(attr.ino, SetFileAttr::default().with_atime(exact_atime)),
+            );
+            assert!(futures_util::poll!(exact_update.as_mut()).is_pending());
+            drop(read_handles);
+
+            let (release_result, exact_result) = tokio::join!(release, exact_update);
+            release_result.unwrap();
+            exact_result.unwrap();
+            assert_eq!(fs.get_attr(attr.ino).await.unwrap().atime, exact_atime);
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn open_reader_cannot_restore_stale_times_after_writer_closes() {
     run_test(
         TestSetup {
@@ -2457,6 +2501,95 @@ async fn renaming_directory_removes_legacy_parent_storage_entries() {
         },
     )
     .await;
+}
+
+#[tokio::test]
+async fn legacy_dot_entries_remain_findable_after_windows_name_migration() {
+    run_test(
+        TestSetup {
+            key: "legacy_dot_entry_lookup",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let name = SecretString::from_str("legacy-dot-dir").unwrap();
+            let (_, attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &name,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let contents = fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
+            for (canonical, legacy, lookup_name, expected_ino) in [
+                ("$rencfs-self", "$.", ".", attr.ino),
+                ("$rencfs-parent", "$..", "..", ROOT_INODE),
+            ] {
+                for directory in ["ls", HASH_DIR] {
+                    let canonical_path = contents.join(directory).join(canonical);
+                    let legacy_path = super::storage_path_preserving_trailing_dots(
+                        &contents.join(directory).join(legacy),
+                    )
+                    .unwrap();
+                    std::fs::rename(&canonical_path, &legacy_path).unwrap_or_else(|error| {
+                        panic!(
+                            "failed to migrate {} to {}: {error}",
+                            canonical_path.display(),
+                            legacy_path.display()
+                        )
+                    });
+                }
+
+                let lookup = SecretString::from_str(lookup_name).unwrap();
+                assert!(
+                    fs.exists_by_name(attr.ino, &lookup).unwrap(),
+                    "legacy {lookup_name} hash entry should exist"
+                );
+                let found = fs
+                    .find_by_name(attr.ino, &lookup)
+                    .await
+                    .unwrap_or_else(|error| panic!("lookup for {lookup_name} failed: {error}"));
+                assert_eq!(found.unwrap().ino, expected_ino);
+            }
+
+            let entries: Vec<DirectoryEntry> = fs
+                .read_dir(attr.ino)
+                .await
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|entry| entry.name.expose_secret().as_str() == ".")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|entry| entry.name.expose_secret().as_str() == "..")
+                    .count(),
+                1
+            );
+        },
+    )
+    .await;
+}
+
+#[cfg(windows)]
+#[test]
+fn storage_path_helper_preserves_existing_verbatim_paths() {
+    for path in [r"\\?\C:\vault\file", r"\\?\UNC\server\share\vault\file"] {
+        assert_eq!(
+            super::storage_path_preserving_trailing_dots(std::path::Path::new(path)).unwrap(),
+            std::path::PathBuf::from(path)
+        );
+    }
 }
 
 #[tokio::test]

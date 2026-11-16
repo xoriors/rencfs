@@ -55,6 +55,14 @@ fn storage_hash_file_name(name: &SecretString) -> String {
     }
 }
 
+fn legacy_special_hash_file_name(name: &SecretString) -> Option<&'static str> {
+    match name.expose_secret().as_str() {
+        "." => Some("$."),
+        ".." => Some("$.."),
+        _ => None,
+    }
+}
+
 pub(crate) const LS_DIR: &str = "ls";
 pub(crate) const HASH_DIR: &str = "hash";
 
@@ -863,7 +871,25 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
         let hash = storage_hash_file_name(name);
-        let hash_path = self.contents_path(parent).join(HASH_DIR).join(hash);
+        let canonical_hash_path = self.contents_path(parent).join(HASH_DIR).join(hash);
+        let legacy_hash_path = legacy_special_hash_file_name(name)
+            .map(|legacy_name| {
+                storage_path_preserving_trailing_dots(
+                    &self.contents_path(parent).join(HASH_DIR).join(legacy_name),
+                )
+            })
+            .transpose()?;
+        let hash_path = if canonical_hash_path.is_file() {
+            canonical_hash_path
+        } else if let Some(legacy_hash_path) = legacy_hash_path {
+            if legacy_hash_path.is_file() {
+                legacy_hash_path
+            } else {
+                canonical_hash_path
+            }
+        } else {
+            canonical_hash_path
+        };
         if !hash_path.is_file() {
             return Ok(None);
         }
@@ -1059,8 +1085,17 @@ impl EncryptedFs {
             return Err(FsError::InvalidInodeType);
         }
         let hash = storage_hash_file_name(name);
-        let hash_path = self.contents_path(parent).join(HASH_DIR).join(hash);
-        Ok(hash_path.is_file())
+        let canonical_hash_path = self.contents_path(parent).join(HASH_DIR).join(hash);
+        if canonical_hash_path.is_file() {
+            return Ok(true);
+        }
+        if let Some(legacy_name) = legacy_special_hash_file_name(name) {
+            let legacy_hash_path = storage_path_preserving_trailing_dots(
+                &self.contents_path(parent).join(HASH_DIR).join(legacy_name),
+            )?;
+            return Ok(legacy_hash_path.is_file());
+        }
+        Ok(false)
     }
 
     #[allow(clippy::missing_errors_doc)]
@@ -1205,7 +1240,8 @@ impl EncryptedFs {
             .serialize_dir_entries_ls_locks
             .get_or_insert_with(file_path.clone(), || RwLock::new(false));
         let guard = lock.read().await;
-        let file = File::open(entry.path())?;
+        let entry_path = storage_path_preserving_trailing_dots(&entry.path())?;
+        let file = File::open(entry_path)?;
         let res: bincode::Result<(u64, FileType)> = bincode::deserialize_from(crypto::create_read(
             file,
             self.cipher,
@@ -1590,37 +1626,56 @@ impl EncryptedFs {
         }
         let mut valid_fh = false;
 
-        // read
-        let ctx = { self.read_handles.write().await.remove(&handle) };
-        if let Some(ctx) = ctx {
-            let ctx = ctx.lock().await;
-
-            {
-                let mut opened_files_for_read = self.opened_files_for_read.write().await;
-                opened_files_for_read
-                    .get_mut(&ctx.ino)
-                    .expect("handle is missing")
-                    .remove(&handle);
-                if opened_files_for_read
-                    .get(&ctx.ino)
-                    .expect("handle is missing")
-                    .is_empty()
-                {
-                    opened_files_for_read.remove(&ctx.ino);
+        // Discover the inode without holding the handle map or context while
+        // waiting for the per-inode lock. Exact timestamp updates use the same
+        // lock and then update open contexts, so release must serialize with
+        // those updates before removing its reader context.
+        let read_ino = {
+            let read_handles = self.read_handles.read().await;
+            if let Some(context) = read_handles.get(&handle) {
+                Some(context.lock().await.ino)
+            } else {
+                None
+            }
+        };
+        if let Some(ino) = read_ino {
+            let lock = self
+                .read_write_locks
+                .get_or_insert_with(ino, || RwLock::new(false));
+            let _inode_guard = lock.write().await;
+            let ctx = { self.read_handles.write().await.remove(&handle) };
+            if let Some(ctx) = ctx {
+                let ctx = ctx.lock().await;
+                if ctx.ino != ino {
+                    return Err(FsError::InvalidFileHandle);
                 }
-            }
 
-            // write attr only here to avoid serializing it multiple times while reading
-            // it will merge time fields with existing data because it might got change while we kept the handle
-            let set_attr: SetFileAttr = ctx.attr.clone().into();
-            let ino = ctx.ino;
-            drop(ctx);
-            if !self.read_only {
-                self.set_attr2(ino, set_attr, false, TimestampUpdateMode::Merge)
-                    .await?;
-            }
+                {
+                    let mut opened_files_for_read = self.opened_files_for_read.write().await;
+                    opened_files_for_read
+                        .get_mut(&ino)
+                        .expect("handle is missing")
+                        .remove(&handle);
+                    if opened_files_for_read
+                        .get(&ino)
+                        .expect("handle is missing")
+                        .is_empty()
+                    {
+                        opened_files_for_read.remove(&ino);
+                    }
+                }
 
-            valid_fh = true;
+                // write attr only here to avoid serializing it multiple times while reading
+                // it will merge time fields with existing data because it might got change while we kept the handle
+                let set_attr: SetFileAttr = ctx.attr.clone().into();
+                drop(ctx);
+                if !self.read_only {
+                    self.set_attr2(ino, set_attr, false, TimestampUpdateMode::Merge)
+                        .await?;
+                }
+
+                valid_fh = true;
+            }
         }
 
         // write: discover the inode without holding its context while waiting
@@ -2853,6 +2908,14 @@ fn storage_path_preserving_trailing_dots(path: &Path) -> FsResult<PathBuf> {
         };
         let path_wide: Vec<u16> = absolute_path.as_os_str().encode_wide().collect();
         let mut verbatim_path = Vec::with_capacity(path_wide.len() + 8);
+        if path_wide.starts_with(&[
+            u16::from(b'\\'),
+            u16::from(b'\\'),
+            u16::from(b'?'),
+            u16::from(b'\\'),
+        ]) {
+            return Ok(absolute_path);
+        }
         if path_wide.starts_with(&[u16::from(b'\\'), u16::from(b'\\')]) {
             verbatim_path.extend(r"\\?\UNC\".encode_utf16());
             verbatim_path.extend_from_slice(&path_wide[2..]);
