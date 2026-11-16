@@ -163,3 +163,73 @@ def test_passwd(tmp_path):
         EncryptedFs(str(tmp_path), PASSWORD, Cipher.Aes256Gcm, False)
     fs = EncryptedFs(str(tmp_path), "new_password", Cipher.Aes256Gcm, False)
     assert read_file(fs, ino, 100) == b"still here"
+
+
+def test_set_len_read_dir_plus_remove_dir(fs):
+    # moved from the old test_bindings.py smoke script
+    ino = write_file(fs, "grow.txt", b"0123456789")
+    fs.set_len(ino, 100)
+    assert fs.get_attr(ino).size == 100
+    fs.set_len(ino, 4)
+    assert read_file(fs, ino, 100) == b"0123"
+
+    entries = {e.name: e for e in fs.read_dir_plus(ROOT_INO)}
+    assert entries["grow.txt"].ino == ino
+    assert entries["grow.txt"].kind == FileType.RegularFile
+    assert entries["grow.txt"].attr.size == 4
+
+    _, dir_ = fs.create(ROOT_INO, "empty_dir", dir_attr(), False, False)
+    assert fs.is_dir(dir_.ino)
+    fs.remove_dir(ROOT_INO, "empty_dir")
+    assert not fs.exists_by_name(ROOT_INO, "empty_dir")
+    assert not fs.exists(dir_.ino)
+
+
+def test_read_only_can_list_and_read(tmp_path):
+    rw = EncryptedFs(str(tmp_path), PASSWORD, Cipher.Aes256Gcm, False)
+    ino = write_file(rw, "ro.txt", b"read me")
+    del rw
+
+    ro = EncryptedFs(str(tmp_path), PASSWORD, Cipher.Aes256Gcm, True)
+    assert [e.name for e in ro.read_dir(ROOT_INO) if e.name == "ro.txt"] == ["ro.txt"]
+    assert [e.ino for e in ro.read_dir_plus(ROOT_INO) if e.name == "ro.txt"] == [ino]
+    handle = ro.open(ino, True, False)
+    assert ro.read(ino, 0, 100, handle) == b"read me"
+    ro.release(handle)
+    # the handle is gone after release
+    assert not ro.is_read_handle(handle)
+
+
+def test_copy_file_range_more_than_available(fs):
+    src = write_file(fs, "src2.txt", b"0123456789")
+    dest_handle, dest_attr = fs.create(ROOT_INO, "dest2.txt", file_attr(), False, True)
+    fs.write(dest_attr.ino, 0, b"ab", dest_handle)
+    src_handle = fs.open(src, True, False)
+    # ask for far more than the source has, copy to a non-zero destination offset
+    assert fs.copy_file_range(src, 6, dest_attr.ino, 2, 2**48, src_handle, dest_handle) == 4
+    fs.flush(dest_handle)
+    fs.release(dest_handle)
+    fs.release(src_handle)
+    assert read_file(fs, dest_attr.ino, 100) == b"ab6789"
+
+
+def test_copy_file_range_multiple_blocks(fs):
+    # larger than one 256 KB block so the core needs several writes
+    data = os.urandom(600 * 1024 + 7)
+    src = write_file(fs, "big_src.bin", data)
+    dest_handle, dest_attr = fs.create(ROOT_INO, "big_dest.bin", file_attr(), False, True)
+    src_handle = fs.open(src, True, False)
+    assert fs.copy_file_range(src, 0, dest_attr.ino, 0, len(data), src_handle, dest_handle) == len(data)
+    fs.flush(dest_handle)
+    fs.release(dest_handle)
+    fs.release(src_handle)
+    assert read_file(fs, dest_attr.ino, len(data)) == data
+
+
+def test_set_attr_timestamp_out_of_range(fs):
+    ino = write_file(fs, "time.txt", b"x")
+    # the core only moves timestamps forward, so use one in the future
+    fs.set_attr(ino, SetFileAttr(mtime=4_000_000_000))
+    assert fs.get_attr(ino).mtime == 4_000_000_000
+    with pytest.raises(ValueError):
+        fs.set_attr(ino, SetFileAttr(mtime=2**64 - 1))

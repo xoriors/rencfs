@@ -23,17 +23,31 @@ pub const DATA_PATH: &str = "/tmp/rencfs/data";
 
 static TEST_RESOURCES: OnceLock<Mutex<TestResource>> = OnceLock::new();
 
-/// Unmounts whatever is mounted on [`MOUNT_PATH`], ignoring "not mounted" errors.
-fn force_umount() {
-    if umount(MOUNT_PATH).is_ok() {
-        return;
+/// Whether something is currently mounted on [`MOUNT_PATH`].
+pub fn is_mounted() -> bool {
+    fs::read_to_string("/proc/mounts")
+        .expect("cannot read /proc/mounts")
+        .lines()
+        .any(|line| line.split_whitespace().nth(1) == Some(MOUNT_PATH))
+}
+
+/// Unmounts whatever is mounted on [`MOUNT_PATH`].
+/// Succeeds if nothing is mounted there anymore, including when nothing was mounted to begin with.
+fn force_umount() -> Result<(), String> {
+    if !is_mounted() {
+        return Ok(());
     }
+    let _ = umount(MOUNT_PATH);
     for cmd in ["fusermount3", "fusermount"] {
-        if let Ok(status) = Command::new(cmd).arg("-u").arg(MOUNT_PATH).status() {
-            if status.success() {
-                return;
-            }
+        if !is_mounted() {
+            return Ok(());
         }
+        let _ = Command::new(cmd).arg("-u").arg(MOUNT_PATH).status();
+    }
+    if is_mounted() {
+        Err(format!("{MOUNT_PATH} is still mounted"))
+    } else {
+        Ok(())
     }
 }
 
@@ -50,15 +64,20 @@ extern "C" fn teardown() {
     if let Some(mh) = resources.mount_handle.take() {
         if let Err(err) = resources.runtime.block_on(mh.umount()) {
             eprintln!("cannot unmount {MOUNT_PATH}: {err}, trying to force unmount");
-            force_umount();
+            if let Err(err) = force_umount() {
+                eprintln!("{err}, you need to unmount it manually");
+            }
         }
     }
 }
 
 impl TestResource {
     fn ensure_clean_environment() {
-        // a previous run that was killed could have left a stale mount behind
-        force_umount();
+        // a previous run that was killed could have left a stale mount behind,
+        // never delete recursively while something is still mounted there
+        if let Err(err) = force_umount() {
+            panic!("{err}, unmount it manually before running the tests");
+        }
         for path in [MOUNT_PATH, DATA_PATH] {
             match fs::remove_dir_all(path) {
                 Ok(()) => {}
@@ -128,15 +147,4 @@ impl PasswordProvider for TestPasswordProvider {
 
 pub fn get_password_provider() -> Box<dyn PasswordProvider> {
     Box::new(TestPasswordProvider {})
-}
-
-pub fn count_files(folder_path: &str) -> u32 {
-    let path = Path::new(folder_path);
-    let mut file_count = 0;
-    if let Ok(dir_iterator) = fs::read_dir(path) {
-        for _entry in dir_iterator {
-            file_count += 1;
-        }
-    }
-    file_count
 }

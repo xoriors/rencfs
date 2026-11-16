@@ -1,6 +1,6 @@
 #![cfg(target_os = "linux")]
 mod linux_mount_setup;
-use linux_mount_setup::{count_files, TestGuard, DATA_PATH, MOUNT_PATH};
+use linux_mount_setup::{is_mounted, TestGuard, DATA_PATH, MOUNT_PATH};
 use serial_test::serial;
 use std::{
     fs::{self, File},
@@ -13,8 +13,10 @@ use std::{
 #[serial]
 fn it_mount() {
     let _guard = TestGuard::setup();
-    let exists = fs::exists(Path::new(MOUNT_PATH));
-    assert!(exists.is_ok(), "failed on mount {}", exists.err().unwrap());
+    let exists = fs::exists(Path::new(MOUNT_PATH))
+        .unwrap_or_else(|err| panic!("cannot check {MOUNT_PATH}: {err}"));
+    assert!(exists, "mount point {MOUNT_PATH} does not exist");
+    assert!(is_mounted(), "nothing is mounted on {MOUNT_PATH}");
 }
 
 #[test]
@@ -81,7 +83,6 @@ fn it_create_write_rename_read_delete() {
     let f1_path = Path::new(&test_file1);
     let f1_renamed_path = Path::new(&test_file1_renamed);
     let f2_path = Path::new(&test_file2);
-    let initial_file_count = count_files("/tmp");
 
     fs::create_dir(tf_path).expect("failed to create directory");
 
@@ -101,8 +102,13 @@ fn it_create_write_rename_read_delete() {
     let content = fs::read_to_string(f1_renamed_path).expect("failed to read renamed file");
     assert_eq!(content, WRITTEN_TEXT, "file content mismatch");
 
-    // check there are no extra files left in /tmp
-    assert_eq!(initial_file_count, count_files("/tmp"));
+    // only the files this test created are left in its directory, no temp or stale entries
+    let mut entries: Vec<String> = fs::read_dir(tf_path)
+        .expect("failed to list directory")
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    entries.sort();
+    assert_eq!(entries, ["another.txt", "renamed.txt"]);
 
     fs::remove_dir_all(tf_path).expect("failed to remove directory");
 }

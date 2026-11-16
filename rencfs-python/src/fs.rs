@@ -110,7 +110,8 @@ impl EncryptedFs {
     }
 
     fn set_attr(&self, py: Python<'_>, ino: u64, attr: SetFileAttr) -> PyResult<()> {
-        run(py, self.inner.set_attr(ino, attr.into_rust()))
+        let attr = attr.into_rust()?;
+        run(py, self.inner.set_attr(ino, attr))
     }
 
     /// Creates a file or directory. Returns `(handle, attr)`; the inode is `attr.ino`.
@@ -219,7 +220,17 @@ impl EncryptedFs {
             .src_fh(src_fh)
             .dest_fh(dest_fh)
             .build();
-        run(py, self.inner.copy_file_range(&req, size))
+        run(py, async {
+            // never allocate more than what the source can still provide
+            let available = self
+                .inner
+                .get_attr(src_ino)
+                .await?
+                .size
+                .saturating_sub(src_offset);
+            let size = size.min(usize::try_from(available).unwrap_or(usize::MAX));
+            self.inner.copy_file_range(&req, size).await
+        })
     }
 
     fn rename(

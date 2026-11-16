@@ -1055,8 +1055,10 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(ls_dir)?;
-        let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
-        self.set_attr(ino, set_attr).await?;
+        if !self.read_only {
+            let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
+            self.set_attr(ino, set_attr).await?;
+        }
         Ok(self.create_directory_entry_iterator(iter).await)
     }
 
@@ -1071,8 +1073,10 @@ impl EncryptedFs {
         }
 
         let iter = fs::read_dir(ls_dir)?;
-        let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
-        self.set_attr(ino, set_attr).await?;
+        if !self.read_only {
+            let set_attr = SetFileAttr::default().with_atime(SystemTime::now());
+            self.set_attr(ino, set_attr).await?;
+        }
         Ok(self.create_directory_entry_plus_iterator(iter).await)
     }
 
@@ -1507,7 +1511,9 @@ impl EncryptedFs {
             let set_attr: SetFileAttr = ctx.attr.clone().into();
             let ino = ctx.ino;
             drop(ctx);
-            self.set_attr(ino, set_attr).await?;
+            if !self.read_only {
+                self.set_attr(ino, set_attr).await?;
+            }
 
             valid_fh = true;
         }
@@ -1768,22 +1774,22 @@ impl EncryptedFs {
             return Ok(0);
         }
         let mut copied = 0;
-        while copied < size {
-            let len = self
+        while copied < len {
+            let written = self
                 .write(
                     file_range_req.dest_ino,
-                    file_range_req.dest_offset,
+                    file_range_req.dest_offset + copied as u64,
                     &buf[copied..len],
                     file_range_req.dest_fh,
                 )
                 .await?;
-            if len == 0 && copied < size {
-                error!(len, "Failed to copy all read bytes");
+            if written == 0 {
+                error!(copied, len, "Failed to copy all read bytes");
                 return Err(FsError::Other("Failed to copy all read bytes"));
             }
-            copied += len;
+            copied += written;
         }
-        Ok(len)
+        Ok(copied)
     }
 
     /// Open a file. We can open multiple times for read but only one to write at a time.

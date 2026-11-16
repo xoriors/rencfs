@@ -1,4 +1,7 @@
-use pyo3::exceptions::{PyFileExistsError, PyOSError, PyFileNotFoundError, PyPermissionError, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{
+    PyFileExistsError, PyFileNotFoundError, PyOSError, PyPermissionError, PyRuntimeError,
+    PyValueError,
+};
 use pyo3::prelude::*;
 use rencfs::crypto::Cipher as RustCipher;
 use rencfs::encryptedfs::{
@@ -234,22 +237,27 @@ impl SetFileAttr {
 }
 
 impl SetFileAttr {
-    pub fn into_rust(&self) -> RustSetFileAttr {
+    pub fn into_rust(&self) -> PyResult<RustSetFileAttr> {
         let to_system_time = |opt: Option<u64>| {
-            opt.map(|secs| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            opt.map(|secs| {
+                std::time::UNIX_EPOCH
+                    .checked_add(std::time::Duration::from_secs(secs))
+                    .ok_or_else(|| PyValueError::new_err(format!("timestamp out of range: {secs}")))
+            })
+            .transpose()
         };
-        RustSetFileAttr {
+        Ok(RustSetFileAttr {
             size: self.size,
-            atime: to_system_time(self.atime),
-            mtime: to_system_time(self.mtime),
-            ctime: to_system_time(self.ctime),
-            crtime: to_system_time(self.crtime),
+            atime: to_system_time(self.atime)?,
+            mtime: to_system_time(self.mtime)?,
+            ctime: to_system_time(self.ctime)?,
+            crtime: to_system_time(self.crtime)?,
             perm: self.perm,
             uid: self.uid,
             gid: self.gid,
             rdev: self.rdev,
             flags: self.flags,
-        }
+        })
     }
 }
 
