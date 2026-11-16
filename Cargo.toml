@@ -69,7 +69,7 @@ widestring = "1"
 windows = { version = "0.61", features = ["Win32_Foundation"] }
 
 [build-dependencies]
-winfsp = "0.13"
+winfsp = { version = "0.13", default-features = false, features = ["delayload"] }
 
 [patch.crates-io]
 # Keep overlapping Windows VirtualLock page ranges locked until their last secret drops.

@@ -1,5 +1,8 @@
 fn main() {
-    // WinFsp requires delay-load linking for the winfsp DLL.
-    // This must be called from build.rs at the project root level.
-    winfsp::build::winfsp_link_delayload();
+    // The build helper reads the target triple, so it also works when
+    // cross-compiling Windows binaries from another host. It panics for
+    // non-Windows targets, which do not link WinFsp.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        winfsp::build::winfsp_link_delayload();
+    }
 }

@@ -832,7 +832,7 @@ impl FileSystemContext for EncryptedFsWinFsp {
         buffer: &[u8],
         offset: u64,
         write_to_eof: bool,
-        _constrained_io: bool,
+        constrained_io: bool,
         file_info: &mut FileInfo,
     ) -> winfsp::Result<u32> {
         let handle_guard = context.handle.lock().expect("handle lock poisoned");
@@ -849,27 +849,40 @@ impl FileSystemContext for EncryptedFsWinFsp {
         // Drop the MutexGuard before the blocking I/O.
         drop(handle_guard);
 
+        let attr = if write_to_eof || constrained_io {
+            Some(
+                self.rt
+                    .block_on(self.fs.get_attr(context.ino))
+                    .map_err(fs_err)?,
+            )
+        } else {
+            None
+        };
         let actual_offset = if write_to_eof {
-            let attr = self
-                .rt
-                .block_on(self.fs.get_attr(context.ino))
-                .map_err(fs_err)?;
-            attr.size
+            attr.as_ref().expect("file attributes were loaded").size
         } else {
             offset
+        };
+        let write_buffer = if constrained_io {
+            let size = attr.as_ref().expect("file attributes were loaded").size;
+            #[allow(clippy::cast_possible_truncation)]
+            let allowed_len = size.saturating_sub(actual_offset).min(buffer.len() as u64) as usize;
+            &buffer[..allowed_len]
+        } else {
+            buffer
         };
 
         trace!(
             ino = context.ino,
             handle = fh,
             offset = actual_offset,
-            len = buffer.len(),
+            len = write_buffer.len(),
             "write"
         );
 
         let bytes_written = self
             .rt
-            .block_on(self.fs.write(context.ino, actual_offset, buffer, fh))
+            .block_on(self.fs.write(context.ino, actual_offset, write_buffer, fh))
             .map_err(fs_err)?;
 
         // Refresh file info after write.
@@ -1006,7 +1019,7 @@ impl FileSystemContext for EncryptedFsWinFsp {
         }
 
         self.rt
-            .block_on(self.fs.set_attr(context.ino, set_attr))
+            .block_on(self.fs.set_attr_exact(context.ino, set_attr))
             .map_err(fs_err)?;
 
         let attr = self
@@ -1033,13 +1046,17 @@ impl FileSystemContext for EncryptedFsWinFsp {
             "set_file_size"
         );
 
-        if !set_allocation_size {
+        let current_size = self
+            .rt
+            .block_on(self.fs.get_attr(context.ino))
+            .map_err(fs_err)?
+            .size;
+        if !set_allocation_size || new_size < current_size {
             // Setting the actual file size (truncate/extend).
             self.rt
                 .block_on(self.fs.set_len(context.ino, new_size))
                 .map_err(fs_err)?;
         }
-        // For allocation_size changes, EncryptedFs handles allocation internally.
 
         let attr = self
             .rt
@@ -1581,6 +1598,160 @@ mod tests {
                     .await
                     .unwrap()
                     .is_none());
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn constrained_write_stops_at_eof_and_allocation_size_truncates() {
+        run_test(
+            TestSetup {
+                key: "windows_constrained_write_and_allocation_size",
+                read_only: false,
+            },
+            async {
+                let fs = get_fs().await;
+                let name = SecretString::from_str("constrained.txt").unwrap();
+                let (handle, attr) = fs
+                    .create(
+                        ROOT_INODE,
+                        &name,
+                        create_attr(FileType::RegularFile),
+                        false,
+                        true,
+                    )
+                    .await
+                    .unwrap();
+                fs.write(attr.ino, 0, b"abcdefgh", handle).await.unwrap();
+                fs.flush(handle).await.unwrap();
+
+                let fs_for_callback = fs.clone();
+                let expected_size = std::thread::spawn(move || {
+                    let bridge = EncryptedFsWinFsp {
+                        fs: fs_for_callback,
+                        rt: CALLBACK_RUNTIME.as_ref().unwrap(),
+                        read_only: false,
+                        namespace_lock: std::sync::Mutex::new(()),
+                    };
+                    let context = WinFspFileContext {
+                        ino: attr.ino,
+                        is_dir: false,
+                        handle: std::sync::Mutex::new(Some(handle)),
+                        path: "constrained.txt".to_owned(),
+                        dir_buffer: std::sync::Mutex::new(DirBuffer::new()),
+                    };
+                    let mut file_info = FileInfo::default();
+                    assert_eq!(
+                        FileSystemContext::write(
+                            &bridge,
+                            &context,
+                            b"WXYZ",
+                            6,
+                            false,
+                            true,
+                            &mut file_info,
+                        )
+                        .unwrap(),
+                        2
+                    );
+                    assert_eq!(
+                        FileSystemContext::write(
+                            &bridge,
+                            &context,
+                            b"past-eof",
+                            8,
+                            false,
+                            true,
+                            &mut file_info,
+                        )
+                        .unwrap(),
+                        0
+                    );
+                    FileSystemContext::set_file_size(&bridge, &context, 4, true, &mut file_info)
+                        .unwrap();
+                    FileSystemContext::close(&bridge, context);
+                    bridge
+                        .rt
+                        .block_on(bridge.fs.get_attr(attr.ino))
+                        .unwrap()
+                        .size
+                })
+                .join()
+                .unwrap();
+
+                assert_eq!(expected_size, 4);
+                assert_eq!(
+                    crate::test_common::read_to_string(attr.ino, &fs).await,
+                    "abcd"
+                );
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn basic_info_stores_exact_timestamps_and_preserves_omitted_values() {
+        run_test(
+            TestSetup {
+                key: "windows_exact_basic_info_timestamps",
+                read_only: false,
+            },
+            async {
+                let fs = get_fs().await;
+                let name = SecretString::from_str("timestamps.txt").unwrap();
+                let (handle, attr) = fs
+                    .create(
+                        ROOT_INODE,
+                        &name,
+                        create_attr(FileType::RegularFile),
+                        true,
+                        true,
+                    )
+                    .await
+                    .unwrap();
+                let before = fs.get_attr(attr.ino).await.unwrap();
+                let expected_creation = UNIX_EPOCH + Duration::from_secs(100);
+                let expected_access = UNIX_EPOCH + Duration::from_secs(200);
+                let expected_change = UNIX_EPOCH + Duration::from_secs(300);
+
+                let fs_for_callback = fs.clone();
+                let actual = std::thread::spawn(move || {
+                    let bridge = EncryptedFsWinFsp {
+                        fs: fs_for_callback,
+                        rt: CALLBACK_RUNTIME.as_ref().unwrap(),
+                        read_only: false,
+                        namespace_lock: std::sync::Mutex::new(()),
+                    };
+                    let context = WinFspFileContext {
+                        ino: attr.ino,
+                        is_dir: false,
+                        handle: std::sync::Mutex::new(Some(handle)),
+                        path: "timestamps.txt".to_owned(),
+                        dir_buffer: std::sync::Mutex::new(DirBuffer::new()),
+                    };
+                    let mut file_info = FileInfo::default();
+                    FileSystemContext::set_basic_info(
+                        &bridge,
+                        &context,
+                        FILE_ATTRIBUTE_NORMAL,
+                        system_time_to_filetime(expected_creation),
+                        system_time_to_filetime(expected_access),
+                        0,
+                        system_time_to_filetime(expected_change),
+                        &mut file_info,
+                    )
+                    .unwrap();
+                    FileSystemContext::close(&bridge, context);
+                    bridge.rt.block_on(bridge.fs.get_attr(attr.ino)).unwrap()
+                })
+                .join()
+                .unwrap();
+
+                assert_eq!(actual.crtime, expected_creation);
+                assert_eq!(actual.atime, expected_access);
+                assert_eq!(actual.ctime, expected_change);
+                assert_eq!(actual.mtime, before.mtime);
             },
         )
         .await;
