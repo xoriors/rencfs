@@ -16,14 +16,14 @@ least the primitives should offer a similar level of security.
 stable release.  
 > It's mostly ideal for experimental and learning projects.**
 
-An encrypted file system written in Rust mounted with FUSE on Linux. It can be used to create encrypted
+An encrypted file system written in Rust, mounted with FUSE on Linux or an experimental WinFsp backend on Windows. It can be used to create encrypted
 directories.
 
 You can then safely back up the encrypted directory to an untrusted server without worrying about the data being
 exposed.
 You can also store it in a cloud storage service like Google Drive, Dropbox, etc., and sync it across multiple devices.
 
-You can use it as CLI or as a library to build your custom FUSE implementation or other apps that work with encrypted
+You can use it as a CLI or as a library to build filesystem integrations or other apps that work with encrypted
 data.
 
 # Introduction
@@ -58,7 +58,7 @@ Some of these are still being worked on and marked with `[WIP]`.
   from being copied between or within files by an attacker;
 - `Fast seek` on both reads and writes;
 - `Writes in parallel`;
-- Exposed with `FUSE`;
+- Exposed with `FUSE` on Linux and an experimental `WinFsp` adapter on Windows;
 - Fully `concurrent` for all operations;
 - `[WIP]` [Handle long file names](https://github.com/xoriors/rencfs/issues/47)
 - `[WIP]` [Abstraction layer for Rust File and fs API to use it as lib to switch to using encrypted files by just changing the use statements](https://github.com/xoriors/rencfs/issues/97)
@@ -74,6 +74,8 @@ Some of these are still being worked on and marked with `[WIP]`.
 # Documentation
 
 - [Tech slides](https://miro.com/app/board/uXjVLa8i1h0=/?share_link_id=685435182168)
+- [Docs](docs/)
+- [Windows support](docs/readme/Windows.md)
 
 [![rencfs](website/resources/layers.png)](website/resources/layers.png)
 
@@ -87,7 +89,7 @@ Please look into [Flows](docs/readme/flows.md) for a detailed sequence flow desc
 
 # Next steps
 
-- The plan is to implement it also on macOS and Windows
+- Complete and validate Windows support; macOS support is also planned
 - **Systemd service** is being worked on [rencfs-daemon](https://github.com/radumarias/rencfs-daemon)
 - **GUI** is being worked on [rencfs-desktop](https://github.com/radumarias/rencfs-desktop)
   and [ciphershell-kotlin](https://github.com/radumarias/ciphershell-kotlin)

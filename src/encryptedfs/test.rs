@@ -1,6 +1,6 @@
 use std::str::FromStr;
 use std::string::ToString;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use shush_rs::{ExposeSecret, SecretString};
 use tracing_test::traced_test;
@@ -172,6 +172,177 @@ async fn test_write() {
 }
 
 #[tokio::test]
+async fn flush_and_write_on_the_same_handle_complete_without_deadlocking() {
+    run_test(
+        TestSetup {
+            key: "flush_write_lock_order",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let name = SecretString::from_str("flush-write.txt").unwrap();
+            let (handle, attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &name,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    true,
+                )
+                .await
+                .unwrap();
+
+            let (write_result, flush_result) =
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    tokio::join!(
+                        fs.write(attr.ino, 0, b"concurrent", handle),
+                        fs.flush(handle)
+                    )
+                })
+                .await
+                .expect("write and flush deadlocked");
+            assert_eq!(write_result.unwrap(), b"concurrent".len());
+            flush_result.unwrap();
+            fs.release(handle).await.unwrap();
+            assert_eq!(
+                test_common::read_to_string(attr.ino, &fs).await,
+                "concurrent"
+            );
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn exact_attribute_timestamps_are_stored_and_omitted_values_are_preserved() {
+    run_test(
+        TestSetup {
+            key: "exact_attribute_timestamps",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let name = SecretString::from_str("exact-times.txt").unwrap();
+            let (_, attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &name,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+            let before = fs.get_attr(attr.ino).await.unwrap();
+            let atime = UNIX_EPOCH + Duration::from_secs(100);
+            let crtime = UNIX_EPOCH + Duration::from_secs(200);
+            fs.set_attr_exact(
+                attr.ino,
+                SetFileAttr::default().with_atime(atime).with_crtime(crtime),
+            )
+            .await
+            .unwrap();
+
+            let after = fs.get_attr(attr.ino).await.unwrap();
+            assert_eq!(after.atime, atime);
+            assert_eq!(after.crtime, crtime);
+            assert_eq!(after.mtime, before.mtime);
+            assert_eq!(after.ctime, before.ctime);
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn exact_timestamp_update_racing_reader_release_keeps_exact_value() {
+    run_test(
+        TestSetup {
+            key: "exact_timestamp_reader_release_race",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let name = SecretString::from_str("exact-race.txt").unwrap();
+            let (_, attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &name,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+            let reader = fs.open(attr.ino, true, false).await.unwrap();
+            let exact_atime = UNIX_EPOCH + Duration::from_secs(100);
+
+            // Hold the handle map so release and the exact update both reach
+            // their map-lock wait. Release must not remove the context before
+            // the exact update has copied its timestamp into that context.
+            let read_handles = fs.read_handles.write().await;
+            let mut release = Box::pin(fs.release(reader));
+            assert!(futures_util::poll!(release.as_mut()).is_pending());
+            let mut exact_update = Box::pin(
+                fs.set_attr_exact(attr.ino, SetFileAttr::default().with_atime(exact_atime)),
+            );
+            assert!(futures_util::poll!(exact_update.as_mut()).is_pending());
+            drop(read_handles);
+
+            let (release_result, exact_result) = tokio::join!(release, exact_update);
+            release_result.unwrap();
+            exact_result.unwrap();
+            assert_eq!(fs.get_attr(attr.ino).await.unwrap().atime, exact_atime);
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_reader_cannot_restore_stale_times_after_writer_closes() {
+    run_test(
+        TestSetup {
+            key: "reader_writer_timestamp_merge",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let name = SecretString::from_str("reader-writer-times.txt").unwrap();
+            let (initial_handle, attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &name,
+                    create_attr(FileType::RegularFile),
+                    false,
+                    true,
+                )
+                .await
+                .unwrap();
+            fs.write(attr.ino, 0, b"before", initial_handle)
+                .await
+                .unwrap();
+            fs.release(initial_handle).await.unwrap();
+
+            let reader = fs.open(attr.ino, true, false).await.unwrap();
+            let writer = fs.open(attr.ino, false, true).await.unwrap();
+            let before_write = fs.get_attr(attr.ino).await.unwrap();
+            fs.write(attr.ino, 0, b"after!", writer).await.unwrap();
+            let after_write = fs.get_attr(attr.ino).await.unwrap();
+            assert!(after_write.mtime > before_write.mtime);
+
+            fs.release(writer).await.unwrap();
+            let after_writer_close = fs.get_attr(attr.ino).await.unwrap();
+            assert_eq!(after_writer_close.mtime, after_write.mtime);
+            fs.release(reader).await.unwrap();
+            assert_eq!(
+                fs.get_attr(attr.ino).await.unwrap().mtime,
+                after_write.mtime
+            );
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
 #[traced_test]
 #[allow(clippy::too_many_lines)]
 // #[ignore]
@@ -208,8 +379,10 @@ async fn test_read() {
             assert_eq!(data, &buf);
 
             // larger buffer
-            let len = fs.read(attr.ino, 0, &mut [0; 42], fh).await.unwrap();
+            let mut repeated_read = [0; 42];
+            let len = fs.read(attr.ino, 0, &mut repeated_read, fh).await.unwrap();
             assert_eq!(len, 7);
+            assert_eq!(&data[..], &repeated_read[..len]);
 
             // offset
             let data = b"test-37";
@@ -2274,6 +2447,151 @@ async fn test_rename() {
     .await;
 }
 
+#[cfg(any(unix, windows))]
+#[tokio::test]
+async fn renaming_directory_removes_legacy_parent_storage_entries() {
+    run_test(
+        TestSetup {
+            key: "rename_legacy_parent_entries",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let old_name = SecretString::from_str("legacy-parent-dir").unwrap();
+            let (_, attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &old_name,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let contents = fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
+            let canonical_ls = contents.join("ls").join("$rencfs-parent");
+            let canonical_hash = contents.join(HASH_DIR).join("$rencfs-parent");
+            let legacy_ls =
+                super::storage_path_preserving_trailing_dots(&contents.join("ls").join("$.."))
+                    .unwrap();
+            let legacy_hash =
+                super::storage_path_preserving_trailing_dots(&contents.join(HASH_DIR).join("$.."))
+                    .unwrap();
+            std::fs::rename(canonical_ls, &legacy_ls).unwrap();
+            std::fs::rename(canonical_hash, &legacy_hash).unwrap();
+
+            let new_name = SecretString::from_str("migrated-parent-dir").unwrap();
+            fs.rename(ROOT_INODE, &old_name, ROOT_INODE, &new_name)
+                .await
+                .unwrap();
+
+            assert!(!legacy_ls.exists());
+            assert!(!legacy_hash.exists());
+            assert!(contents.join("ls").join("$rencfs-parent").exists());
+            assert!(contents.join(HASH_DIR).join("$rencfs-parent").exists());
+            assert_eq!(
+                fs.find_by_name(attr.ino, &SecretString::from_str("..").unwrap())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .ino,
+                ROOT_INODE
+            );
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn legacy_dot_entries_remain_findable_after_windows_name_migration() {
+    run_test(
+        TestSetup {
+            key: "legacy_dot_entry_lookup",
+            read_only: false,
+        },
+        async {
+            let fs = get_fs().await;
+            let name = SecretString::from_str("legacy-dot-dir").unwrap();
+            let (_, attr) = fs
+                .create(
+                    ROOT_INODE,
+                    &name,
+                    create_attr(FileType::Directory),
+                    false,
+                    false,
+                )
+                .await
+                .unwrap();
+
+            let contents = fs.data_dir.join(CONTENTS_DIR).join(attr.ino.to_string());
+            for (canonical, legacy, lookup_name, expected_ino) in [
+                ("$rencfs-self", "$.", ".", attr.ino),
+                ("$rencfs-parent", "$..", "..", ROOT_INODE),
+            ] {
+                for directory in ["ls", HASH_DIR] {
+                    let canonical_path = contents.join(directory).join(canonical);
+                    let legacy_path = super::storage_path_preserving_trailing_dots(
+                        &contents.join(directory).join(legacy),
+                    )
+                    .unwrap();
+                    std::fs::rename(&canonical_path, &legacy_path).unwrap_or_else(|error| {
+                        panic!(
+                            "failed to migrate {} to {}: {error}",
+                            canonical_path.display(),
+                            legacy_path.display()
+                        )
+                    });
+                }
+
+                let lookup = SecretString::from_str(lookup_name).unwrap();
+                assert!(
+                    fs.exists_by_name(attr.ino, &lookup).unwrap(),
+                    "legacy {lookup_name} hash entry should exist"
+                );
+                let found = fs
+                    .find_by_name(attr.ino, &lookup)
+                    .await
+                    .unwrap_or_else(|error| panic!("lookup for {lookup_name} failed: {error}"));
+                assert_eq!(found.unwrap().ino, expected_ino);
+            }
+
+            let entries: Vec<DirectoryEntry> = fs
+                .read_dir(attr.ino)
+                .await
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|entry| entry.name.expose_secret().as_str() == ".")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                entries
+                    .iter()
+                    .filter(|entry| entry.name.expose_secret().as_str() == "..")
+                    .count(),
+                1
+            );
+        },
+    )
+    .await;
+}
+
+#[cfg(windows)]
+#[test]
+fn storage_path_helper_preserves_existing_verbatim_paths() {
+    for path in [r"\\?\C:\vault\file", r"\\?\UNC\server\share\vault\file"] {
+        assert_eq!(
+            super::storage_path_preserving_trailing_dots(std::path::Path::new(path)).unwrap(),
+            std::path::PathBuf::from(path)
+        );
+    }
+}
+
 #[tokio::test]
 #[traced_test]
 async fn test_open() {
@@ -2418,6 +2736,24 @@ async fn test_read_only_write() {
             let fs_ro = EncryptedFs::new(data_dir, Box::new(PasswordProviderImpl {}), cipher, true)
                 .await
                 .expect("test_read_only_write: Error creating rw fs.");
+            let root_entries = fs_ro
+                .read_dir(ROOT_INODE)
+                .await
+                .unwrap()
+                .collect::<FsResult<Vec<_>>>()
+                .unwrap();
+            assert!(root_entries
+                .iter()
+                .any(|entry| entry.name.expose_secret().as_str() == "file1"));
+            let root_entries_plus = fs_ro
+                .read_dir_plus(ROOT_INODE)
+                .await
+                .unwrap()
+                .collect::<FsResult<Vec<_>>>()
+                .unwrap();
+            assert!(root_entries_plus
+                .iter()
+                .any(|entry| entry.name.expose_secret().as_str() == "file1"));
             let fh = fs_ro
                 .open(attr.ino, true, false)
                 .await

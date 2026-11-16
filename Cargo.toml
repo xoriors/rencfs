@@ -2,7 +2,7 @@ cargo-features = ["profile-rustflags"]
 
 [package]
 name = "rencfs"
-description = "WARNING! UNDER ACTIVE DEVELOPMENT. An encrypted file system that is mounted with FUSE on Linux. It can be used to create encrypted directories."
+description = "WARNING! UNDER ACTIVE DEVELOPMENT. An encrypted filesystem that can be mounted with FUSE on Linux or WinFsp on Windows."
 version = "0.14.11"
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -56,11 +56,24 @@ blake3 = "=0.1.3"
 thread_local = "1.1.8"
 subtle = "2.6.1"
 bon = "3.3.0"
-shush-rs = "0.1.10"
+shush-rs = "0.1.11"
 criterion = { version = "0.5.1", features = ["html_reports"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 fuse3 = { version = "0.8.1", features = ["tokio-runtime", "unprivileged"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winfsp = { version = "0.13", features = ["windows-61", "system"] }
+winfsp-sys = "0.12"
+widestring = "1"
+windows = { version = "0.61", features = ["Win32_Foundation"] }
+
+[build-dependencies]
+winfsp = { version = "0.13", default-features = false, features = ["delayload"] }
+
+[patch.crates-io]
+# Keep overlapping Windows VirtualLock page ranges locked until their last secret drops.
+shush-rs = { path = "vendor/shush-rs" }
 
 [[bench]]
 name = "crypto_read"

@@ -88,7 +88,6 @@
 //! use rencfs::encryptedfs::{EncryptedFs, FileType, PasswordProvider, CreateFileAttr};
 //! use rencfs::crypto::Cipher;
 //! use anyhow::Result;
-//! use std::path::Path;
 //! use rencfs::encryptedfs::write_all_string_to_fs;
 //!
 //! const ROOT_INODE: u64 = 1;
@@ -105,7 +104,7 @@
 //! async fn main() -> Result<()> {
 //!     tracing_subscriber::fmt().init();
 //!
-//!     let data_dir = Path::new("/tmp/rencfs_data_test").to_path_buf();
+//!     let data_dir = std::env::temp_dir().join(format!("rencfs_data_test_{}", std::process::id()));
 //!     let  _ = fs::remove_dir_all(data_dir.to_str().unwrap());
 //!     let cipher = Cipher::ChaCha20Poly1305;
 //!     let mut fs = EncryptedFs::new(data_dir.clone(), Box::new(PasswordProviderImpl{}), cipher, false).await?;

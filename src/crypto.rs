@@ -1,8 +1,9 @@
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io;
 use std::io::{Read, Seek, Write};
 use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::str::FromStr;
 
 use argon2::Argon2;
@@ -19,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use shush_rs::{ExposeSecret, SecretString, SecretVec};
 use strum_macros::{Display, EnumIter, EnumString};
 use thiserror::Error;
-use tracing::{debug, error, instrument};
+use tracing::{debug, instrument};
 use write::CryptoInnerWriter;
 
 use crate::crypto::read::{CryptoRead, CryptoReadSeek, RingCryptoRead};
@@ -217,8 +218,20 @@ pub fn decrypt(s: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretStr
 
 #[allow(clippy::missing_errors_doc)]
 pub fn decrypt_file_name(name: &str, cipher: Cipher, key: &SecretVec<u8>) -> Result<SecretString> {
-    let name = String::from(name).replace('|', "/");
+    let name = unescape_encrypted_file_name(name);
     decrypt(&name, cipher, key)
+}
+
+fn unescape_encrypted_file_name(name: &str) -> String {
+    name.replace(['|', '%'], "/")
+}
+
+fn escape_encrypted_file_name(name: &str) -> String {
+    if cfg!(windows) {
+        name.replace('/', "%")
+    } else {
+        name.replace('/', "|")
+    }
 }
 
 #[instrument(skip(password, salt))]
@@ -245,12 +258,9 @@ pub fn encrypt_file_name(
         "$." | "$.." => Ok(secret_string.clone()),
         "." | ".." => Ok(format!("${secret_string}")),
         _ => {
-            let secret = SecretString::from_str(&secret_string)
-                .map_err(|err| Error::GenericString(err.to_string()))?;
-            let mut encrypted = encrypt(&secret, cipher, key)?;
-            encrypted = encrypted.replace('/', "|");
-
-            Ok(encrypted)
+            let secret = SecretString::new(Box::new(secret_string.clone()));
+            let encrypted = encrypt(&secret, cipher, key)?;
+            Ok(escape_encrypted_file_name(&encrypted))
         }
     }
 }
@@ -376,7 +386,7 @@ where
     let mut file = fs_util::open_atomic_write(file)?;
     file = serialize_encrypt_into(file, value, cipher, key)?;
     file.commit()?;
-    File::open(parent)?.sync_all()?;
+    fs_util::sync_directory(parent)?;
     Ok(())
 }
 
@@ -470,6 +480,14 @@ mod tests {
         let encrypted = encrypt_file_name(&secret_name, Cipher::ChaCha20Poly1305, &key).unwrap();
         let result = decrypt_file_name(&encrypted, Cipher::Aes256Gcm, &key);
         assert!(result.is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_windows_filename_separator_escape() {
+        let escaped = escape_encrypted_file_name("left/right");
+        assert_eq!(escaped, "left%right");
+        assert_eq!(unescape_encrypted_file_name(&escaped), "left/right");
     }
 
     #[test]
